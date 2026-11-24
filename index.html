@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Foothold</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: full-bleed 3D view; HUD chips pinned to corners; panels are bottom sheets on phones, side cards on wide screens. */
+  :root {
+    --ink: #ece6d8;          /* parchment text */
+    --ink-2: #b9b09c;        /* secondary text */
+    --ink-3: #8a8270;        /* muted labels */
+    --panel: rgba(28, 25, 20, 0.86);
+    --panel-solid: #1c1914;
+    --line: rgba(236, 230, 216, 0.14);
+    --accent: #d9a25b;       /* lantern amber */
+    --ui: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+    color-scheme: dark;
+  }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; overflow: hidden; background: #1c1914; color: var(--ink); font-family: var(--ui); }
+  body { touch-action: none; -webkit-user-select: none; user-select: none; }
+  #view { position: fixed; inset: 0; display: block; width: 100%; height: 100%; }
+  .chip { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  #hud { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); left: calc(10px + env(safe-area-inset-left, 0px)); padding: 8px 10px; max-width: min(62vw, 360px); pointer-events: none; }
+  #hud .name { font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; font-size: 13px; color: var(--accent); }
+  #hud .line { font-family: var(--mono); font-size: 11px; color: var(--ink-2); margin-top: 3px; font-variant-numeric: tabular-nums; line-height: 1.45; }
+  @media (max-width: 560px) { #hud { top: calc(56px + env(safe-area-inset-top, 0px)); max-width: calc(100vw - 20px); } }
+  #buttons { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); right: calc(10px + env(safe-area-inset-right, 0px)); display: flex; gap: 6px; }
+  button, select, input { font: inherit; color: var(--ink); }
+  .btn { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; font-size: 14px; font-weight: 500; letter-spacing: 0.04em; cursor: pointer; min-height: 38px; }
+  .btn:hover { border-color: rgba(217, 162, 91, 0.6); }
+  .btn:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn.primary { background: var(--accent); color: #1c1914; border-color: var(--accent); font-weight: 600; }
+  .btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .panel { position: fixed; z-index: 5; right: calc(10px + env(safe-area-inset-right, 0px)); top: calc(58px + env(safe-area-inset-top, 0px)); width: min(440px, calc(100vw - 20px)); max-height: calc(100% - 80px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow: auto; padding: 14px 16px 16px; box-sizing: border-box; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); touch-action: pan-y; }
+  @media (max-width: 560px) {
+    .panel { left: 0; right: 0; top: auto; bottom: 0; width: 100%; border-radius: 12px 12px 0 0; max-height: 72%; padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  }
+  .panel h2 { margin: 0 0 2px; font-size: 18px; font-weight: 600; letter-spacing: 0.02em; text-wrap: balance; }
+  .panel .sub { margin: 0 0 12px; color: var(--ink-3); font-size: 13px; line-height: 1.35; }
+  .panel .close { position: absolute; top: 8px; right: 8px; min-height: 32px; padding: 4px 10px; }
+  .stats { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .stats td { padding: 5px 0; border-bottom: 1px solid var(--line); vertical-align: baseline; }
+  .stats td.v { font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 8px; }
+  .stats td.r { font-family: var(--mono); text-align: right; color: var(--ink-3); font-size: 11px; white-space: nowrap; padding-left: 10px; }
+  .stats th { text-align: right; font-weight: 500; color: var(--ink-3); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; padding-bottom: 4px; }
+  .stats th:first-child { text-align: left; }
+  .figure { margin-top: 14px; }
+  .figure .ft { font-size: 13px; font-weight: 600; }
+  .figure .fs { font-size: 12px; color: var(--ink-3); margin: 1px 0 6px; line-height: 1.35; }
+  .figure canvas { width: 100%; height: 150px; display: block; }
+  .readout { font-family: var(--mono); font-size: 11px; color: var(--ink-2); min-height: 1.4em; }
+  .note { font-size: 12px; color: var(--ink-3); line-height: 1.45; margin-top: 12px; }
+  .form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+  .form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-3); letter-spacing: 0.06em; text-transform: uppercase; }
+  .form select, .form input { background: var(--panel-solid); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font-size: 15px; text-transform: none; letter-spacing: 0; min-width: 0; }
+  .form .seedrow { display: flex; gap: 6px; }
+  .form .seedrow input { flex: 1; font-family: var(--mono); }
+  .actions { display: flex; gap: 8px; margin-top: 14px; }
+  #mapwrap { position: relative; width: 100%; aspect-ratio: 1; max-width: 100%; }
+  #mapwrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 4px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12px; color: var(--ink-2); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+  .legend i.line { border-radius: 2px; height: 3px; width: 14px; vertical-align: 2px; }
+  #stick { position: fixed; left: calc(28px + env(safe-area-inset-left, 0px)); bottom: calc(28px + env(safe-area-inset-bottom, 0px)); width: 120px; height: 120px; border-radius: 50%; border: 1px solid rgba(236, 230, 216, 0.28); background: rgba(28, 25, 20, 0.25); pointer-events: none; opacity: 0.7; }
+  #knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%; background: rgba(236, 230, 216, 0.32); border: 1px solid rgba(236, 230, 216, 0.45); }
+  #hint { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); padding: 7px 12px; font-size: 13px; color: var(--ink-2); pointer-events: none; transition: opacity 1.2s; white-space: nowrap; }
+  #fps { position: fixed; right: calc(10px + env(safe-area-inset-right, 0px)); bottom: calc(8px + env(safe-area-inset-bottom, 0px)); font-family: var(--mono); font-size: 10px; color: rgba(236, 230, 216, 0.5); pointer-events: none; }
+  #loading { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: radial-gradient(120% 90% at 50% 30%, #2a2a1f 0%, #15130f 70%); }
+  #loading .box { width: min(360px, calc(100vw - 48px)); }
+  #loading .title { font-size: 34px; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent); }
+  #loading .tag { color: var(--ink-3); font-size: 14px; margin: 2px 0 22px; }
+  #loading .bar { height: 3px; background: rgba(236, 230, 216, 0.12); border-radius: 2px; overflow: hidden; }
+  #loading .fill { height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
+  #loading .stage { font-family: var(--mono); font-size: 12px; color: var(--ink-2); margin-top: 10px; font-variant-numeric: tabular-nums; }
+  #err { color: #e88f74; font-family: var(--mono); font-size: 12px; margin-top: 12px; white-space: pre-wrap; }
+  @media (prefers-reduced-motion: reduce) { #loading .fill, #hint { transition: none; } }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="hud" class="chip">
+  <div class="name">Foothold</div>
+  <div class="line" id="hudWorld">—</div>
+  <div class="line" id="hudHere">—</div>
+</div>
+
+<div id="buttons">
+  <button class="btn" id="bMap" aria-pressed="false">Map</button>
+  <button class="btn" id="bStand" aria-pressed="false">Stand</button>
+  <button class="btn" id="bWorld" aria-pressed="false">World</button>
+</div>
+
+<section class="panel" id="pMap" hidden>
+  <button class="btn close" data-close>Close</button>
+  <h2>Survey map</h2>
+  <p class="sub">512 m × 512 m. Shading is canopy cover over relief. Tap the map to walk there.</p>
+  <div id="mapwrap"><canvas id="mapBase" width="768" height="768"></canvas><canvas id="mapTop" width="768" height="768"></canvas></div>
+  <div class="legend" id="mapLegend"></div>
+</section>
+
+<section class="panel" id="pStand" hidden>
+  <button class="btn close" data-close>Close</button>
+  <h2>Stand inventory</h2>
+  <p class="sub" id="standSub"></p>
+  <table class="stats" id="standTable"></table>
+  <div class="figure">
+    <div class="ft">Diameter distribution</div>
+    <div class="fs">Live stems per hectare in 5 cm diameter-at-breast-height classes. Old stands flatten toward a "reverse-J".</div>
+    <canvas id="figDbh"></canvas>
+    <div class="readout" id="roDbh"></div>
+  </div>
+  <div class="figure">
+    <div class="ft">Pair correlation g(r)</div>
+    <div class="fs">Live stems ≥ 10 cm. Below 1 at short range means trees are spaced out by competition; above 1 means clumping. Same quantity as a radial distribution function.</div>
+    <canvas id="figGr"></canvas>
+    <div class="readout" id="roGr"></div>
+  </div>
+  <p class="note">Reference ranges are rough values for temperate forests, for orientation only. Managed stands sit near the low end of dead-wood ranges; unmanaged old growth near the high end.</p>
+</section>
+
+<section class="panel" id="pWorld" hidden>
+  <button class="btn close" data-close>Close</button>
+  <h2>World</h2>
+  <p class="sub">Every world is reproducible from these settings. Regenerating re-runs terrain, hydrology and the forest simulation.</p>
+  <div class="form">
+    <label for="fSeed">Seed<span class="seedrow"><input id="fSeed" type="number" inputmode="numeric" min="1" max="999999"><button class="btn" id="bDice" type="button" aria-label="Random seed">↻</button></span></label>
+    <label for="fAge">Years since fire<select id="fAge"><option value="40">40 · young</option><option value="90">90</option><option value="160">160 · mature</option><option value="300">300 · old growth</option></select></label>
+    <label for="fMoist">Climate<select id="fMoist"><option value="dry">Dry</option><option value="mesic">Mesic</option><option value="wet">Wet</option></select></label>
+    <label for="fStorm">Windstorms<select id="fStorm"><option value="none">None</option><option value="occasional">Occasional</option><option value="frequent">Frequent</option></select></label>
+    <label for="fQual">Graphics<select id="fQual"><option value="low">Phone</option><option value="high">Desktop</option></select></label>
+  </div>
+  <div class="actions"><button class="btn primary" id="bRegen">Regenerate</button></div>
+  <p class="note" id="genNote"></p>
+</section>
+
+<div id="stick" hidden><div id="knob"></div></div>
+<div id="hint" class="chip">Drag to look · WASD to walk · Shift to run</div>
+<div id="fps"></div>
+
+<div id="loading">
+  <div class="box">
+    <div class="title">Foothold</div>
+    <div class="tag">Growing a forest from bare ground</div>
+    <div class="bar"><div class="fill" id="loadFill"></div></div>
+    <div class="stage" id="loadStage">Starting</div>
+    <div id="err"></div>
+  </div>
+</div>
+
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }</script>
+<script type="module" src="./src/game.js"></script>
+</body>
+</html>
