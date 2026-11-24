@@ -24,11 +24,16 @@ Controls: **phone**, left thumb walks (push to the rim to run) and drag elsewher
 Panels: **Map** (tap to teleport), **Stand** (inventory, diameter distribution, pair correlation),
 **World** (seed, stand age, climate, windstorms, bedrock, graphics quality).
 
-## Collision rules
+## Movement and collision
 
-You can step onto anything whose top is within 0.5 m of your feet, and walk on any surface flatter than about 44°.
-Trunks block. Rocks, logs and root wads block only when they are taller than a step and their sides are steep.
-Natural ground steeper than about 44° can't be climbed. Shrubs and ferns slow you down. Grass and twigs don't block.
+- **Body:** you stand on the highest solid surface under your feet, which is the ground or the top of a rock, log or root wad.
+  Rock tops are sampled from each rock's actual geometry, so ledges hold you.
+- **Steps:** rises up to 0.55 m are taken in stride.
+- **Scramble:** pushing forward into something up to 1.35 m high with a standable top climbs onto it in a short animation.
+- **Blocks:** trunks, taller steep-sided things, and natural ground steeper than about 49°.
+- **No slowdowns.** Instead the camera shows effort with damped springs: it dips and catches up on step-ups, compresses on
+  landings, pitches and rolls during scrambles, sways side to side in stride on steep climbs, and dodges sideways past
+  shrubs. Flat ground has no head bob. **World → Camera motion** sets Full, Reduced or Off.
 
 ## Reproduce stand statistics without a browser
 

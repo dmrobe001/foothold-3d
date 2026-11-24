@@ -127,6 +127,7 @@
     <label for="fMoist">Climate<select id="fMoist"><option value="dry">Dry</option><option value="mesic">Mesic</option><option value="wet">Wet</option></select></label>
     <label for="fStorm">Windstorms<select id="fStorm"><option value="none">None</option><option value="occasional">Occasional</option><option value="frequent">Frequent</option></select></label>
     <label for="fGeo">Bedrock<select id="fGeo"><option value="granite">Granite</option><option value="sandstone">Sandstone</option><option value="basalt">Basalt</option></select></label>
+    <label for="fMotion">Camera motion<select id="fMotion"><option value="full">Full</option><option value="reduced">Reduced</option><option value="off">Off</option></select></label>
     <label for="fQual">Graphics<select id="fQual"><option value="low">Phone</option><option value="high">Desktop</option></select></label>
   </div>
   <div class="actions"><button class="btn primary" id="bRegen">Regenerate</button></div>
@@ -719,7 +720,7 @@ const $ = (id) => document.getElementById(id);
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 
 // ---------------------------------------------------------------- settings
-const settings = { seed: 1, age: 160, moisture: 'mesic', storms: 'occasional', geology: 'granite', quality: isTouch ? 'low' : 'high' };
+const settings = { seed: 1, age: 160, moisture: 'mesic', storms: 'occasional', geology: 'granite', quality: isTouch ? 'low' : 'high', motion: 'full' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('foothold.settings') || '{}')); } catch (e) { /* storage unavailable */ }
 const saveSettings = () => { try { localStorage.setItem('foothold.settings', JSON.stringify(settings)); } catch (e) { /* ignore */ } };
 
@@ -1601,8 +1602,7 @@ function buildWorld() {
       const col = mix3(lith.col, [0.5, 0.5, 0.48], 0.15 * r()), v = 0.85 + 0.25 * r();
       const vi = Math.floor(r() * 4), yaw = r() * 6.283, sx = s * (0.9 + 0.5 * r()), sy = s * (0.75 + 0.5 * r()), sz = s * (0.8 + 0.5 * r()), sink = s * (0.08 + 0.15 * r());
       B[tileOf(x, z)].rk[vi].add(trs(x, gy - sink, z, yaw, sx, sy, sz, Math.atan2(hz, 2) * 0.8 * (tilt > 0 ? 1 : 0), -Math.atan2(hx, 2) * 0.8), col[0] * v, col[1] * v, col[2] * v, s);
-      const bb = boxOf(rocks.big[vi]);
-      addSolid(ellipsoid(x, gy - sink, z, sx * Math.max(bb.max.x, -bb.min.x) * 0.9, sy * bb.max.y, sz * Math.max(bb.max.z, -bb.min.z) * 0.9, Math.cos(yaw), -Math.sin(yaw)), s * 1.6);
+      addSolid(meshSolid(rocks.big[vi], trs(x, gy - sink, z, yaw, sx, sy, sz, Math.atan2(hz, 2) * 0.8 * (tilt > 0 ? 1 : 0), -Math.atan2(hx, 2) * 0.8), x, z), s * 1.6);
     }
   }
   for (let ti = 0; ti < B.length; ti++) {
@@ -1808,52 +1808,101 @@ function spawn() {
   // look downhill, toward the most open view
   const gx = ground(player.x + 2, player.z) - ground(player.x - 2, player.z), gz = ground(player.x, player.z + 2) - ground(player.x, player.z - 2);
   player.yaw = Math.atan2(gx, gz);
-  player.eye = feetAt(player.x, player.z) + 1.65;
+  resetRig();
 }
 // ---------------------------------------------------------------- collision
-// Policy: the player is a 0.22 m-radius foot on a "support surface" = max(ground, tops of solid things).
-// Anything whose top is within STEP of your feet can be stepped onto, so flat-enough rocks, logs and root wads are
-// walkable. Bigger rises block. Natural ground steeper than MAX_SLOPE blocks walking uphill.
-// Trunks are vertical walls. Shrubs, ferns and grass don't block, but slow you down; twigs and branches are walked over.
-const STEP = 0.5, MAX_SLOPE = 0.95, FOOT = 0.22;
-let solids = null; // 8 m hash of static solids: rock / root-wad ellipsoids and logs
+// The body is a small foot (radius FOOT) standing on a "support surface": max(ground, tops of solid things).
+//  * walk:     rises up to STEP are taken in stride
+//  * scramble: rises up to SCRAMBLE onto a surface flat enough to stand on become a short mantle animation
+//  * block:    anything taller with steep sides, natural ground steeper than MAX_SLOPE, and trunks
+// Rock tops are sampled from the rock's own geometry (a precomputed top-surface heightfield per mesh), so ledges and
+// flat tops hold you where they visibly are. Root wads are ellipsoids, logs are lying cylinders.
+// Shrubs, ferns, grass and twigs never block or slow you; the camera rig expresses them instead (see "camera rig").
+const STEP = 0.55, SCRAMBLE = 1.35, MAX_SLOPE = 0.95, MAX_GROUND_SLOPE = 1.15, FOOT = 0.22;
+let solids = null; // 8 m hash of static solids
 const ckey8 = (x, z) => Math.floor((x + HALF) / 8) * 4096 + Math.floor((z + HALF) / 8);
-function addSolid(o, r) { // register an object in every 8 m cell its footprint (radius r) touches
+function addSolid(o, r) {
   const seen = new Set();
   for (const [ox, oz] of [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r], [r, r], [-r, -r], [r, -r], [-r, r]]) {
     const k = ckey8(o.x + ox, o.z + oz); if (seen.has(k)) continue; seen.add(k);
     let a = solids.get(k); if (!a) solids.set(k, (a = [])); a.push(o);
   }
 }
-// ellipsoid with horizontal semi-axes ax (along unit direction (ux,uz)) and az (perpendicular), vertical semi-axis ay
 function ellipsoid(x, y, z, ax, ay, az, ux, uz) { return { kind: 'ell', x, y, z, ax, ay, az, ux, uz }; }
+
+// Top-surface heightfield of a mesh in its local frame: for each cell of a grid over the x/z footprint, the highest
+// point of the surface above it. Built once per geometry by rasterising triangles.
+const topFields = new Map();
+function topField(geo, res = 48) {
+  let tf = topFields.get(geo); if (tf) return tf;
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox, p = geo.attributes.position, ix = geo.index ? geo.index.array : null;
+  const x0 = bb.min.x, z0 = bb.min.z, dx = (bb.max.x - x0) / (res - 1), dz = (bb.max.z - z0) / (res - 1);
+  const H = new Float32Array(res * res).fill(-Infinity), n = ix ? ix.length : p.count;
+  for (let t = 0; t < n; t += 3) {
+    const a = ix ? ix[t] : t, b = ix ? ix[t + 1] : t + 1, c = ix ? ix[t + 2] : t + 2;
+    const ax = p.getX(a), ay = p.getY(a), az = p.getZ(a), bx = p.getX(b), by = p.getY(b), bz = p.getZ(b), cx = p.getX(c), cy = p.getY(c), cz = p.getZ(c);
+    const det = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz); if (Math.abs(det) < 1e-9) continue;
+    const i0 = Math.max(0, Math.floor((Math.min(ax, bx, cx) - x0) / dx)), i1 = Math.min(res - 1, Math.ceil((Math.max(ax, bx, cx) - x0) / dx));
+    const j0 = Math.max(0, Math.floor((Math.min(az, bz, cz) - z0) / dz)), j1 = Math.min(res - 1, Math.ceil((Math.max(az, bz, cz) - z0) / dz));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const x = x0 + i * dx, z = z0 + j * dz;
+      const l1 = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / det, l2 = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / det, l3 = 1 - l1 - l2;
+      if (l1 < -1e-4 || l2 < -1e-4 || l3 < -1e-4) continue;
+      const y = l1 * ay + l2 * by + l3 * cy, k = j * res + i; if (y > H[k]) H[k] = y;
+    }
+  }
+  tf = { res, x0, z0, dx, dz, H };
+  topFields.set(geo, tf);
+  return tf;
+}
+function sampleTop(tf, lx, lz) {
+  const gx = (lx - tf.x0) / tf.dx, gz = (lz - tf.z0) / tf.dz;
+  if (gx < 0 || gz < 0 || gx > tf.res - 1 || gz > tf.res - 1) return -Infinity;
+  const i = Math.min(tf.res - 2, Math.floor(gx)), j = Math.min(tf.res - 2, Math.floor(gz)), fx = gx - i, fz = gz - j, H = tf.H, r = tf.res;
+  const h00 = H[j * r + i], h10 = H[j * r + i + 1], h01 = H[(j + 1) * r + i], h11 = H[(j + 1) * r + i + 1];
+  if (h00 > -1e9 && h10 > -1e9 && h01 > -1e9 && h11 > -1e9) return h00 * (1 - fx) * (1 - fz) + h10 * fx * (1 - fz) + h01 * (1 - fx) * fz + h11 * fx * fz;
+  // at the rim, hold the nearest real sample so edges don't crumble
+  const near = [[h00, (1 - fx) * (1 - fz)], [h10, fx * (1 - fz)], [h01, (1 - fx) * fz], [h11, fx * fz]].filter(([h, w]) => h > -1e9 && w > 0.2);
+  return near.length ? Math.max(...near.map(([h]) => h)) : -Infinity;
+}
+const _inv = new THREE.Matrix4(), _v3 = new THREE.Vector3();
+function meshSolid(geo, matrix, x, z) {
+  const m = matrix.clone();
+  return { kind: 'mesh', x, z, tf: topField(geo), m, inv: m.clone().invert() };
+}
 function topOf(o, x, z) {
+  if (o.kind === 'mesh') {
+    _v3.set(x, o.m.elements[13], z).applyMatrix4(o.inv);
+    const h = sampleTop(o.tf, _v3.x, _v3.z); if (h === -Infinity) return -Infinity;
+    _v3.y = h; return _v3.applyMatrix4(o.m).y;
+  }
   if (o.kind === 'ell') {
     const dx = x - o.x, dz = z - o.z, a = dx * o.ux + dz * o.uz, b = -dx * o.uz + dz * o.ux;
     const q = (a / o.ax) ** 2 + (b / o.az) ** 2;
     return q < 1 ? o.y + o.ay * Math.sqrt(1 - q) : -Infinity;
   }
-  // log: cylinder lying along a segment
   const vx = o.x1 - o.x0, vz = o.z1 - o.z0, L2 = vx * vx + vz * vz || 1;
   const t = clamp(((x - o.x0) * vx + (z - o.z0) * vz) / L2, 0, 1);
   const d = Math.hypot(x - (o.x0 + vx * t), z - (o.z0 + vz * t));
   return d < o.r ? lerp(o.ya0, o.ya1, t) + Math.sqrt(o.r * o.r - d * d) : -Infinity;
 }
-const geoBox = new Map();
-function boxOf(geo) { let b = geoBox.get(geo); if (!b) { geo.computeBoundingBox(); b = geo.boundingBox; geoBox.set(geo, b); } return b; }
-function nearRockSolid(it) { // near-field rock item -> ellipsoid matching how refreshNear draws it
-  const [type, x, z, yaw, a, , , v] = it, nb = rockBatch(type, v), bb = boxOf(nb.mesh.geometry), gy = ground(x, z);
-  const sx = a * (0.8 + 0.5 * v), sz = a * (1.2 - 0.4 * v);
-  return ellipsoid(x, gy - a * 0.25, z, sx * Math.max(bb.max.x, -bb.min.x) * 0.92, a * bb.max.y, sz * Math.max(bb.max.z, -bb.min.z) * 0.92, Math.cos(yaw), -Math.sin(yaw));
+function nearRockSolid(it) { // near-field rock item -> mesh solid, using exactly the transform refreshNear draws with
+  const [type, x, z, yaw, a, , , v] = it, nb = rockBatch(type, v), gy = ground(x, z);
+  return meshSolid(nb.mesh.geometry, trs(x, gy - a * 0.25, z, yaw, a * (0.8 + 0.5 * v), a, a * (1.2 - 0.4 * v), (v - 0.5) * 0.3, 0), x, z);
 }
 function supportAt(x, z) {
   let y = ground(x, z);
-  const k = ckey8(x, z), list = solids.get(k);
+  const list = solids.get(ckey8(x, z));
   if (list) for (const o of list) { const t = topOf(o, x, z); if (t > y) y = t; }
-  const items = near?.cells.get(Math.floor((x + HALF) / NC) * 4096 + Math.floor((z + HALF) / NC));
-  if (items) for (const it of items) {
-    if (!it.solid) { if (!/^(rock|round)/.test(it[0]) || it[4] < 0.18) continue; it.solid = nearRockSolid(it); }
-    const t = topOf(it.solid, x, z); if (t > y) y = t;
+  const ci = Math.floor((x + HALF) / NC), cj = Math.floor((z + HALF) / NC);
+  for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) { // big near-field rocks can overhang their cell
+    const items = near?.cells.get((ci + di) * 4096 + cj + dj); if (!items) continue;
+    for (const it of items) {
+      if (it.solid === undefined) it.solid = /^(rock|round)/.test(it[0]) && it[4] >= 0.18 ? nearRockSolid(it) : null;
+      if (!it.solid || ((di || dj) && it[4] < 0.8)) continue;
+      const t = topOf(it.solid, x, z); if (t > y) y = t;
+    }
   }
   return y;
 }
@@ -1864,41 +1913,66 @@ function footSupport(x, z) {
 }
 const feetAt = (x, z) => footSupport(x, z);
 const slopeAt = (x, z) => Math.hypot(sampleGrid(W.H, N, x + 1, z) - sampleGrid(W.H, N, x - 1, z), sampleGrid(W.H, N, x, z + 1) - sampleGrid(W.H, N, x, z - 1)) / 2;
-function standable(x, z, feet, fromX, fromZ) {
-  const sup = footSupport(x, z);
-  if (sup - feet > STEP) return null;
+const supportGrad = (x, z, e = 0.15) => Math.hypot(supportAt(x + e, z) - supportAt(x - e, z), supportAt(x, z + e) - supportAt(x, z - e)) / (2 * e);
+function trunkHit(x, z) { for (const t of nearbyTrunks(x, z)) if (Math.hypot(t.x - x, t.z - z) < t.r) return true; return false; }
+// `climb` is how much height has been gained on steep rock since the last flat-enough footing. Steep bumps are fine
+// until they add up to more than a step, so you can cross uneven rock but can't creep up a tall smooth face.
+function standable(x, z, feet, fromX, fromZ, climb = 0) {
+  const sup = footSupport(x, z), rise = sup - feet;
+  if (rise > STEP) return null;
   const g = ground(x, z);
-  if (sup - feet > 0.005 && sup - g > STEP) { // climbing onto something taller than a step: only where its surface is flat enough
-    const e = 0.15, gs = Math.hypot(supportAt(x + e, z) - supportAt(x - e, z), supportAt(x, z + e) - supportAt(x, z - e)) / (2 * e);
-    if (gs > MAX_SLOPE) return null;
+  let steep = 0;
+  if (rise > 0.005 && sup - g > 0.25 && supportGrad(x, z) > MAX_SLOPE) { steep = rise; if (climb + steep > STEP) return null; }
+  if (sup <= g + 0.05 && slopeAt(x, z) > MAX_GROUND_SLOPE && g > ground(fromX, fromZ) + 1e-3) return null;
+  if (trunkHit(x, z)) return null;
+  return { sup, steep };
+}
+function scrambleTarget(px, pz, feet, ux, uz) { // a ledge within reach ahead that is flat enough to stand on
+  for (const d of [0.35, 0.6, 0.85, 1.1]) {
+    const x = px + ux * d, z = pz + uz * d, sup = footSupport(x, z);
+    if (sup - feet <= STEP || sup - feet > SCRAMBLE) continue;
+    if (supportGrad(x, z) > 1.3 || trunkHit(x, z)) continue; // scrambles may land on rougher, steeper tops than you could walk onto
+    return { x, z, y: sup };
   }
-  if (sup <= g + 0.05 && slopeAt(x, z) > MAX_SLOPE && g > ground(fromX, fromZ) + 1e-3) return null; // too steep to climb
-  for (const t of nearbyTrunks(x, z)) if (Math.hypot(t.x - x, t.z - z) < t.r) return null;
-  return sup;
+  return null;
 }
-function vegetationDrag(x, z) { // brushing through shrubs and ferns slows you down
-  let k = 1;
-  const ci = Math.floor((x + HALF) / NC), cj = Math.floor((z + HALF) / NC);
-  for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
-    const items = near?.cells.get((ci + di) * 4096 + cj + dj); if (!items) continue;
-    for (const it of items) {
-      const t = it[0]; if (t !== 'tall' && t !== 'shrub' && t !== 'fern') continue;
-      const d = Math.hypot(it[1] - x, it[2] - z), r = t === 'tall' ? it[4] * 0.8 : it[4] * 0.7;
-      if (d < r) k = Math.min(k, t === 'tall' ? 0.5 : t === 'shrub' ? 0.75 : 0.88);
-    }
-  }
-  return k;
-}
-function blockedAt(x, z) {
-  for (const t of nearbyTrunks(x, z)) if (Math.hypot(t.x - x, t.z - z) < t.r + 0.2) return true;
-  return footSupport(x, z) - ground(x, z) > STEP;
-}
+function blockedAt(x, z) { return trunkHit(x, z) || footSupport(x, z) - ground(x, z) > SCRAMBLE; }
 function nearbyTrunks(x, z) {
   const ci = Math.floor((x + HALF) / 8), cj = Math.floor((z + HALF) / 8), out = [];
   for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) { const a = colTrunks.get((ci + di) * 4096 + cj + dj); if (a) out.push(...a); }
   return out;
 }
+
+// ---------------------------------------------------------------- body and camera rig
+// The body moves smoothly and never slows for slopes or shrubs. Effort is shown by the camera instead, through damped
+// springs: a dip-and-catch on step-ups, knee compression on landing, a pitch-and-roll "vault" when scrambling, a
+// stride-locked side-to-side sway that grows with uphill steepness, and a sideways dodge around shrubs. Flat-ground walking
+// has no bob. Motion strength: settings.motion = full | reduced | off.
+const rig = { climb: 0, feet: 0, vy: 0, oy: 0, voy: 0, lat: 0, vlat: 0, roll: 0, vroll: 0, pit: 0, vpit: 0, phase: 0, mantle: null, swayAmp: 0 };
+const MOTION = { full: 1, reduced: 0.4, off: 0 };
+function resetRig() { Object.assign(rig, { feet: footSupport(player.x, player.z), vy: 0, oy: 0, voy: 0, lat: 0, vlat: 0, roll: 0, vroll: 0, pit: 0, vpit: 0, mantle: null, swayAmp: 0 }); player.eye = rig.feet + 1.65; }
+function spring(x, v, target, k, dt) { // critically damped, sub-stepped for stability
+  const c = 2 * Math.sqrt(k), n = Math.ceil(dt / 0.008), h = dt / n;
+  for (let i = 0; i < n; i++) { v += (-k * (x - target) - c * v) * h; x += v * h; }
+  return [x, v];
+}
+function shrubPush(x, z, rx, rz) { // signed sideways nudge away from shrub stems near the head's path
+  let push = 0;
+  const ci = Math.floor((x + HALF) / NC), cj = Math.floor((z + HALF) / NC);
+  for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+    const items = near?.cells.get((ci + di) * 4096 + cj + dj); if (!items) continue;
+    for (const it of items) {
+      const t = it[0]; if (t !== 'tall' && t !== 'shrub' && t !== 'seedB' && t !== 'seedC') continue;
+      const r = t === 'tall' ? it[4] * 0.9 + 0.3 : it[4] * 0.8 + 0.2, d = Math.hypot(it[1] - x, it[2] - z);
+      if (d >= r) continue;
+      const side = (x - it[1]) * rx + (z - it[2]) * rz, w = (1 - d / r) * (t === 'tall' ? 0.45 : t === 'shrub' ? 0.22 : 0.12);
+      push += (side >= 0 ? 1 : -1) * w;
+    }
+  }
+  return clamp(push, -0.5, 0.5);
+}
 function movePlayer(dt) {
+  const M = MOTION[settings.motion] ?? 1;
   let f = input.f, s = input.s, run = input.run;
   if (input.keys.has('KeyW') || input.keys.has('ArrowUp')) f += 1;
   if (input.keys.has('KeyS') || input.keys.has('ArrowDown')) f -= 1;
@@ -1908,23 +1982,73 @@ function movePlayer(dt) {
   if (input.keys.has('ArrowRight')) player.yaw -= dt * 1.8;
   if (input.keys.has('ShiftLeft') || input.keys.has('ShiftRight')) run = true;
   const mag = Math.hypot(f, s); if (mag > 1) { f /= mag; s /= mag; }
-  const speed = (run ? 4.2 : 1.6) * vegetationDrag(player.x, player.z);
-  const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
-  let dx = (-sy * f + cy * s) * speed * dt, dz = (-cy * f - sy * s) * speed * dt;
-  let feet = footSupport(player.x, player.z);
-  if (dx || dz) {
-    const up = (ground(player.x + dx * 5, player.z + dz * 5) - ground(player.x, player.z)) / (Math.hypot(dx, dz) * 5 + 1e-6);
-    const k = clamp(1 - Math.max(0, up) * 0.6, 0.35, 1); dx *= k; dz *= k;
-    const px = player.x, pz = player.z, lim = (v) => clamp(v, -HALF + 6, HALF - 6);
-    // try the full step, then slide along each axis
-    for (const [mx, mz] of [[dx, dz], [dx, 0], [0, dz]]) {
-      if (!mx && !mz) continue;
-      const nx = lim(px + mx), nz = lim(pz + mz), sup = standable(nx, nz, feet, px, pz);
-      if (sup !== null) { player.x = nx; player.z = nz; feet = sup; break; }
+  const speed = run ? 4.2 : 1.6;
+  const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw), rx = cy, rz = -sy; // camera right vector
+  let moved = 0, uphill = 0;
+
+  if (rig.mantle) { // scripted scramble: up first, then over the lip
+    const m = rig.mantle; m.t += dt / m.dur;
+    const u = Math.min(1, m.t), up = 1 - (1 - Math.min(1, u * 1.6)) ** 2, over = u < 0.35 ? 0 : (u - 0.35) / 0.65;
+    player.x = lerp(m.x0, m.x1, over * over * (3 - 2 * over)); player.z = lerp(m.z0, m.z1, over * over * (3 - 2 * over));
+    rig.feet = lerp(m.y0, m.y1, up);
+    if (u >= 1) rig.mantle = null;
+  } else {
+    let dx = (-sy * f + cy * s) * speed * dt, dz = (-cy * f - sy * s) * speed * dt;
+    const step = Math.hypot(dx, dz);
+    if (step > 0) {
+      const px = player.x, pz = player.z, lim = (v) => clamp(v, -HALF + 6, HALF - 6);
+      let ok = false;
+      for (const [mx, mz] of [[dx, dz], [dx, 0], [0, dz]]) {
+        if (!mx && !mz) continue;
+        const nx = lim(px + mx), nz = lim(pz + mz), st = standable(nx, nz, rig.feet, px, pz, rig.climb);
+        if (st !== null) { player.x = nx; player.z = nz; rig.climb = st.steep > 0 ? rig.climb + st.steep : 0; ok = true; break; }
+      }
+      if (!ok && f > 0.3) { // blocked while pushing forward: look for something to scramble onto
+        const tgt = scrambleTarget(px, pz, rig.feet, dx / step, dz / step);
+        if (tgt) {
+          const h = tgt.y - rig.feet;
+          rig.climb = 0; rig.mantle = { t: 0, dur: 0.35 + 0.3 * (h / SCRAMBLE), x0: px, z0: pz, y0: rig.feet, x1: tgt.x, z1: tgt.z, y1: tgt.y };
+          rig.voy -= (0.8 + h) * 1.6 * M;                         // crouch into it
+          rig.vpit -= (0.6 + h * 0.6) * M;                        // eyes drop to the ledge
+          rig.vroll += (Math.random() < 0.5 ? -1 : 1) * (0.25 + 0.25 * h) * M; // shoulder leads
+        }
+      }
+      moved = Math.hypot(player.x - px, player.z - pz);
+      if (moved > 0) uphill = (ground(player.x, player.z) - ground(px, pz)) / moved;
+    }
+    // vertical: step up instantly (camera compensates), snap down gentle descents, fall off ledges
+    const sup = footSupport(player.x, player.z);
+    if (sup >= rig.feet) {
+      const d = sup - rig.feet;
+      if (d > 0.08) { rig.oy -= d; rig.voy -= d * 6 * M; }     // the head lags, dips, then catches up
+      else rig.oy -= d;
+      rig.feet = sup; rig.vy = 0;
+    } else {
+      const drop = rig.feet - sup, snap = 0.06 + speed * dt * MAX_GROUND_SLOPE;
+      if (drop <= snap && rig.vy === 0) { rig.oy += drop; rig.feet = sup; } // stay glued to the ground going downhill
+      else {
+        rig.vy -= 9.8 * dt; rig.feet += rig.vy * dt;
+        if (rig.feet <= sup) { const impact = -rig.vy; rig.feet = sup; rig.vy = 0; rig.voy -= impact * 0.55 * M; rig.vpit -= impact * 0.08 * M; }
+      }
     }
   }
-  const target = feet + 1.65;
-  player.eye = lerp(player.eye, target, 1 - Math.exp(-dt * (target > player.eye ? 12 : 7)));
+
+  // stride-locked sway on steep climbs; amplitude follows steepness through a spring so it swells and fades
+  rig.phase += (moved / (run ? 1.3 : 0.75)) * Math.PI;
+  const steep = smoothstep(0.15, 0.9, uphill) * (moved > 0 ? 1 : 0);
+  [rig.swayAmp] = spring(rig.swayAmp, 0, steep, 6, dt);
+  const sway = Math.sin(rig.phase) * rig.swayAmp, bob = -Math.abs(Math.sin(rig.phase)) * rig.swayAmp;
+  const dodge = shrubPush(player.x, player.z, rx, rz);
+  [rig.lat, rig.vlat] = spring(rig.lat, rig.vlat, (sway * 0.11 + dodge) * M, 60, dt);
+  [rig.roll, rig.vroll] = spring(rig.roll, rig.vroll, (-sway * 0.045 - dodge * 0.1) * M, 50, dt);
+  [rig.pit, rig.vpit] = spring(rig.pit, rig.vpit, 0, 40, dt);
+  [rig.oy, rig.voy] = spring(rig.oy, rig.voy, bob * 0.05 * M, 70, dt);
+  player.eye = rig.feet + 1.65 + rig.oy;
+}
+function applyCamera() {
+  const cy = Math.cos(player.yaw), sy = Math.sin(player.yaw);
+  camera.position.set(player.x + cy * rig.lat, player.eye, player.z - sy * rig.lat);
+  camera.rotation.set(clamp(player.pitch + rig.pit, -1.45, 1.45), player.yaw, rig.roll);
 }
 
 // ---------------------------------------------------------------- input
@@ -2034,7 +2158,7 @@ $('mapTop').addEventListener('click', (e) => {
   if (Math.abs(x) > HALF - 8 || Math.abs(z) > HALF - 8) return;
   let tx = x, tz = z;
   for (let k = 0; k < 20 && blockedAt(tx, tz); k++) { tx += Math.cos(k) * 0.8; tz += Math.sin(k) * 0.8; }
-  player.x = tx; player.z = tz; player.eye = feetAt(tx, tz) + 1.65; refreshNear(tx, tz, true); drawMapTop();
+  player.x = tx; player.z = tz; refreshNear(tx, tz, true); resetRig(); drawMapTop();
 });
 
 // stand panel
@@ -2101,8 +2225,9 @@ function drawFigures() {
 function roundTop(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x, y + h); g.lineTo(x, y + r); g.quadraticCurveTo(x, y, x + r, y); g.lineTo(x + w - r, y); g.quadraticCurveTo(x + w, y, x + w, y + r); g.lineTo(x + w, y + h); g.closePath(); g.fill(); }
 
 // world panel
-const fSeed = $('fSeed'), fAge = $('fAge'), fMoist = $('fMoist'), fStorm = $('fStorm'), fQual = $('fQual'), fGeo = $('fGeo');
-function syncForm() { fSeed.value = settings.seed; fAge.value = String(settings.age); fMoist.value = settings.moisture; fStorm.value = settings.storms; fQual.value = settings.quality; fGeo.value = settings.geology; }
+const fSeed = $('fSeed'), fAge = $('fAge'), fMoist = $('fMoist'), fStorm = $('fStorm'), fQual = $('fQual'), fGeo = $('fGeo'), fMotion = $('fMotion');
+function syncForm() { fSeed.value = settings.seed; fAge.value = String(settings.age); fMoist.value = settings.moisture; fStorm.value = settings.storms; fQual.value = settings.quality; fGeo.value = settings.geology; fMotion.value = settings.motion || 'full'; }
+fMotion.addEventListener('change', () => { settings.motion = fMotion.value; saveSettings(); });
 syncForm();
 $('bDice').addEventListener('click', () => { fSeed.value = 1 + Math.floor(Math.random() * 99999); });
 $('bRegen').addEventListener('click', () => {
@@ -2134,8 +2259,7 @@ function loop(now) {
   uTime.value = now / 1000;
   movePlayer(dt);
   refreshNear(player.x, player.z);
-  camera.position.set(player.x, player.eye, player.z);
-  camera.rotation.set(player.pitch, player.yaw, 0);
+  applyCamera();
   sky.position.copy(camera.position);
   // shadow camera follows the player, snapped to texels to avoid shimmering
   const texel = 96 / sun.shadow.mapSize.x, sx = Math.round(player.x / texel) * texel, sz = Math.round(player.z / texel) * texel;
@@ -2195,10 +2319,11 @@ start();
 
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
-  get world() { return W; }, player, settings, ground: (x, z) => ground(x, z), col: { footSupport, standable, solids: () => solids },
+  get world() { return W; }, player, settings, ground: (x, z) => ground(x, z), resetRig, input, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
+  col: { footSupport, standable, scrambleTarget, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },
   info() { return { near: Object.fromEntries(Object.entries(near.b).map(([k, v]) => [k, v.n])), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries }; },
-  renderOnce() { refreshNear(player.x, player.z, true); camera.position.set(player.x, player.eye, player.z); camera.rotation.set(player.pitch, player.yaw, 0); sky.position.copy(camera.position); renderer.shadowMap.needsUpdate = true; uTime.value = 0; updateTiles(); terrainU.uCenter.value.set(Math.round(player.x / 8) * 8, Math.round(player.z / 8) * 8); renderer.render(scene, camera); },
+  renderOnce() { refreshNear(player.x, player.z, true); applyCamera(); sky.position.copy(camera.position); renderer.shadowMap.needsUpdate = true; uTime.value = 0; updateTiles(); terrainU.uCenter.value.set(Math.round(player.x / 8) * 8, Math.round(player.z / 8) * 8); renderer.render(scene, camera); },
 };
 
 </script>
