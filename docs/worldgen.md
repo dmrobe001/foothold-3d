@@ -16,7 +16,7 @@ Real forests are records of their own history. So we generate that history.
 | Tree positions, sizes, species | **Individual-based stand simulation** (below) | Poisson-disk sampling thresholded by noise | Offline-simulated stand library (below) |
 | Dead wood | Falls out of the simulation: mortality → snag → log → decay | Random logs at a target density | Same, plus log decay chemistry and moss succession |
 | Microtopography | Pits and mounds written back into the heightmap where trees uprooted | None | Higher-resolution near-field terrain |
-| Understory, debris, rocks | Deterministic per-8 m-cell scatter, driven by canopy light, wetness, rockiness, nearby fresh logs | Uniform noise scatter | Its own light-competition model |
+| Understory, debris, rocks | Deterministic per-8 m-cell scatter of tall shrubs, low shrubs, tree seedlings, ferns, forbs, grasses, sedges, leaf litter, crooked branches and rocks, driven by canopy light, wetness, soil depth, conifer share, rockiness and nearby fresh logs | Uniform noise scatter | Its own light-competition model |
 
 ## The stand simulation
 
@@ -49,14 +49,14 @@ Run it for 300 and you get a multi-cohort stand with big logs and gaps.
 ### Is it realistic? What we can check
 
 `node tools/sim-report.mjs <seed> <age> <dry|mesic|wet> <none|occasional|frequent>` prints the stand inventory.
-With the current calibration (seed 1, mesic, occasional storms):
+With the current calibration (seed 1, mesic, occasional storms, granite):
 
 | | 40 yr | 160 yr | 300 yr (seed 2) | Rough temperate range |
 |---|---|---|---|---|
-| Live stems ≥ 10 cm /ha | ~420 | ~475 | ~300 | 300–700 (mature) |
-| Basal area m²/ha | ~8 | ~36 | ~37 | 25–50 (mature) |
-| Snags ≥ 10 cm /ha | — | ~41 | ~27 | 10–60 |
-| Down log volume m³/ha | ~54 | ~57 | ~131 | 5–30 managed, 50–200+ old growth |
+| Live stems ≥ 10 cm /ha | ~376 | ~407 | ~329 | 300–700 (mature) |
+| Basal area m²/ha | ~8 | ~32 | ~39 | 25–50 (mature) |
+| Snags ≥ 10 cm /ha | ~22 | ~37 | ~30 | 10–60 |
+| Down log volume m³/ha | ~47 | ~55 | ~123 | 5–30 managed, 50–200+ old growth |
 
 These reference ranges are order-of-magnitude orientation from the forest-ecology literature
 (e.g. Harmon et al. 1986, *Advances in Ecological Research* 15, on coarse woody debris). They are not a
@@ -74,6 +74,43 @@ Two emergent patterns are worth knowing because they come out of the dynamics ra
 Steady-state dead-wood stock is a residence-time problem (Little's law): stock ≈ input rate × mean residence time.
 At about 1 % annual mortality of a 35 m²/ha stand and a residence time of ~60–100 years, a stock of tens to low
 hundreds of m³/ha is what you should expect. The simulation lands there without being told to.
+
+## Stem form: why trees are not straight
+
+Every stem gets three offsets, computed from its simulated life and site and applied by bending the trunk mesh
+in the vertex shader. Each is a mechanism foresters recognise:
+
+| Form | Mechanism | Drivers in the model |
+|---|---|---|
+| Lean | Phototropism: crowns grow toward the brightest sky. Conifers resist, because a strong leader keeps them upright (apical control). | Light gradient across the crown (from the stand simulation) × species phototropism (birch > maple > pine > fir); plus downwind lean on exposed ridges. |
+| Basal sweep ("pistol butt") | Soil and snow creep push young stems downslope; the tree then recovers vertical growth, leaving a curved base. | Slope × snowpack (wetter climate = more) × soil depth; stronger in conifers (snow load). |
+| Sinuosity | Damage, leader loss and stress produce wandering stems; broadleaves have weaker apical control than conifers. | Species × shallow or rocky soil. |
+
+Slenderness is dynamic. Each step a tree's height-to-diameter allocation relaxes toward a target set by its light
+(shade → tall and thin), soil depth and wind exposure (exposed or shallow → short and stout, i.e. thigmomorphogenesis).
+
+On the thin-tree question: in a 160-year world the top 10 % of stems average ~50 cm dbh and ~26 m tall
+(height/diameter ≈ 52), which is a normal proportion. The median stem is ~27 cm because a dense even-aged stand is mostly
+poles at that age. The 300-year setting gives the big-tree look.
+
+## Bedrock
+
+Bedrock is a world setting (granite, sandstone, basalt). It changes:
+
+* **Soil fertility.** Species have a fertility preference, so basalt (rich) favours maple, sandstone (poor, well drained)
+  favours pine, and granite sits between. Fertility also scales growth.
+* **Drainage.** Sandstone sites are drier.
+* **Soil depth.** Shallow soil means more uprooting (and fewer snapped stems), more stem sinuosity and shorter trees.
+* **Rock appearance.** Granite gives rounded core-stones and jointed blocks, sandstone gives bedded slabs with layering,
+  and basalt gives sharp, dark, angular blocks. Stream-bed cobbles are always water-rounded.
+
+## Ground surface
+
+The heightmap is upsampled to 0.5 m with bicubic interpolation plus micro-relief (soil texture, moss hummocks on wet
+ground, rock knobs on rocky ground). A 96 m patch of 0.5 m terrain follows the player and is displaced on the GPU
+from that heightmap. It blends into the 2 m world mesh at its rim, so there is no seam. Ecological fields are read
+from smoothly filtered textures, not per-vertex attributes, so there are no triangle-shaped colour blotches. Per-pixel
+bump and speckle add grit up close. Steep stone uses triplanar projection so it does not smear.
 
 ## Rendering choices that matter more than polygon count
 

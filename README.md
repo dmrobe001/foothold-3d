@@ -22,12 +22,12 @@ Three.js 0.160.0 loads from the jsDelivr content delivery network (CDN), so you 
 Controls: **phone**, left thumb walks (push to the rim to run) and drag elsewhere to look.
 **Desktop**, WASD or arrow keys, Shift to run, drag to look, M for the map.
 Panels: **Map** (tap to teleport), **Stand** (inventory, diameter distribution, pair correlation),
-**World** (seed, stand age, climate, windstorms, graphics quality).
+**World** (seed, stand age, climate, windstorms, bedrock, graphics quality).
 
 ## Reproduce stand statistics without a browser
 
 ```bash
-node tools/sim-report.mjs 1 160 mesic occasional
+node tools/sim-report.mjs 1 160 mesic occasional granite
 ```
 
 The same seed and settings always give the same world.

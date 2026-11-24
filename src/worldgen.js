@@ -80,11 +80,23 @@ export function sampleGrid(G, n, x, z) {
 // tol: shade tolerance 0..1, half: light level giving half-maximal growth, disp: seed dispersal length (m),
 // decay: multiplier on log residence time.
 export const SPECIES = [
-  { name: 'Fir',   kind: 'conifer', mOpt: 0.68, mW: 0.26, eBias: 0.35,  tol: 0.9,  half: 0.05, G: 0.42, dmax: 90, life: 300, Hmax: 36, disp: 14, decay: 1.3 },
-  { name: 'Pine',  kind: 'pine',    mOpt: 0.22, mW: 0.22, eBias: 0.15,  tol: 0.15, half: 0.35, G: 0.55, dmax: 85, life: 260, Hmax: 31, disp: 28, decay: 1.25 },
-  { name: 'Maple', kind: 'broad',   mOpt: 0.50, mW: 0.24, eBias: -0.35, tol: 0.75, half: 0.09, G: 0.48, dmax: 95, life: 240, Hmax: 29, disp: 11, decay: 0.8 },
-  { name: 'Birch', kind: 'birch',   mOpt: 0.55, mW: 0.34, eBias: 0.0,   tol: 0.1,  half: 0.4,  G: 0.75, dmax: 50, life: 110, Hmax: 23, disp: 40, decay: 0.6 },
+  { name: 'Fir',   kind: 'conifer', mOpt: 0.68, mW: 0.26, eBias: 0.35,  tol: 0.9,  half: 0.05, G: 0.58, dmax: 90, life: 300, Hmax: 36, disp: 14, decay: 1.3,  fPref: 0.5,  phot: 0.25, sinu: 0.02 },
+  { name: 'Pine',  kind: 'pine',    mOpt: 0.22, mW: 0.22, eBias: 0.15,  tol: 0.15, half: 0.35, G: 0.75, dmax: 85, life: 260, Hmax: 31, disp: 28, decay: 1.25, fPref: 0.15, phot: 0.6,  sinu: 0.07 },
+  { name: 'Maple', kind: 'broad',   mOpt: 0.50, mW: 0.24, eBias: -0.35, tol: 0.75, half: 0.09, G: 0.66, dmax: 95, life: 240, Hmax: 29, disp: 11, decay: 0.8,  fPref: 0.85, phot: 1.0,  sinu: 0.08 },
+  { name: 'Birch', kind: 'birch',   mOpt: 0.55, mW: 0.34, eBias: 0.0,   tol: 0.1,  half: 0.4,  G: 0.95, dmax: 50, life: 110, Hmax: 23, disp: 40, decay: 0.6,  fPref: 0.5,  phot: 1.3,  sinu: 0.1 },
 ];
+// fPref: preferred soil fertility; phot: phototropic lean strength (conifers keep a straight leader through apical control);
+// sinu: typical stem sinuosity amplitude in metres.
+
+// Bedrock sets soil fertility, drainage, depth on slopes, and how rocks look.
+// fert 0..1 shifts species composition and growth; drain shifts site moisture; soil scales soil depth, which controls
+// windthrow and uprooting (shallow roots), stem form (stress, damage) and how much rock breaks the surface.
+export const GEOLOGY = {
+  granite:   { name: 'Granite',   fert: 0.4,  drain: 0.0,   soil: 0.55, rockBias: 0.12 },
+  sandstone: { name: 'Sandstone', fert: 0.25, drain: -0.09, soil: 0.85, rockBias: 0.0 },
+  basalt:    { name: 'Basalt',    fert: 0.85, drain: 0.03,  soil: 0.65, rockBias: 0.08 },
+};
+export const NF = 1025;              // fine heightmap vertices per side (0.5 m)
 export function treeHeight(sp, d) { return 1.3 + SPECIES[sp].Hmax * Math.pow(1 - Math.exp(-0.035 * d), 1.15); }
 export function crownRadius(sp, d) {
   const k = SPECIES[sp].kind;
@@ -160,6 +172,8 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
   const seed = opt.seed ?? 1, age = opt.age ?? 160;
   const moist = MOISTURE[opt.moisture ?? 'mesic'] ?? 0;
   const stormRate = STORMS[opt.storms ?? 'occasional'] ?? STORMS.occasional;
+  const geo = GEOLOGY[opt.geology ?? 'granite'] ?? GEOLOGY.granite;
+  const snow = clamp(0.6 + moist * 2.5, 0.1, 1.2); // wetter climate: deeper snowpack, more soil and snow creep on slopes
   const t0 = Date.now();
   const R = (k) => mulberry32((seed * 2654435761 + k * 40503) >>> 0);
   const rand = R(1);
@@ -231,21 +245,26 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
 
   // 3. site fields ---------------------------------------------------------
   const moistF = new Float32Array(N * N), rock = new Float32Array(N * N), elev = new Float32Array(N * N);
+  const soil = new Float32Array(N * N), expo = new Float32Array(N * N);
   const nzR = makeNoise2D(R(8));
   for (let k = 0; k < moistF.length; k++) {
     const i = k % N, j = (k / N) | 0, x = i * CELL - HALF, z = j * CELL - HALF;
-    moistF[k] = clamp(0.14 + 0.72 * wet[k] + 0.12 * north[k] + moist + 0.06 * fbm(nzR, x / 90, z / 90, 2), 0, 1);
+    moistF[k] = clamp(0.14 + 0.72 * wet[k] + 0.12 * north[k] + moist + geo.drain + 0.06 * fbm(nzR, x / 90, z / 90, 2), 0, 1);
     elev[k] = H[k] / hmax;
-    rock[k] = clamp(smoothstep(0.5, 0.95, slope[k]) + 0.5 * smoothstep(0.25, 0.7, fbm(nzR, x / 35 + 9, z / 35, 3)) * smoothstep(0.65, 0.95, elev[k]), 0, 1);
+    rock[k] = clamp(smoothstep(0.5, 0.95, slope[k]) + geo.rockBias * smoothstep(0.25, 0.7, slope[k]) + 0.5 * smoothstep(0.25, 0.7, fbm(nzR, x / 35 + 9, z / 35, 3)) * smoothstep(0.65, 0.95, elev[k]), 0, 1);
+    soil[k] = clamp(geo.soil * (1 - rock[k]) * (1 - 0.6 * smoothstep(0.3, 0.9, slope[k])) + 0.25 * wet[k], 0.05, 1);
+    expo[k] = smoothstep(0.55, 0.95, elev[k]) * (1 - wet[k]);   // ridge-top wind exposure
   }
   const site = (x, z) => ({
     m: sampleGrid(moistF, N, x, z), e: sampleGrid(elev, N, x, z),
     r: sampleGrid(rock, N, x, z), s: sampleGrid(streamSoft, N, x, z),
+    soil: sampleGrid(soil, N, x, z), ex: sampleGrid(expo, N, x, z),
   });
   const suit = (sp, st) => {
     const P = SPECIES[sp];
     const dm = (st.m - P.mOpt) / P.mW;
-    return Math.exp(-dm * dm) * Math.exp(P.eBias * (st.e - 0.5) * 2) * (1 - 0.85 * st.r) * (1 - 0.95 * st.s);
+    const df = (geo.fert - P.fPref) / 0.6;
+    return Math.exp(-dm * dm - df * df) * Math.exp(P.eBias * (st.e - 0.5) * 2) * (1 - 0.85 * st.r) * (1 - 0.95 * st.s);
   };
 
   // 4. stand simulation ----------------------------------------------------
@@ -279,7 +298,7 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
   }
   const addTree = (x, z, sp, d, year) => {
     const st = site(x, z);
-    const t = { x, z, sp, d, h: treeHeight(sp, d), ba: Math.PI * (d / 200) ** 2, st: 0, t: 0, ang: 0, up: false, sh: 0, len: 0, s: suit(sp, st), bornAt: year };
+    const t = { x, z, sp, d, h: treeHeight(sp, d), hf: 1, ba: Math.PI * (d / 200) ** 2, st: 0, t: 0, ang: 0, up: false, sh: 0, len: 0, s: suit(sp, st), soil: st.soil, ex: st.ex, bornAt: year };
     trees.push(t); return t;
   };
   const windDir = rand() * Math.PI * 2;
@@ -315,12 +334,16 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
       if (t.st !== 0) continue;
       const P = SPECIES[t.sp];
       const L = shade(t.x, t.z, t.h, t);
-      const g = P.G * Math.min(1, 0.25 + t.s) * (L / (L + P.half)) * Math.max(0, 1 - t.d / P.dmax);
+      const g = P.G * Math.min(1, 0.25 + t.s) * (0.8 + 0.4 * geo.fert) * (0.7 + 0.3 * t.soil) * (L / (L + P.half)) * Math.max(0, 1 - t.d / P.dmax);
       t.L = L;
       let rate = (1 / P.life) * (1 + 3 * Math.pow(t.d / P.dmax, 4));
       if (g < 0.08) rate += 0.07 * (1 - g / 0.08) * (1 - 0.8 * P.tol);
       if (t.d < 3) rate += 0.02;
-      t.d += g * dt; t.h = treeHeight(t.sp, t.d); t.ba = Math.PI * (t.d / 200) ** 2;
+      // Height-diameter allocation: shaded stems put growth into height (slender); open-grown, shallow-soiled
+      // or wind-exposed stems stay shorter and stouter (thigmomorphogenesis).
+      const hfT = (0.86 + 0.24 * (1 - L)) * (0.82 + 0.18 * t.soil) * (1 - 0.15 * t.ex);
+      t.hf += (hfT - t.hf) * 0.35;
+      t.d += g * dt; t.h = treeHeight(t.sp, t.d) * t.hf; t.ba = Math.PI * (t.d / 200) ** 2;
       if (rand() < 1 - Math.exp(-dt * rate)) killTree(t, year, false);
     }
     // windstorms
@@ -333,7 +356,7 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
         if (t.st !== 0 || t.h < 8) continue;
         const dx = wrap(t.x - cx), dz = wrap(t.z - cz), q = (dx * dx + dz * dz) / (r * r);
         if (q > 1) continue;
-        if (rand() < (1 - q) * Math.pow(clamp(t.h / 26, 0, 1), 1.5) * 0.95) killTree(t, year, true, dir + (rand() - 0.5) * 0.5);
+        if (rand() < (1 - q) * Math.pow(clamp(t.h / 26, 0, 1), 1.5) * (1.25 - 0.45 * t.soil) * (0.8 + 0.4 * t.ex)) killTree(t, year, true, dir + (rand() - 0.5) * 0.5);
       }
     }
     // snags fall, logs decay
@@ -377,8 +400,8 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
     stats.deaths++;
     t.diedAt = year;
     if (t.d < 5) { t.st = 3; return; } // small stems vanish quickly
-    if (storm || (t.h > 15 && rand() < 0.2 * t.h / 30)) {
-      const snapped = storm && rand() < 0.4;
+    if (storm || (t.h > 15 && rand() < 0.2 * (t.h / 30) * (1.6 - t.soil))) {
+      const snapped = storm && rand() < 0.55 * t.soil; // deep-rooted trees snap; shallow-rooted ones tip over
       t.st = 2; t.t = 0; t.ang = dir ?? windDir + (rand() - 0.5) * 2; t.len = t.h * (0.85 + 0.15 * rand());
       if (snapped) { // snapped stem: log plus a jagged high stump
         const stub = addTree(t.x, t.z, t.sp, t.d, t.bornAt); stub.st = 1; stub.sh = 1.5 + rand() * 5; stub.diedAt = year;
@@ -427,14 +450,68 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
     for (let k = 0; k < conShare.length; k++) conShare[k] = tAcc[k] > 1e-5 ? cAcc[k] / tAcc[k] : 0.5;
   }
 
+  // 7. stem form: lean toward light, basal sweep from slope creep, sinuosity -------------------------------
+  // Offsets are in metres. lean*: displacement of the top of the stem; sweep*: pistol-butt offset reached a
+  // couple of metres up; A, k, ph: sinuosity amplitude, wavenumber (rad/m) and phase in the stem's local frame.
+  {
+    const fr = R(11);
+    const gH = (x, z) => sampleGrid(H, N, x, z);
+    for (const t of trees) {
+      const P = SPECIES[t.sp], soilT = t.soil ?? 0.6;
+      const f = { lx: 0, lz: 0, sx: 0, sz: 0, A: 0, k: 1, ph: fr() * 6.283 };
+      if (t.st === 0 && t.h > 3) {
+        const y = t.h * 0.6, e = 4;
+        const gx = shade(t.x + e, t.z, y, t) - shade(t.x - e, t.z, y, t), gz = shade(t.x, t.z + e, y, t) - shade(t.x, t.z - e, y, t);
+        const gm = Math.hypot(gx, gz) + 1e-6, pull = clamp(gm * 4, 0, 1) * (1 - 0.6 * (t.L ?? 0.5)) * P.phot;
+        f.lx = (gx / gm) * pull * t.h * 0.09; f.lz = (gz / gm) * pull * t.h * 0.09;
+        const wl = t.ex * t.h * 0.03; f.lx += Math.cos(windDir) * wl; f.lz += Math.sin(windDir) * wl;
+        f.lx += (fr() - 0.5) * t.h * 0.02; f.lz += (fr() - 0.5) * t.h * 0.02;
+      }
+      {
+        const hx = gH(t.x + 2, t.z) - gH(t.x - 2, t.z), hz = gH(t.x, t.z + 2) - gH(t.x, t.z - 2), gm = Math.hypot(hx, hz) / 4;
+        const sw = Math.min(1.2, gm * 1.6 * snow * (0.5 + 0.8 * soilT) * (P.kind === 'conifer' ? 1.2 : 1)) * (0.5 + fr()) * clamp(t.d / 30, 0.2, 1);
+        if (gm > 0.01) { f.sx = (-hx / (gm * 4)) * sw; f.sz = (-hz / (gm * 4)) * sw; }
+      }
+      f.A = P.sinu * (1 + 1.0 * (1 - soilT)) * (0.4 + 0.8 * fr() * fr()) * clamp(t.d / 25, 0.3, 1);
+      f.k = 6.283 / (5 + 8 * fr());
+      t.form = f;
+    }
+  }
+
+  // 8. fine heightmap: bicubic upsampling to 0.5 m plus micro-relief (soil texture, hummocks, rock knobs) --------
+  await progress('Detailing ground', 0.93);
+  const HF = new Float32Array(NF * NF);
+  {
+    const n1 = makeNoise2D(R(12)), n2 = makeNoise2D(R(13)), n3 = makeNoise2D(R(14));
+    const at = (i, j) => H[clamp(j, 0, N - 1) * N + clamp(i, 0, N - 1)];
+    const cr = (p0, p1, p2, p3, t) => p1 + 0.5 * t * (p2 - p0 + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0)));
+    const ratio = (NF - 1) / (N - 1);
+    const col = new Float64Array(4);
+    for (let J = 0; J < NF; J++) {
+      const gz = J / ratio, j = Math.min(N - 2, Math.floor(gz)), tz = gz - j;
+      for (let I = 0; I < NF; I++) {
+        const gx = I / ratio, i = Math.min(N - 2, Math.floor(gx)), tx = gx - i;
+        for (let q = 0; q < 4; q++) col[q] = cr(at(i - 1, j - 1 + q), at(i, j - 1 + q), at(i + 1, j - 1 + q), at(i + 2, j - 1 + q), tx);
+        let h = cr(col[0], col[1], col[2], col[3], tz);
+        const x = I * 0.5 - HALF, z = J * 0.5 - HALF, k = j * N + i;
+        const rk = rock[k], st = streamSoft[k], wt = wet[k];
+        h += 0.09 * n1(x / 3.1, z / 3.1) + 0.035 * n2(x / 1.15, z / 1.15);
+        if (rk > 0.05) { const r = 1 - Math.abs(n3(x / 4.5, z / 4.5)); h += rk * (0.45 * r * r - 0.15); }
+        if (wt > 0.5 && st < 0.3) h += (wt - 0.5) * 0.25 * Math.max(0, n3(x / 1.4 + 50, z / 1.4));
+        h -= st * 0.06;
+        HF[J * NF + I] = h;
+      }
+    }
+  }
+
   const world = {
-    seed, age: steps * dt, opt: { ...opt }, H, hmax, slope, wet, stream: streamSoft, moist: moistF, rock, north,
+    seed, age: steps * dt, opt: { ...opt }, geology: geo, H, HF, hmax, slope, wet, stream: streamSoft, moist: moistF, rock, north, soil,
     light, conShare, LN, trees, pits, windDir, stats: null, genMs: 0,
   };
   world.stats = standStats(world);
   world.stats.storms = stats.storms;
   world.genMs = Date.now() - t0;
-  await progress('Planting', 0.95);
+  await progress('Planting', 0.97);
   return world;
 }
 

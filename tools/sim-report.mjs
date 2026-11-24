@@ -1,11 +1,11 @@
 // Print stand statistics for one or more worlds, so results can be reproduced and compared without a browser.
-// Usage: node tools/sim-report.mjs [seed] [age] [moisture: dry|mesic|wet] [storms: none|occasional|frequent]
+// Usage: node tools/sim-report.mjs [seed] [age] [moisture: dry|mesic|wet] [storms: none|occasional|frequent] [geology: granite|sandstone|basalt]
 import { generateWorld, SPECIES } from '../src/worldgen.js';
 
-const [seed = '1', age = '160', moisture = 'mesic', storms = 'occasional'] = process.argv.slice(2);
-const w = await generateWorld({ seed: +seed, age: +age, moisture, storms });
+const [seed = '1', age = '160', moisture = 'mesic', storms = 'occasional', geology = 'granite'] = process.argv.slice(2);
+const w = await generateWorld({ seed: +seed, age: +age, moisture, storms, geology });
 const s = w.stats, f = (v, d = 0) => v.toFixed(d);
-console.log(`seed ${seed}  age ${w.age} yr  moisture ${moisture}  storms ${storms}   (${w.genMs} ms, relief ${f(w.hmax, 1)} m)`);
+console.log(`seed ${seed}  age ${w.age} yr  moisture ${moisture}  storms ${storms}  bedrock ${geology}   (${w.genMs} ms, relief ${f(w.hmax, 1)} m)`);
 console.log(`live stems >=10 cm   ${f(s.stems)} /ha     saplings <10 cm ${f(s.saplings)} /ha`);
 console.log(`basal area           ${f(s.ba, 1)} m2/ha`);
 console.log(`snags >=10 cm        ${f(s.snags)} /ha     snag volume ${f(s.snagVol, 1)} m3/ha`);
