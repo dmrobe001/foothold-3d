@@ -24,6 +24,12 @@ Controls: **phone**, left thumb walks (push to the rim to run) and drag elsewher
 Panels: **Map** (tap to teleport), **Stand** (inventory, diameter distribution, pair correlation),
 **World** (seed, stand age, climate, windstorms, bedrock, graphics quality).
 
+## Collision rules
+
+You can step onto anything whose top is within 0.5 m of your feet, and walk on any surface flatter than about 44°.
+Trunks block. Rocks, logs and root wads block only when they are taller than a step and their sides are steep.
+Natural ground steeper than about 44° can't be climbed. Shrubs and ferns slow you down. Grass and twigs don't block.
+
 ## Reproduce stand statistics without a browser
 
 ```bash
@@ -42,6 +48,7 @@ The same seed and settings always give the same world.
 | `tools/sim-report.mjs` | Command-line stand inventory for a seed. |
 | `tools/build.mjs` | Bundles everything into a single file, `dist/foothold.html`, for sharing. |
 | `docs/worldgen.md` | Design notes: strategies, calibration, scaling plan. |
+| `docs/extensibility.md` | What it would take to support other regions, tree architectures and rock types. |
 
 ## Status
 

@@ -540,30 +540,71 @@ function litterGeo() { // one flat card lying in the local XZ plane, facing up
 // ---------------------------------------------------------------- rocks
 // Shape follows lithology: granite weathers to rounded core-stones and some jointed blocks; sandstone splits along
 // bedding into slabs; basalt fractures into sharp, angular blocks. Stones in stream beds are always water-rounded.
-function rockShape(seed, kind, detail) {
+// `round` is the weathering state: 0 = fresh, sharp joint faces (dry or cold climate, hard rock), 2+ = edges eaten back
+// (wet climate, granite's spheroidal weathering). Rounding is literal Laplacian smoothing of the joint-cut shape.
+function rockShape(seed, kind, detail, round = 0) {
   const g = mergeVerts(new THREE.IcosahedronGeometry(1, detail)), p = g.attributes.position;
   const r = mulberry32(seed), nz = makeNoise2D(r);
   const planes = [];
-  const nPl = kind === 'round' ? 0 : kind === 'slab' ? 7 : 14;
+  const nPl = kind === 'round' ? 0 : kind === 'slab' ? 7 + Math.floor(r() * 3) : 9 + Math.floor(r() * 8);
   for (let k = 0; k < nPl; k++) {
-    let n = norm3([r() - 0.5, (r() - 0.5) * (kind === 'slab' ? 0.4 : 1), r() - 0.5]);
-    planes.push([n, kind === 'slab' ? 0.55 + 0.3 * r() : 0.42 + 0.3 * r()]);
+    const n = norm3([r() - 0.5, (r() - 0.5) * (kind === 'slab' ? 0.4 : 1), r() - 0.5]);
+    planes.push([n, kind === 'slab' ? 0.55 + 0.3 * r() : 0.38 + 0.4 * r()]);
   }
-  if (kind === 'slab') { planes.push([[0, 1, 0], 0.35 + 0.15 * r()], [[0, -1, 0], 0.45]); }
+  if (kind === 'slab') planes.push([[0, 1, 0], 0.3 + 0.2 * r()], [[0, -1, 0], 0.45]);
+  const elong = [0.8 + 0.5 * r(), 1, 0.75 + 0.5 * r()];
   for (let i = 0; i < p.count; i++) {
-    let v = [p.getX(i), p.getY(i), p.getZ(i)];
-    const n3 = (s, o) => nz(v[0] * s + v[2] * s * 0.7 + o, v[1] * s - v[2] * s * 0.4 + o * 1.3);
-    const bump = kind === 'round' ? 1 + 0.16 * n3(1.1, 0) + 0.05 * n3(3.2, 7) : 1 + 0.05 * n3(2.5, 3);
+    let v = [p.getX(i) * elong[0], p.getY(i), p.getZ(i) * elong[2]];
+    const n3 = (sc, o) => nz(v[0] * sc + v[2] * sc * 0.7 + o, v[1] * sc - v[2] * sc * 0.4 + o * 1.3);
+    const bump = kind === 'round' ? 1 + 0.16 * n3(1.1, 0) + 0.05 * n3(3.2, 7) : 1 + 0.06 * n3(2.2, 3);
     v = v.map((c) => c * bump);
     for (const [n, d] of planes) { const t = v[0] * n[0] + v[1] * n[1] + v[2] * n[2] - d; if (t > 0) { v[0] -= n[0] * t; v[1] -= n[1] * t; v[2] -= n[2] * t; } }
-    const sy = kind === 'round' ? 0.62 : kind === 'slab' ? 1 : 0.78;
-    if (kind === 'slab') v[1] += 0.025 * Math.sin(v[1] * 34); // bedding steps
+    // surface roughness at a finer scale than the joints (fresh rock is rough; weathered rock less so)
+    const rough = (kind === 'round' ? 0.025 : 0.04) / (1 + round);
+    v = v.map((c, q) => c + rough * n3(7.5, 11 + q * 5));
+    const sy = kind === 'round' ? 0.62 : kind === 'slab' ? 1 : 0.8;
+    if (kind === 'slab') v[1] += 0.025 * Math.sin(v[1] * 34);
     p.setXYZ(i, v[0], v[1] * sy, v[2]);
   }
-  g.computeVertexNormals();
-  return g;
+  if (round > 0) laplace(g, round, 0.45);
+  return kind === 'round' || round > 1 ? (g.computeVertexNormals(), g) : creased(g, round ? 0.5 : 0.62);
 }
-const rockU = { uBedding: { value: 0 }, uLichen: { value: new THREE.Color(0.62, 0.64, 0.52) } };
+function laplace(g, iters, k) {
+  const p = g.attributes.position, idx = g.index.array, nbr = Array.from({ length: p.count }, () => new Set());
+  for (let i = 0; i < idx.length; i += 3) for (let a = 0; a < 3; a++) { nbr[idx[i + a]].add(idx[i + (a + 1) % 3]); nbr[idx[i + a]].add(idx[i + (a + 2) % 3]); }
+  for (let it = 0; it < iters; it++) {
+    const P = Float32Array.from(p.array);
+    for (let v = 0; v < p.count; v++) {
+      let sx = 0, sy = 0, sz = 0; for (const n of nbr[v]) { sx += P[n * 3]; sy += P[n * 3 + 1]; sz += P[n * 3 + 2]; }
+      const c = nbr[v].size; p.setXYZ(v, lerp(P[v * 3], sx / c, k), lerp(P[v * 3 + 1], sy / c, k), lerp(P[v * 3 + 2], sz / c, k));
+    }
+  }
+}
+function creased(g, cosLimit) {
+  // Split normals where faces meet at a sharp angle, so joint faces stay flat and edges stay crisp.
+  const ng = g.toNonIndexed(), p = ng.attributes.position, n = p.count, fn = new Float32Array(n * 3);
+  const A = new THREE.Vector3(), Bv = new THREE.Vector3(), C = new THREE.Vector3();
+  for (let i = 0; i < n; i += 3) {
+    A.fromBufferAttribute(p, i); Bv.fromBufferAttribute(p, i + 1); C.fromBufferAttribute(p, i + 2);
+    const f = C.sub(Bv).cross(A.sub(Bv)); // area-weighted face normal
+    for (let q = 0; q < 3; q++) { fn[(i + q) * 3] = f.x; fn[(i + q) * 3 + 1] = f.y; fn[(i + q) * 3 + 2] = f.z; }
+  }
+  const byPos = new Map();
+  for (let i = 0; i < n; i++) { const key = `${p.getX(i).toFixed(4)},${p.getY(i).toFixed(4)},${p.getZ(i).toFixed(4)}`; let a = byPos.get(key); if (!a) byPos.set(key, (a = [])); a.push(i); }
+  const out = new Float32Array(n * 3);
+  for (const list of byPos.values()) for (const i of list) {
+    const fi = [fn[i * 3], fn[i * 3 + 1], fn[i * 3 + 2]], li = Math.hypot(...fi) || 1;
+    let sx = 0, sy = 0, sz = 0;
+    for (const j of list) {
+      const lj = Math.hypot(fn[j * 3], fn[j * 3 + 1], fn[j * 3 + 2]) || 1;
+      if ((fi[0] * fn[j * 3] + fi[1] * fn[j * 3 + 1] + fi[2] * fn[j * 3 + 2]) / (li * lj) > cosLimit) { sx += fn[j * 3]; sy += fn[j * 3 + 1]; sz += fn[j * 3 + 2]; }
+    }
+    const l = Math.hypot(sx, sy, sz) || 1; out[i * 3] = sx / l; out[i * 3 + 1] = sy / l; out[i * 3 + 2] = sz / l;
+  }
+  ng.setAttribute('normal', new THREE.BufferAttribute(out, 3));
+  return ng;
+}
+const rockU = { uBedding: { value: 0 }, uPits: { value: 0 }, uLichen: { value: new THREE.Color(0.62, 0.64, 0.52) } };
 const rockMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
 rockMat.onBeforeCompile = (sh) => {
   Object.assign(sh.uniforms, rockU, { uEcoA: terrainU.uEcoA });
@@ -574,7 +615,7 @@ rockMat.onBeforeCompile = (sh) => {
       mat4 rIM = modelMatrix;
     #endif
     vRW = (rIM * vec4(transformed, 1.0)).xyz; vRN = normalize(mat3(rIM) * normal); vRBase = rIM[3].y;`);
-  sh.fragmentShader = `varying vec3 vRW; varying vec3 vRN; varying float vRBase; uniform float uBedding; uniform vec3 uLichen; uniform sampler2D uEcoA;
+  sh.fragmentShader = `varying vec3 vRW; varying vec3 vRN; varying float vRBase; uniform float uBedding; uniform float uPits; uniform vec3 uLichen; uniform sampler2D uEcoA;
     ${NOISE_GLSL}
     float tri(vec3 p, vec3 w, float s){ return vr(p.zy * s) * w.x + vr(p.xz * s + 5.0) * w.y + vr(p.xy * s + 9.0) * w.z; }
   ` + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
@@ -596,6 +637,14 @@ rockMat.onBeforeCompile = (sh) => {
     float hb = vRW.y - vRBase;
     c = mix(pow(vec3(0.22, 0.17, 0.12), vec3(2.2)), c, smoothstep(-0.15, 0.35, hb));  // soil stain and contact shadow
     diffuseColor.rgb = c;
+  `).replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+    { // per-pixel relief (bump mapping from screen-space derivatives): grain, basalt vesicles, sandstone laminae
+      float near = 1.0 - smoothstep(10.0, 40.0, length(vViewPosition));
+      float hb = g2 * 0.5 + g3 * 0.35 + g4 * 0.15 * near - uPits * 1.4 * smoothstep(0.74, 0.86, tri(vRW + 3.0, tw, 8.0)) + uBedding * 0.35 * sin(vRW.y * 38.0 + g1 * 3.0) + crack * 0.8;
+      vec3 vp = -vViewPosition, dpx = dFdx(vp), dpy = dFdy(vp); float dhx = dFdx(hb), dhy = dFdy(hb);
+      vec3 r1 = cross(dpy, normal), r2 = cross(normal, dpx); float det = dot(dpx, r1);
+      normal = normalize(abs(det) * normal - sign(det) * (dhx * r1 + dhy * r2) * 0.035 * (0.4 + 0.6 * near));
+    }
   `);
 };
 
@@ -611,9 +660,14 @@ const geos = {
   tstem: tallShrubStemGeo(34), tleaf: tallShrubLeafGeo(35), herb: shrubGeo(36), litter: litterGeo(),
 };
 const rockGeos = {}; // per lithology, filled when a world is built
-function rockSet(kind) {
-  const key = kind; if (rockGeos[key]) return rockGeos[key];
-  return (rockGeos[key] = { small: rockShape(41, kind, 1), big: rockShape(42, kind, 2), big2: rockShape(43, kind, 2), roundS: rockShape(44, 'round', 1), roundB: rockShape(45, 'round', 2) });
+function rockSet(kind, round) {
+  const key = `${kind}:${round}`; if (rockGeos[key]) return rockGeos[key];
+  return (rockGeos[key] = {
+    small: [0, 1, 2].map((i) => rockShape(50 + i, kind, 1, round)),
+    big: [0, 1, 2, 3].map((i) => rockShape(60 + i, kind, 3, round)),
+    bigLo: [0, 1, 2, 3].map((i) => rockShape(60 + i, kind, 1, round)),
+    roundS: rockShape(44, 'round', 1, 1), roundB: rockShape(45, 'round', 2, 1),
+  });
 }
 
 // ---------------------------------------------------------------- instancing helpers
@@ -715,7 +769,7 @@ function buildTextures() {
   Object.assign(terrainU, {}); terrainU.uHF.value = hfTex; terrainU.uHC.value = hcTex; terrainU.uEcoA.value = ecoATex; terrainU.uEcoB.value = ecoBTex;
   const L = LITH[W.opt.geology] || LITH.granite;
   terrainU.uStone.value.setRGB(L.col[0], L.col[1], L.col[2]);
-  rockU.uBedding.value = L.bed; rockU.uLichen.value.setRGB(...L.lichen);
+  rockU.uBedding.value = L.bed; rockU.uPits.value = W.opt.geology === 'basalt' ? 1 : 0; rockU.uLichen.value.setRGB(...L.lichen);
 }
 
 function buildWorld() {
@@ -723,7 +777,10 @@ function buildWorld() {
   worldGroup = new THREE.Group(); scene.add(worldGroup);
   tiles = [];
   buildTextures();
-  const lith = LITH[W.opt.geology] || LITH.granite, rocks = rockSet(lith.kind);
+  const lith = LITH[W.opt.geology] || LITH.granite;
+  // weathering: wet climates and granite round rock edges; dry climates keep fresh, sharp joint faces
+  const rounding = clamp(({ dry: 0, mesic: 1, wet: 2 }[W.opt.moisture] ?? 1) - (W.opt.geology === 'basalt' ? 1 : 0), 0, 3);
+  const rocks = rockSet(lith.kind, rounding);
 
   // far terrain mesh (2 m); the near patch covers the ground around the player at 0.5 m
   const pos = new Float32Array(N * N * 3);
@@ -759,9 +816,9 @@ function buildWorld() {
 
   // trees, snags, logs, root plates, outcrops — batched into 64 m tiles so whole tiles can be culled
   const TILE = 64, NT = WORLD / TILE;
-  const B = Array.from({ length: NT * NT }, () => ({ trunk: new Batch(), broad: new Batch(), cone: new Batch(), pine: new Batch(), plate: new Batch(), rockA: new Batch(), rockB: new Batch() }));
+  const B = Array.from({ length: NT * NT }, () => ({ trunk: new Batch(), broad: new Batch(), cone: new Batch(), pine: new Batch(), plate: new Batch(), rk: [new Batch(), new Batch(), new Batch(), new Batch()] }));
   const tileOf = (x, z) => clamp(Math.floor((z + HALF) / TILE), 0, NT - 1) * NT + clamp(Math.floor((x + HALF) / TILE), 0, NT - 1);
-  colTrunks = new Map(); colLogs = []; logCells = new Map();
+  colTrunks = new Map(); colLogs = []; logCells = new Map(); solids = new Map();
   const ckey = (ci, cj) => ci * 4096 + cj;
   const pushCol = (map, x, z, item, cs = 8) => { const k = ckey(Math.floor((x + HALF) / cs), Math.floor((z + HALF) / cs)); let a = map.get(k); if (!a) map.set(k, (a = [])); a.push(item); };
   for (const t of W.trees) {
@@ -803,9 +860,12 @@ function buildWorld() {
       const col = cls <= 2 ? mix3(TINT.bark[t.sp], [0.42, 0.34, 0.27], t.sp === 3 ? 0.3 : 0.6) : mix3([0.44, 0.36, 0.28], [0.34, 0.37, 0.21], (cls - 3) / 2);
       b.trunk.add(along(bx, y0, bz, tx - bx, y1 - y0, tz - bz, rad * (1 - 0.15 * fd), Math.hypot(tx - bx, y1 - y0, tz - bz), rad * (1 - 0.35 * fd)), col[0] * vari, col[1] * vari, col[2] * vari, t.d * 0.4, [0, 0, 0, 0], [f.A * (1 - 0.4 * fd), f.k, f.ph, 0.25]);
       if (t.up && t.t < 70) {
-        const pr = 0.7 + t.d * 0.028, pf = 1 - t.t / 70;
-        b.plate.add(along(t.x - dirx * 0.15, ground(t.x, t.z) + pr * 0.55 * pf + 0.1, t.z - dirz * 0.15, dirx, 0, dirz, pr * (0.7 + 0.3 * pf), 0.35 + 0.25 * pf, pr * (0.5 + 0.5 * pf)), 0.62 * vari, 0.52 * vari, 0.42 * vari);
+        const pr = 0.7 + t.d * 0.028, pf = 1 - t.t / 70, cyP = ground(t.x, t.z) + pr * 0.55 * pf + 0.1, th = 0.35 + 0.25 * pf;
+        b.plate.add(along(t.x - dirx * 0.15, cyP, t.z - dirz * 0.15, dirx, 0, dirz, pr * (0.7 + 0.3 * pf), th, pr * (0.5 + 0.5 * pf)), 0.62 * vari, 0.52 * vari, 0.42 * vari);
+        // the wad is a near-vertical soil wall: ellipsoid thin along the fall direction
+        addSolid(ellipsoid(t.x - dirx * 0.15, cyP, t.z - dirz * 0.15, pr * (0.7 + 0.3 * pf), pr * (0.5 + 0.5 * pf), th * 0.5, -dirz, dirx), pr);
       }
+      if (t.d >= 10) addSolid({ kind: 'log', x: (bx + tx) / 2, z: (bz + tz) / 2, x0: bx, z0: bz, x1: tx, z1: tz, ya0: y0, ya1: y1, r: rr }, len / 2 + rr);
       if (t.d >= 12) {
         const log = { x0: bx, z0: bz, x1: tx, z1: tz, y0: y0 + rr * 0.8, y1: y1 + rr * 0.8, r: rr, cls };
         colLogs.push(log);
@@ -826,14 +886,17 @@ function buildWorld() {
       const hx = ground(x + 1, z) - ground(x - 1, z), hz = ground(x, z + 1) - ground(x, z - 1);
       const tilt = Math.min(0.5, Math.hypot(hx, hz) / 2);
       const col = mix3(lith.col, [0.5, 0.5, 0.48], 0.15 * r()), v = 0.85 + 0.25 * r();
-      (r() < 0.5 ? B[tileOf(x, z)].rockA : B[tileOf(x, z)].rockB).add(trs(x, gy - s * 0.35, z, r() * 6.283, s * (0.9 + 0.5 * r()), s * (0.6 + 0.5 * r()), s * (0.8 + 0.5 * r()), Math.atan2(hz, 2) * 0.8 * (tilt > 0 ? 1 : 0), -Math.atan2(hx, 2) * 0.8), col[0] * v, col[1] * v, col[2] * v, s);
-      if (s > 1.4) pushCol(colTrunks, x, z, { x, z, r: s * 0.75 });
+      const vi = Math.floor(r() * 4), yaw = r() * 6.283, sx = s * (0.9 + 0.5 * r()), sy = s * (0.75 + 0.5 * r()), sz = s * (0.8 + 0.5 * r()), sink = s * (0.08 + 0.15 * r());
+      B[tileOf(x, z)].rk[vi].add(trs(x, gy - sink, z, yaw, sx, sy, sz, Math.atan2(hz, 2) * 0.8 * (tilt > 0 ? 1 : 0), -Math.atan2(hx, 2) * 0.8), col[0] * v, col[1] * v, col[2] * v, s);
+      const bb = boxOf(rocks.big[vi]);
+      addSolid(ellipsoid(x, gy - sink, z, sx * Math.max(bb.max.x, -bb.min.x) * 0.9, sy * bb.max.y, sz * Math.max(bb.max.z, -bb.min.z) * 0.9, Math.cos(yaw), -Math.sin(yaw)), s * 1.6);
     }
   }
   for (let ti = 0; ti < B.length; ti++) {
     const g = new THREE.Group(), b = B[ti];
-    for (const m of [b.plate.build(geos.plate, mats.soil), b.rockA.build(rocks.big, rockMat), b.rockB.build(rocks.big2, rockMat)]) if (m) g.add(m);
+    { const m = b.plate.build(geos.plate, mats.soil); if (m) g.add(m); }
     g.userData.hi = []; g.userData.lo = [];
+    b.rk.forEach((rb, i) => { const hi = rb.build(rocks.big[i], rockMat); if (!hi) return; const lo = lodTwin(hi, rocks.bigLo[i], true); g.add(hi, lo); g.userData.hi.push(hi); g.userData.lo.push(lo); });
     {
       const hi = b.trunk.build(geos.trunk, mats.bark, { farMin: 9, form: true });
       if (hi) { const lo = lodTwin(hi, geos.trunkLo, true); g.add(hi, lo); g.userData.hi.push(hi); g.userData.lo.push(lo); }
@@ -862,7 +925,8 @@ function buildWorld() {
       tleaf: new NearBatch(geos.tleaf, mats.shrub, 3000), tstem: new NearBatch(geos.tstem, mats.wood, 3000, { cast: true }),
       seedB: new NearBatch(geos.broadLo, mats.leaf, 4000), seedC: new NearBatch(geos.coneLo, mats.needle, 4000),
       twig: new NearBatch(geos.twig, mats.wood, 5000), stick: new NearBatch(geos.stick, mats.wood, 4000, { cast: true }), limb: new NearBatch(geos.limb, mats.wood, 2000, { cast: true }),
-      rockS: new NearBatch(rocks.small, rockMat, 3500, { cast: true }), rockB: new NearBatch(rocks.big, rockMat, 800, { cast: true }),
+      ...Object.fromEntries(rocks.small.map((gm, i) => [`rockS${i}`, new NearBatch(gm, rockMat, 2000, { cast: true })])),
+      ...Object.fromEntries(rocks.big.map((gm, i) => [`rockB${i}`, new NearBatch(gm, rockMat, 300, { cast: true })])),
       roundS: new NearBatch(rocks.roundS, rockMat, 3000, { cast: true }), roundB: new NearBatch(rocks.roundB, rockMat, 500, { cast: true }),
     },
   };
@@ -894,6 +958,7 @@ function buildSkirt() {
 }
 
 // ---------------------------------------------------------------- near-field ground cover (deterministic per 8 m cell)
+function rockBatch(type, v) { if (type === 'rockS') return near.b[`rockS${Math.floor(v * 2.999)}`]; if (type === 'rockB') return near.b[`rockB${Math.floor(v * 3.999)}`]; return near.b[type]; }
 const NC = 8;
 function fieldAt(x, z) {
   return {
@@ -950,6 +1015,13 @@ function genCell(ci, cj) {
   // rocks: steep ground, rocky knolls; stream beds hold water-rounded cobbles
   const nRock = pois(0.25 + 7 * f.rk + 2 * smoothstep(0.4, 0.8, f.sl) * (1 - f.soil));
   for (let k = 0; k < nRock; k++) { const [x, z] = rnd(); const big = r() < 0.06 + 0.15 * f.rk; const s = big ? 0.6 + 1.6 * r() : 0.07 + 0.3 * r() * r(); items.push([big ? 'rockB' : 'rockS', x, z, r() * 6.28, s, s, 0.85 + 0.25 * r(), r()]); }
+  // scree: frost- and gravity-shed fragments collect below rocky ground, on moderate slopes
+  {
+    const hx = sampleGrid(W.H, N, x0 + 6, z0 + 4) - sampleGrid(W.H, N, x0 + 2, z0 + 4), hz = sampleGrid(W.H, N, x0 + 4, z0 + 6) - sampleGrid(W.H, N, x0 + 4, z0 + 2);
+    const gm = Math.hypot(hx, hz) + 1e-6, upRock = Math.max(sampleGrid(W.rock, N, x0 + 4 + (hx / gm) * 10, z0 + 4 + (hz / gm) * 10), sampleGrid(W.rock, N, x0 + 4 + (hx / gm) * 20, z0 + 4 + (hz / gm) * 20));
+    const nScree = pois(14 * smoothstep(0.3, 0.8, upRock) * smoothstep(0.12, 0.35, f.sl) * (1 - 0.5 * f.rk) * (1 - f.s));
+    for (let k = 0; k < nScree; k++) { const [x, z] = rnd(); const s = 0.08 + 0.45 * r() * r(); items.push(['rockS', x, z, r() * 6.28, s, s, 0.8 + 0.3 * r(), r()]); }
+  }
   const nCob = pois(9 * smoothstep(0.35, 0.85, f.s));
   for (let k = 0; k < nCob; k++) { const [x, z] = rnd(); if (sampleGrid(W.stream, N, x, z) < 0.3) continue; const big = r() < 0.08; const s = big ? 0.4 + 0.6 * r() : 0.06 + 0.18 * r(); items.push([big ? 'roundB' : 'roundS', x, z, r() * 6.28, s, s, 0.85 + 0.25 * r(), r()]); }
   return items;
@@ -965,7 +1037,7 @@ function refreshNear(px, pz, force = false) {
   near.cx = px; near.cz = pz;
   for (const nb of Object.values(near.b)) nb.reset();
   const Q = settings.quality === 'high', lith = LITH[W.opt.geology] || LITH.granite;
-  const RAD = { tall: 85, shrub: 75, fern: 60, grass: Q ? 45 : 32, sedge: 34, herb: 30, litter: 26, seedB: 40, seedC: 40, twig: 30, stick: 45, limb: 60, rockS: 70, rockB: 110, roundS: 60, roundB: 90 };
+  const RAD = { tall: 85, scree: 70, shrub: 75, fern: 60, grass: Q ? 45 : 32, sedge: 34, herb: 30, litter: 26, seedB: 40, seedC: 40, twig: 30, stick: 45, limb: 60, rockS: 70, rockB: 110, roundS: 60, roundB: 90 };
   const maxR = 110, c0 = Math.floor((px - maxR + HALF) / NC), c1 = Math.floor((px + maxR + HALF) / NC), r0 = Math.floor((pz - maxR + HALF) / NC), r1 = Math.floor((pz + maxR + HALF) / NC);
   const keep = new Set();
   for (let cj = Math.max(0, r0); cj <= Math.min(WORLD / NC - 1, r1); cj++) for (let ci = Math.max(0, c0); ci <= Math.min(WORLD / NC - 1, c1); ci++) {
@@ -976,7 +1048,7 @@ function refreshNear(px, pz, force = false) {
     for (const it of items) {
       const [type, x, z, yaw, a, b, c, v] = it;
       const dd = Math.hypot(x - px, z - pz); if (dd > RAD[type]) continue;
-      const gy = ground(x, z), nb = near.b[type];
+      const gy = ground(x, z), nb = /^rock/.test(type) ? rockBatch(type, v) : near.b[type];
       switch (type) {
         case 'tall': {
           const m = trs(x, gy - 0.05, z, yaw, a, b, a * (0.8 + 0.4 * v));
@@ -1025,30 +1097,93 @@ function spawn() {
   player.yaw = Math.atan2(gx, gz);
   player.eye = feetAt(player.x, player.z) + 1.65;
 }
+// ---------------------------------------------------------------- collision
+// Policy: the player is a 0.22 m-radius foot on a "support surface" = max(ground, tops of solid things).
+// Anything whose top is within STEP of your feet can be stepped onto, so flat-enough rocks, logs and root wads are
+// walkable. Bigger rises block. Natural ground steeper than MAX_SLOPE blocks walking uphill.
+// Trunks are vertical walls. Shrubs, ferns and grass don't block, but slow you down; twigs and branches are walked over.
+const STEP = 0.5, MAX_SLOPE = 0.95, FOOT = 0.22;
+let solids = null; // 8 m hash of static solids: rock / root-wad ellipsoids and logs
+const ckey8 = (x, z) => Math.floor((x + HALF) / 8) * 4096 + Math.floor((z + HALF) / 8);
+function addSolid(o, r) { // register an object in every 8 m cell its footprint (radius r) touches
+  const seen = new Set();
+  for (const [ox, oz] of [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r], [r, r], [-r, -r], [r, -r], [-r, r]]) {
+    const k = ckey8(o.x + ox, o.z + oz); if (seen.has(k)) continue; seen.add(k);
+    let a = solids.get(k); if (!a) solids.set(k, (a = [])); a.push(o);
+  }
+}
+// ellipsoid with horizontal semi-axes ax (along unit direction (ux,uz)) and az (perpendicular), vertical semi-axis ay
+function ellipsoid(x, y, z, ax, ay, az, ux, uz) { return { kind: 'ell', x, y, z, ax, ay, az, ux, uz }; }
+function topOf(o, x, z) {
+  if (o.kind === 'ell') {
+    const dx = x - o.x, dz = z - o.z, a = dx * o.ux + dz * o.uz, b = -dx * o.uz + dz * o.ux;
+    const q = (a / o.ax) ** 2 + (b / o.az) ** 2;
+    return q < 1 ? o.y + o.ay * Math.sqrt(1 - q) : -Infinity;
+  }
+  // log: cylinder lying along a segment
+  const vx = o.x1 - o.x0, vz = o.z1 - o.z0, L2 = vx * vx + vz * vz || 1;
+  const t = clamp(((x - o.x0) * vx + (z - o.z0) * vz) / L2, 0, 1);
+  const d = Math.hypot(x - (o.x0 + vx * t), z - (o.z0 + vz * t));
+  return d < o.r ? lerp(o.ya0, o.ya1, t) + Math.sqrt(o.r * o.r - d * d) : -Infinity;
+}
+const geoBox = new Map();
+function boxOf(geo) { let b = geoBox.get(geo); if (!b) { geo.computeBoundingBox(); b = geo.boundingBox; geoBox.set(geo, b); } return b; }
+function nearRockSolid(it) { // near-field rock item -> ellipsoid matching how refreshNear draws it
+  const [type, x, z, yaw, a, , , v] = it, nb = rockBatch(type, v), bb = boxOf(nb.mesh.geometry), gy = ground(x, z);
+  const sx = a * (0.8 + 0.5 * v), sz = a * (1.2 - 0.4 * v);
+  return ellipsoid(x, gy - a * 0.25, z, sx * Math.max(bb.max.x, -bb.min.x) * 0.92, a * bb.max.y, sz * Math.max(bb.max.z, -bb.min.z) * 0.92, Math.cos(yaw), -Math.sin(yaw));
+}
+function supportAt(x, z) {
+  let y = ground(x, z);
+  const k = ckey8(x, z), list = solids.get(k);
+  if (list) for (const o of list) { const t = topOf(o, x, z); if (t > y) y = t; }
+  const items = near?.cells.get(Math.floor((x + HALF) / NC) * 4096 + Math.floor((z + HALF) / NC));
+  if (items) for (const it of items) {
+    if (!it.solid) { if (!/^(rock|round)/.test(it[0]) || it[4] < 0.18) continue; it.solid = nearRockSolid(it); }
+    const t = topOf(it.solid, x, z); if (t > y) y = t;
+  }
+  return y;
+}
+function footSupport(x, z) {
+  let y = supportAt(x, z);
+  for (let k = 0; k < 6; k++) { const a = (k / 6) * 6.283; y = Math.max(y, supportAt(x + Math.cos(a) * FOOT, z + Math.sin(a) * FOOT)); }
+  return y;
+}
+const feetAt = (x, z) => footSupport(x, z);
+const slopeAt = (x, z) => Math.hypot(sampleGrid(W.H, N, x + 1, z) - sampleGrid(W.H, N, x - 1, z), sampleGrid(W.H, N, x, z + 1) - sampleGrid(W.H, N, x, z - 1)) / 2;
+function standable(x, z, feet, fromX, fromZ) {
+  const sup = footSupport(x, z);
+  if (sup - feet > STEP) return null;
+  const g = ground(x, z);
+  if (sup - feet > 0.005 && sup - g > STEP) { // climbing onto something taller than a step: only where its surface is flat enough
+    const e = 0.15, gs = Math.hypot(supportAt(x + e, z) - supportAt(x - e, z), supportAt(x, z + e) - supportAt(x, z - e)) / (2 * e);
+    if (gs > MAX_SLOPE) return null;
+  }
+  if (sup <= g + 0.05 && slopeAt(x, z) > MAX_SLOPE && g > ground(fromX, fromZ) + 1e-3) return null; // too steep to climb
+  for (const t of nearbyTrunks(x, z)) if (Math.hypot(t.x - x, t.z - z) < t.r) return null;
+  return sup;
+}
+function vegetationDrag(x, z) { // brushing through shrubs and ferns slows you down
+  let k = 1;
+  const ci = Math.floor((x + HALF) / NC), cj = Math.floor((z + HALF) / NC);
+  for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+    const items = near?.cells.get((ci + di) * 4096 + cj + dj); if (!items) continue;
+    for (const it of items) {
+      const t = it[0]; if (t !== 'tall' && t !== 'shrub' && t !== 'fern') continue;
+      const d = Math.hypot(it[1] - x, it[2] - z), r = t === 'tall' ? it[4] * 0.8 : it[4] * 0.7;
+      if (d < r) k = Math.min(k, t === 'tall' ? 0.5 : t === 'shrub' ? 0.75 : 0.88);
+    }
+  }
+  return k;
+}
 function blockedAt(x, z) {
   for (const t of nearbyTrunks(x, z)) if (Math.hypot(t.x - x, t.z - z) < t.r + 0.2) return true;
-  return false;
+  return footSupport(x, z) - ground(x, z) > STEP;
 }
 function nearbyTrunks(x, z) {
   const ci = Math.floor((x + HALF) / 8), cj = Math.floor((z + HALF) / 8), out = [];
   for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) { const a = colTrunks.get((ci + di) * 4096 + cj + dj); if (a) out.push(...a); }
   return out;
-}
-function nearbyLogs(x, z) {
-  const ci = Math.floor((x + HALF) / 8), cj = Math.floor((z + HALF) / 8), out = new Set();
-  for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) { const a = logCells.get((ci + di) * 4096 + cj + dj); if (a) for (const l of a) out.add(l); }
-  return out;
-}
-function segInfo(l, x, z) {
-  const vx = l.x1 - l.x0, vz = l.z1 - l.z0, L2 = vx * vx + vz * vz || 1;
-  const t = clamp(((x - l.x0) * vx + (z - l.z0) * vz) / L2, 0, 1);
-  const px = l.x0 + vx * t, pz = l.z0 + vz * t;
-  return { t, d: Math.hypot(x - px, z - pz), px, pz, top: lerp(l.y0, l.y1, t) };
-}
-function feetAt(x, z) {
-  let y = ground(x, z);
-  for (const l of nearbyLogs(x, z)) { const s = segInfo(l, x, z); if (s.d < l.r * 0.9 && s.top > y) y = Math.max(y, s.top); }
-  return y;
 }
 function movePlayer(dt) {
   let f = input.f, s = input.s, run = input.run;
@@ -1060,29 +1195,23 @@ function movePlayer(dt) {
   if (input.keys.has('ArrowRight')) player.yaw -= dt * 1.8;
   if (input.keys.has('ShiftLeft') || input.keys.has('ShiftRight')) run = true;
   const mag = Math.hypot(f, s); if (mag > 1) { f /= mag; s /= mag; }
-  const speed = run ? 4.2 : 1.6;
+  const speed = (run ? 4.2 : 1.6) * vegetationDrag(player.x, player.z);
   const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
   let dx = (-sy * f + cy * s) * speed * dt, dz = (-cy * f - sy * s) * speed * dt;
+  let feet = footSupport(player.x, player.z);
   if (dx || dz) {
-    const feet = feetAt(player.x, player.z);
-    const upSlope = (ground(player.x + dx * 5, player.z + dz * 5) - ground(player.x, player.z)) / (Math.hypot(dx, dz) * 5 + 1e-6);
-    const k = clamp(1 - Math.max(0, upSlope) * 0.9, 0.25, 1); dx *= k; dz *= k;
-    let nx = clamp(player.x + dx, -HALF + 6, HALF - 6), nz = clamp(player.z + dz, -HALF + 6, HALF - 6);
-    for (const t of nearbyTrunks(nx, nz)) {
-      const ex = nx - t.x, ez = nz - t.z, d = Math.hypot(ex, ez);
-      if (d < t.r) { nx = t.x + (ex / (d || 1)) * t.r; nz = t.z + (ez / (d || 1)) * t.r; }
+    const up = (ground(player.x + dx * 5, player.z + dz * 5) - ground(player.x, player.z)) / (Math.hypot(dx, dz) * 5 + 1e-6);
+    const k = clamp(1 - Math.max(0, up) * 0.6, 0.35, 1); dx *= k; dz *= k;
+    const px = player.x, pz = player.z, lim = (v) => clamp(v, -HALF + 6, HALF - 6);
+    // try the full step, then slide along each axis
+    for (const [mx, mz] of [[dx, dz], [dx, 0], [0, dz]]) {
+      if (!mx && !mz) continue;
+      const nx = lim(px + mx), nz = lim(pz + mz), sup = standable(nx, nz, feet, px, pz);
+      if (sup !== null) { player.x = nx; player.z = nz; feet = sup; break; }
     }
-    for (const l of nearbyLogs(nx, nz)) {
-      const sInfo = segInfo(l, nx, nz), lim = l.r + 0.25;
-      if (sInfo.d < lim && sInfo.top - feet > 0.6 && sInfo.t > 0.001 && sInfo.t < 0.999) {
-        const ex = nx - sInfo.px, ez = nz - sInfo.pz, d = sInfo.d || 1e-3;
-        nx = sInfo.px + (ex / d) * lim; nz = sInfo.pz + (ez / d) * lim;
-      }
-    }
-    player.x = nx; player.z = nz;
   }
-  const target = feetAt(player.x, player.z) + 1.65;
-  player.eye = lerp(player.eye, target, 1 - Math.exp(-dt * (target > player.eye ? 10 : 6)));
+  const target = feet + 1.65;
+  player.eye = lerp(player.eye, target, 1 - Math.exp(-dt * (target > player.eye ? 12 : 7)));
 }
 
 // ---------------------------------------------------------------- input
@@ -1353,7 +1482,7 @@ start();
 
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
-  get world() { return W; }, player, settings, ground: (x, z) => ground(x, z),
+  get world() { return W; }, player, settings, ground: (x, z) => ground(x, z), col: { footSupport, standable, solids: () => solids },
   pause() { running = false; },
   info() { return { near: Object.fromEntries(Object.entries(near.b).map(([k, v]) => [k, v.n])), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries }; },
   renderOnce() { refreshNear(player.x, player.z, true); camera.position.set(player.x, player.eye, player.z); camera.rotation.set(player.pitch, player.yaw, 0); sky.position.copy(camera.position); renderer.shadowMap.needsUpdate = true; uTime.value = 0; updateTiles(); terrainU.uCenter.value.set(Math.round(player.x / 8) * 8, Math.round(player.z / 8) * 8); renderer.render(scene, camera); },
