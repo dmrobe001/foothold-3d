@@ -1539,10 +1539,12 @@ function assess(x, z, px, pz) {
   const mx = x - px, mz = z - pz, ml = Math.hypot(mx, mz) || 1, ux = mx / ml, uz = mz / ml;
   const head = Math.min(ceilingAt(x, z, sup), ceilingAt(x + ux * 0.45, z + uz * 0.45, sup)) - sup;
   if (head < CLEAR4) return null;
+  let headAhead = head; // the hands come down before the head gets there
+  for (const d of [0.7, 0.95, 1.2]) headAhead = Math.min(headAhead, ceilingAt(x + ux * d, z + uz * d, sup) - sup);
   if (body.four && rise < -1.0) return null; // holding on, you don't let go over a drop
   supportRef = sup; const g = grade(x, z, sup, ux, uz); supportRef = rig.feet;
   const tf = TRACTION[kind] ?? MAX_SLOPE;
-  let need = head < DUCK_MIN || rise > STEP || g > tf ? 1 : 0, hold = 0;
+  let need = headAhead < DUCK_MIN || rise > STEP || g > tf ? 1 : 0, hold = 0;
   if (g < -tf) { hold = holdsNear(x, z, sup, ux, uz); if (hold === 2) need = 1; } // steep going down: face in if there is a hold, else step down as best you can
   if (need) {
     hold = hold || holdsNear(x, z, sup, ux, uz);
@@ -1639,7 +1641,11 @@ function movePlayer(dt) {
   body.need = clamp(body.need + clamp(needT - body.need, -dt * 2.5, dt * 4), 0, 1);
   body.four = body.four ? body.need > 0.25 : body.need > 0.6; // hands down / hands free, with hysteresis
   body.mix = clamp((body.mix || 0) + (body.four ? dt * 3 : -dt * 3), 0, 1); // the posture eases between walking and on hands
-  { const c = ceilingAt(player.x, player.z, rig.feet); body.head = c === Infinity ? 2 : c - rig.feet; }
+  { // headroom over the body's length (on hands the head and chest are well ahead of the hips)
+    const fx = body.four ? body.q.a[0] : -Math.sin(player.yaw), fz = body.four ? body.q.a[2] : -Math.cos(player.yaw), fl = Math.hypot(fx, fz) || 1;
+    let c = Infinity; for (const d of [-0.2, 0, 0.3, 0.6, 0.9]) c = Math.min(c, ceilingAt(player.x + fx / fl * d, player.z + fz / fl * d, rig.feet));
+    body.head = c === Infinity ? 2 : c - rig.feet;
+  }
   const moved = Math.hypot(player.x - px, player.z - pz);
   updateBody(dt, moved, run, player.x - px, player.z - pz, f);
 }
@@ -1757,11 +1763,12 @@ function quadStep(dt, dx, dz) {
 // the posture on hands: hips low over the surface (lower when steep, and under whatever is overhead), spine along it
 function quadPose() {
   const q = body.q, ah = Math.hypot(q.a[0], q.a[2]), steepK = smoothstep(0.3, 1.5, Math.abs(q.a[1]) / Math.max(0.05, ah));
-  const hipH = Math.min(lerp(0.5, 0.22, steepK), Math.max(0.22, body.head - 0.32));
+  const low = clamp((body.head - CLEAR4) / 0.45, 0, 1); // 0 squeezed flat under something, 1 room to spare
+  const hipH = Math.min(lerp(0.5, 0.22, steepK), Math.max(0.2, body.head - 0.36));
   const pel = V.add(V.add(V.add(q.S0, q.n, hipH), q.R, q.sway), q.a, -0.05);
-  const U = V.nrm(V.add(q.a, q.n, 0.15)), out = (side, k) => V.nrm(V.add(q.R.map((v) => v * side), q.a, k));
+  const U = V.nrm(V.add(q.a, q.n, 0.15 * low)), out = (side, k) => V.nrm(V.add(q.R.map((v) => v * side), q.a, k));
   return {
-    pelvis: pel, frame: SK.frameFrom(U, q.n.map((v) => -v)), bend: [0.12, 0, 0], neckPitch: -0.5 - 0.3 * steepK,
+    pelvis: pel, frame: SK.frameFrom(U, q.n.map((v) => -v)), bend: [0.12 * low, 0, 0], neckPitch: (-0.5 - 0.3 * steepK) * low,
     feet: body.feet.map((ft) => V.add([ft.x, ft.y, ft.z], q.n, 0.07)), toes: [out(-0.4, 1), out(0.4, 1)],
     hands: body.hands.map((h) => V.add([h.p.x, h.p.y, h.p.z], q.n, 0.04)),
     kneePole: [V.add(out(-1, 0.6), q.n, 0.15), V.add(out(1, 0.6), q.n, 0.15)],
