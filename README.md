@@ -26,30 +26,39 @@ Panels: **Map** (tap to teleport), **Stand** (inventory, diameter distribution, 
 
 ## Movement and collision
 
-**Where you can go** (the collision body): you stand on the highest solid surface under your feet. Rock tops are
-sampled from each rock's geometry. Rises up to 0.55 m are steps. Pushing into something up to 1.35 m high with a
-standable top scrambles onto it. Trunks and woody stems taller than a leg (tall shrubs, saplings) are walked around.
-Low plants are waded through. A stem hung up overhead is ducked under if its underside is at least 1.1 m up.
-A fallen stem sloping up to 35° can be walked up; from 35° to 68° you climb it on all fours (walk into its foot,
-facing up it; walk back to come down; step sideways off it where it is low). Steeper than 68° is too steep to grip.
+Movement is three layers, with no special modes (after David Rosen's Overgrowth approach: coarse rules decide where
+you go; the body is fitted to whatever is there).
 
-**How you move there** (a procedural body, mostly unrendered):
-- **Feet** plant one at a time on the real surface, in a gait cycle driven by distance (walk: always one foot down; run: brief flight).
-- **Pelvis** sits as high as the planted legs can reach.
-- **Torso** leans into slopes, heaves forward on each uphill push-off, and folds over ledges when scrambling.
-- **Arms** swing; one reaches out to push a tall shrub aside or plant on a ledge or low barrier.
-- **Shrubs** are springs: they bend from the base under the hand and sway back after you pass. Low plants part around your legs.
-- **Crawling** a steep stem: hands and feet hold the stem. Each limb steps when it falls a quarter stride behind its
-  home position, one at a time, so three always hold. Before a limb lifts, the body sways sideways until its centre of
-  mass is over the stem between the other three.
+**Surfaces**: you stand on the highest solid surface under your feet. Rock tops are sampled from each rock's geometry.
+Each surface has a material (soil, rock, wood) that sets the steepest path a foot holds alone (about 49°, 44°, 35°).
+A stem, a sapling or a slim trunk is something a hand can close round; any other surface within reach can be pressed on.
+
+**Where the body goes** (coarse, forgiving rules, judged on each attempted move):
+- Rises up to 0.55 m are steps. A ledge up to 1.35 m is pulled up onto, hands on its lip, if there is something to hold.
+- Trunks and woody stems taller than a leg are walked around; low plants are waded through.
+- The hands are needed when the path stays steeper than the footing's traction (one bump is a step, not a slope),
+  when there is a ledge, or when the headroom is under 1.1 m (down to 0.65 m on hands and knees). Then the best hold
+  in reach sets how steep you can go: up to 68° with a hand closed round something, 56° pressing on a surface.
+  On hands you move slowly, and only as fast as the hands and feet can keep hold.
+- A stem hung overhead with at least 1.1 m under it is ducked under; with 0.65 to 1.1 m, crawled under.
+
+**How the body is placed**:
+- **Feet**, walking, plant one at a time on the real surface, in a gait cycle driven by distance (walk: always one foot
+  down; run: brief flight). The **pelvis** sits as high as the planted legs can reach; the **torso** leans into slopes.
+- **On hands**, every hand and foot is a contact with a home position along the surface (ahead for hands, behind for
+  feet). The one furthest behind steps a stride ahead, one at a time, so three always hold; before it lifts, the body
+  sways sideways until its centre of mass is over the other three. The trunk lies along the surface, low under
+  whatever is overhead, and faces up the fall line when the slope is what needs the hands.
+- **Arms**, walking, swing; one reaches out to push a tall shrub aside, plant on a low barrier or touch a stem overhead.
+- **Shrubs** are springs: they bend from the base under the hand and sway back after you pass.
 - **Skeleton**: one joint hierarchy (pelvis, three spine segments, neck, collarbones, two-segment arms and legs) solved
-  each frame from the posture and the four hand and foot targets (`src/skeleton.js`). Walking and crawling feed it
-  the same way; a short blend eases between postures.
-- **Camera** is the eye. Like your vestibulo-ocular reflex, it passes about 20% of the rhythmic gait bounce but all
-  of the terrain-driven and posture-driven motion.
+  each frame from the posture and the four hand and foot targets (`src/skeleton.js`). The walking posture and the
+  posture on hands are mixed by how much the hands are needed, so there is no switch between them.
+- **Camera** is the eye. Walking, like your vestibulo-ocular reflex, it passes about 20% of the rhythmic gait bounce but
+  all of the terrain-driven and posture-driven motion. On hands it is in the head, and the view tips along the slope.
 
 World panel: **Camera motion** (Full, Reduced, Off), **View** (first person, or third person for debugging; V toggles),
-**Body** (show the skeleton in first person). Tuning knobs are in `RIG` and `CRAWL` in `src/game.js`.
+**Body** (show the skeleton in first person). Tuning knobs are in `RIG`, `TRACTION` and `GAIT4` in `src/game.js`.
 
 ## Reproduce stand statistics without a browser
 
