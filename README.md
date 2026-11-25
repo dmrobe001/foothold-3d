@@ -60,6 +60,20 @@ A stem, a sapling or a slim trunk is something a hand can close round; any other
 World panel: **Camera motion** (Full, Reduced, Off), **View** (first person, or third person for debugging; V toggles),
 **Body** (show the skeleton in first person). Tuning knobs are in `RIG`, `TRACTION` and `GAIT4` in `src/game.js`.
 
+## Testing gym
+
+World panel → **Place: Testing gym** (or open the page with `#gym` on the address) loads a level clearing with
+fixed obstacle stations: hung stems at several clearances, a sloped overhang, level and tilted hurdles, stems
+at 30–75°, ledges, a wall, rock slabs and a gap between trunks. Each station states its intended outcome. Change station
+with `[` and `]` (or ◀ ▶), restart with `R` (or ↺). Stations live in `src/gym.js` as plain data.
+
+**Copy this spot** (World panel, or `C`) records the obstacles within 5 m of you in the forest, in the frame of where
+you stand and look, as a new station: it joins your own gym on that device, and its text can be added to `src/gym.js`.
+Captured rocks use the gym's granite shapes, so a spot from sandstone or basalt is only approximate.
+
+`window.foothold.gym.run(i)` walks station `i` straight ahead and scores it; a headless browser runs all of them
+in a few seconds.
+
 ## Reproduce stand statistics without a browser
 
 ```bash
@@ -73,6 +87,7 @@ The same seed and settings always give the same world.
 | Path | What it is |
 |---|---|
 | `src/worldgen.js` | Terrain, erosion, hydrology, stand simulation, statistics. Pure JS, no DOM, runs in Node. |
+| `src/gym.js` | Testing gym stations and the world record built from them. |
 | `src/game.js` | Three.js rendering, procedural textures, controls, user interface (UI). |
 | `index.html` | Page shell and styles. |
 | `tools/sim-report.mjs` | Command-line stand inventory for a seed. |

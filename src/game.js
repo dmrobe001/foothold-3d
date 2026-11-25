@@ -2,14 +2,16 @@
 import * as THREE from 'three';
 import { generateWorld, sampleGrid, SPECIES, GEOLOGY, crownRadius, crownFraction, WORLD, N, NF, CELL, HALF, hash3, mulberry32, makeNoise2D, clamp, smoothstep } from './worldgen.js';
 import { settleDeadfall, trunkProfile } from './deadfall.js';
+import { buildGymWorld, gymToWorld, stationOrigin, STATIONS } from './gym.js';
 import * as SK from './skeleton.js';
 
 const $ = (id) => document.getElementById(id);
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 
 // ---------------------------------------------------------------- settings
-const settings = { seed: 1, age: 160, moisture: 'mesic', storms: 'occasional', geology: 'granite', quality: isTouch ? 'low' : 'high', motion: 'full', view: 'first', body: 'hidden' };
+const settings = { seed: 1, age: 160, moisture: 'mesic', storms: 'occasional', geology: 'granite', quality: isTouch ? 'low' : 'high', motion: 'full', view: 'first', body: 'hidden', place: 'forest' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('foothold.settings') || '{}')); } catch (e) { /* storage unavailable */ }
+try { if (/(^|[?#&])gym\b/.test(location.search.slice(1) + '&' + location.hash.slice(1))) settings.place = 'gym'; } catch (e) { /* no location */ }
 const saveSettings = () => { try { localStorage.setItem('foothold.settings', JSON.stringify(settings)); } catch (e) { /* ignore */ } };
 
 // ---------------------------------------------------------------- renderer, scene, lights
@@ -906,9 +908,11 @@ function buildWorld() {
       const col = mix3(lith.col, [0.5, 0.5, 0.48], 0.15 * r()), v = 0.85 + 0.25 * r();
       const vi = Math.floor(r() * 4), yaw = r() * 6.283, sx = s * (0.9 + 0.5 * r()), sy = s * (0.75 + 0.5 * r()), sz = s * (0.8 + 0.5 * r()), sink = s * (0.08 + 0.15 * r());
       B[tileOf(x, z)].rk[vi].add(trs(x, gy - sink, z, yaw, sx, sy, sz, Math.atan2(hz, 2) * 0.8 * (tilt > 0 ? 1 : 0), -Math.atan2(hx, 2) * 0.8), col[0] * v, col[1] * v, col[2] * v, s);
-      addSolid(meshSolid(rocks.big[vi], trs(x, gy - sink, z, yaw, sx, sy, sz, Math.atan2(hz, 2) * 0.8 * (tilt > 0 ? 1 : 0), -Math.atan2(hx, 2) * 0.8), x, z), s * 1.6);
+      addSolid(Object.assign(meshSolid(rocks.big[vi], trs(x, gy - sink, z, yaw, sx, sy, sz, Math.atan2(hz, 2) * 0.8 * (tilt > 0 ? 1 : 0), -Math.atan2(hx, 2) * 0.8), x, z), { big: vi }), s * 1.6);
     }
   }
+  W.rockStyle = [lith.kind, rounding];
+  if (W.gym) buildGymExtras(rocks);
   // deadfall: how each fallen stem came to rest among the standing ones, on terrain and rock (decided once per world)
   if (!W.deadfall) { const t0 = performance.now(); W.deadfall = settleDeadfall(W, rockSupport); W.deadfall.ms = Math.round(performance.now() - t0); }
   for (const t of W.trees) {
@@ -1046,6 +1050,7 @@ function fieldAt(x, z) {
   };
 }
 function genCell(ci, cj) {
+  if (W.gym) return gymCell(ci, cj);
   const r = mulberry32(hash3(ci, cj, W.seed * 13 + 5)), items = [];
   const x0 = ci * NC - HALF, z0 = cj * NC - HALF;
   const f = fieldAt(x0 + NC / 2, z0 + NC / 2);
@@ -1157,10 +1162,146 @@ function refreshNear(px, pz, force = false) {
   for (const nb of Object.values(near.b)) nb.commit();
 }
 
+// ---------------------------------------------------------------- testing gym
+// Stations from src/gym.js, plus spots captured in the forest on this device (stored locally). See gym.js for the format.
+let gymAt = 0;
+const DEG = Math.PI / 180;
+function loadCaptures() { try { return JSON.parse(localStorage.getItem('foothold.captures') || '[]'); } catch (e) { return []; } }
+function buildGymExtras(rocks) {
+  const G = W.gym, stone = new THREE.MeshLambertMaterial({ color: new THREE.Color().setRGB(0.5, 0.48, 0.45, THREE.SRGBColorSpace) });
+  const box = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+  const put = (geo, mat, M) => { const m = new THREE.Mesh(geo, mat); m.matrixAutoUpdate = false; m.matrix.copy(M); m.castShadow = m.receiveShadow = true; worldGroup.add(m); };
+  for (const b of G.blocks) {
+    const M = trs(b.x, b.y, b.z, b.yaw * DEG, b.size[0], b.size[1], b.size[2], b.pitch * DEG, b.roll * DEG).clone();
+    put(box, stone, M); addSolid(meshSolid(box, M, b.x, b.z), 0);
+  }
+  for (const r of G.rocks) { // captured outcrops: the same big-rock shapes the forest uses (this gym's bedrock style)
+    const M = new THREE.Matrix4().fromArray(r.e); M.elements[12] += r.x; M.elements[13] += r.y; M.elements[14] += r.z;
+    const geo = rocks.big[r.i % rocks.big.length]; put(geo, stone, M); addSolid(meshSolid(geo, M, r.x, r.z), 0);
+  }
+  const sphere = new THREE.SphereGeometry(1, 18, 12);
+  for (const w of G.wads) {
+    const M = new THREE.Matrix4().makeBasis(new THREE.Vector3(w.ux * w.ax, 0, w.uz * w.ax), new THREE.Vector3(0, w.ay, 0), new THREE.Vector3(-w.uz * w.az, 0, w.ux * w.az)).setPosition(w.x, w.y, w.z);
+    put(sphere, mats.soil, M); addSolid(ellipsoid(w.x, w.y, w.z, w.ax, w.ay, w.az, w.ux, w.uz), Math.max(w.ax, w.az));
+  }
+  // lane marks (start and goal lines) and a sign naming each station
+  const line = new THREE.PlaneGeometry(3, 0.07).rotateX(-Math.PI / 2);
+  const startMat = new THREE.MeshBasicMaterial({ color: 0xd9d2c0 }), goalMat = new THREE.MeshBasicMaterial({ color: 0xd4ad3a });
+  G.stations.forEach((s, i) => {
+    for (const [f, mat] of [[-4, startMat], [4, goalMat]]) { const [x, z] = gymToWorld(i, 0, f), m = new THREE.Mesh(line, mat); m.position.set(x, ground(x, z) + 0.03, z); worldGroup.add(m); }
+    const t = canvasTex(512, 128, (g, w, h) => {
+      g.fillStyle = 'rgba(28,30,26,0.82)'; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#d4ad3a'; g.font = 'bold 54px sans-serif'; g.fillText(String(i + 1), 18, 64);
+      g.fillStyle = '#ece6d6'; g.font = '34px sans-serif'; g.fillText(s.name.slice(0, 26), 96, 58);
+      g.fillStyle = '#b9b3a3'; g.font = '22px sans-serif'; g.fillText((s.plan || '').slice(0, 40), 96, 100);
+    });
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t })); const [x, z] = gymToWorld(i, -2.4, -4.5);
+    sp.position.set(x, ground(x, z) + 2.1, z); sp.scale.set(2.4, 0.6, 1); worldGroup.add(sp);
+  });
+}
+function gymCell(ci, cj) { // a little grass and litter, plus captured near-field items in this cell
+  const r = mulberry32(hash3(ci, cj, 5)), items = [], x0 = ci * NC - HALF, z0 = cj * NC - HALF;
+  for (let k = 0; k < 26; k++) { const s = 0.2 + 0.3 * r(); items.push(['grass', x0 + r() * NC, z0 + r() * NC, r() * 6.28, s * 1.6, s, 0.8 + 0.3 * r(), r()]); }
+  for (let k = 0; k < 8; k++) { const s = 0.35 + 0.5 * r(); items.push(['litter', x0 + r() * NC, z0 + r() * NC, r() * 6.28, s, s, 0.8 + 0.35 * r(), r()]); }
+  for (const it of W.gym.nearItems) if (it[1] >= x0 && it[1] < x0 + NC && it[2] >= z0 && it[2] < z0 + NC) items.push([...it]);
+  return items;
+}
+function goStation(i) {
+  const n = W.gym.stations.length; gymAt = ((i % n) + n) % n;
+  const [x, z] = gymToWorld(gymAt, 0, -4);
+  player.x = x; player.z = z; player.yaw = 0; player.pitch = -0.12;
+  refreshNear(x, z, true); resetRig(); showStation();
+}
+function showStation() { const s = W.gym.stations[gymAt]; $('hudWorld').textContent = `Gym ${gymAt + 1}/${W.gym.stations.length} · ${s.name}`; $('hudHere').textContent = gymStatus(); }
+const gymProgress = () => { const [, oz] = stationOrigin(gymAt); return oz - player.z; };
+function gymStatus() { const s = W.gym.stations[gymAt]; return `intended: ${s.plan || '—'} · [ ] or ◀ ▶ to change, R or ↺ to restart`; }
+// Walk a station straight ahead for `secs` simulated seconds and score it against its intended outcome.
+function gymRun(i, secs = 16) {
+  goStation(i); const s = W.gym.stations[gymAt], e = s.expect || {};
+  const g0 = ground(player.x, player.z);
+  let maxF = -9, maxH = 0, hands = false, lifts = 0, worst = 9, worstAt = '', lifting = false, eyeJump = 0, lastEye = null;
+  for (let k = 0; k < secs * 60; k++) {
+    input.keys.clear(); input.keys.add('KeyW'); movePlayer(1 / 60); refreshNear(player.x, player.z);
+    const f = gymProgress(); maxF = Math.max(maxF, f); maxH = Math.max(maxH, rig.feet - g0);
+    if (body.four) hands = true; if (rig.lift && !lifting) lifts++; lifting = !!rig.lift;
+    if (f >= 5) break; // past the goal: stop before reaching the next row of stations
+    if (lastEye !== null) eyeJump = Math.max(eyeJump, Math.abs(player.eye - lastEye)); lastEye = player.eye;
+    const J = body.sol?.J; if (J) for (const nm of ['head', 'neck', 'chest']) { const j = J[nm], c = ceilingAt(j[0], j[2], rig.feet, [0, -1]), gap = c - (j[1] + (nm === 'head' ? 0.11 : 0.06)); if (gap < worst) { worst = gap; worstAt = nm; } }
+  }
+  input.keys.clear();
+  const checks = [];
+  if (e.cross) checks.push(['cross', maxF >= 4]);
+  if (e.stop) checks.push(['stop', maxF < 1]);
+  if (e.height !== undefined) checks.push([`height ≥ ${e.height}`, maxH >= e.height]);
+  if (s.maxHeight !== undefined) checks.push([`height ≤ ${s.maxHeight}`, maxH <= s.maxHeight]);
+  if (e.clean) checks.push(['clean', worst >= -0.02]);
+  if (e.hands !== undefined) checks.push([e.hands ? 'on hands' : 'on feet', hands === e.hands]);
+  return { i: gymAt + 1, name: s.name, pass: checks.every((c) => c[1]), checks: checks.map(([n, ok]) => `${ok ? '✓' : '✗'} ${n}`).join(' '),
+    reached: +maxF.toFixed(2), height: +maxH.toFixed(2), hands, pullups: lifts, clearance: +worst.toFixed(2), clearanceAt: worstAt, eyeJump: +eyeJump.toFixed(3), plan: s.plan };
+}
+$('gPrev').addEventListener('click', () => goStation(gymAt - 1));
+$('gNext').addEventListener('click', () => goStation(gymAt + 1));
+$('gAgain').addEventListener('click', () => goStation(gymAt));
+// Record the obstacles within R m as a gym station, in the frame of where you stand (the start) and look (forward).
+function captureSpot(R = 5) {
+  if (!W) return;
+  const Y = player.yaw, F = [-Math.sin(Y), -Math.cos(Y)], Rt = [Math.cos(Y), -Math.sin(Y)], px = player.x, pz = player.z, g0 = ground(px, pz);
+  const q = (v) => Math.round(v * 100) / 100;
+  const loc = (x, z) => { const dx = x - px, dz = z - pz; return [q(dx * Rt[0] + dz * Rt[1]), q(dx * F[0] + dz * F[1] - 4)]; };
+  const near2 = (x, z, pad = 0) => Math.hypot(x - px, z - pz) < R + pad;
+  const feats = [], seen = new Set();
+  // ground, as heights relative to where you stand
+  const n = 2 * Math.round(R / 0.5) + 1, h = [];
+  for (let b = 0; b < n; b++) for (let a = 0; a < n; a++) { const x = (a - (n - 1) / 2) * 0.5, f = (b - (n - 1) / 2) * 0.5; h.push(q(ground(px + x * Rt[0] + f * F[0], pz + x * Rt[1] + f * F[1]) - g0)); }
+  feats.push({ grid: { step: 0.5, n, h } });
+  for (const t of W.trees) {
+    if (t.st === 2 && t.rest) for (const p of t.rest.pieces) {
+      if (W.gym && t.gym === undefined) continue;
+      // keep the part of the piece within R + 2 m of you
+      const vx = p.x1 - p.x0, vz = p.z1 - p.z0, L2 = vx * vx + vz * vz || 1, u = clamp(((px - p.x0) * vx + (pz - p.z0) * vz) / L2, 0, 1);
+      if (!near2(p.x0 + vx * u, p.z0 + vz * u, 1)) continue;
+      const half = (R + 2) / Math.sqrt(L2), ua = clamp(u - half, 0, 1), ub = clamp(u + half, 0, 1);
+      const at = (k) => [p.x0 + vx * k, p.y0 + (p.y1 - p.y0) * k, p.z0 + vz * k], A = at(ua), B = at(ub);
+      const r = q((p.rx0 + p.rx1) / 2), rz = (p.rz0 + p.rz1) / 2;
+      feats.push({ log: [...loc(A[0], A[2]), q(A[1] - rz - g0), ...loc(B[0], B[2]), q(B[1] - rz - g0)], r });
+    }
+  }
+  for (const map of [colTrunks, saplingCells]) for (const a of map.values()) for (const t of a) {
+    const x = t.sap ? t.tx : t.x, z = t.sap ? t.tz : t.z; if (!near2(x, z) || seen.has(t)) continue; seen.add(t);
+    feats.push({ trunk: loc(x, z), d: Math.round((t.r - (t.sap ? 0.04 : 0.25)) * 200) });
+  }
+  const turn = new THREE.Matrix4().makeRotationY(-Y);
+  for (const a of solids.values()) for (const o of a) {
+    if (seen.has(o)) continue; seen.add(o);
+    if (o.kind === 'ell' && near2(o.x, o.z, 1)) { const [x, f] = loc(o.x, o.z), ux = o.ux * Math.cos(Y) - o.uz * Math.sin(Y), uz = o.ux * Math.sin(Y) + o.uz * Math.cos(Y); feats.push({ wad: [x, f, q(o.y - g0)], a: [q(o.ax), q(o.ay), q(o.az)], u: [q(ux), q(uz)] }); }
+    if (o.kind === 'mesh' && o.big !== undefined && near2(o.x, o.z, 3)) {
+      const M = new THREE.Matrix4().fromArray(o.e); M.elements[12] -= px; M.elements[13] -= g0; M.elements[14] -= pz; M.premultiply(turn);
+      const m = M.elements; feats.push({ rock: [q(m[12]), q(-m[14] - 4), q(m[13])], i: o.big, e: m.map((v, k) => (k >= 12 && k <= 14 ? 0 : Math.round(v * 1000) / 1000)) });
+    }
+  }
+  const items = [];
+  for (const a of near.cells.values()) for (const it of a) {
+    if (!/^(rock|round|twig|stick|limb|tall|shrub)/.test(it[0]) || !near2(it[1], it[2])) continue;
+    const [x, f] = loc(it[1], it[2]), yaw = /^(rock|round|tall|shrub)/.test(it[0]) ? it[3] - Y : it[3] + Y;
+    items.push([it[0], x, f, q(yaw), ...it.slice(4).map(q)]);
+  }
+  if (items.length) feats.push({ near: items });
+  const st = { name: `Captured ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`, features: feats, expect: { cross: true }, plan: '(describe what should happen)',
+    from: W.gym ? 'gym' : { seed: W.seed, age: settings.age, moisture: settings.moisture, storms: settings.storms, geology: settings.geology, x: q(px), z: q(pz), yaw: q(Y), rockStyle: W.rockStyle } };
+  const txt = JSON.stringify(st);
+  const caps = loadCaptures(); caps.push(st); try { localStorage.setItem('foothold.captures', JSON.stringify(caps)); } catch (e) { /* storage unavailable */ }
+  const out = $('capOut'); out.hidden = false; out.value = txt;
+  try { navigator.clipboard?.writeText(txt).catch(() => {}); } catch (e) { /* no clipboard */ }
+  $('hint').textContent = `Spot captured: gym station ${STATIONS.length + caps.length} (the World panel shows its text)`; $('hint').style.opacity = 1; clearTimeout(hintTimer); hintTimer = setTimeout(hideHint, 4000);
+  return st;
+}
+$('bCapture').addEventListener('click', () => captureSpot());
+
 // ---------------------------------------------------------------- player
 const player = { x: 0, z: 0, yaw: 0, pitch: -0.05, eye: 0 };
 const input = { f: 0, s: 0, run: false, keys: new Set(), stick: null, look: null };
 function spawn() {
+  if (W.gym) { goStation(gymAt); return; }
   const r = mulberry32(W.seed + 1);
   let best = null, bestScore = -1e9;
   for (let k = 0; k < 300; k++) {
@@ -1565,7 +1706,7 @@ function quadAllows(nx, nz, px, pz) {
 }
 // standing still: do the hands stay needed where you are?
 function needHere() {
-  const x = player.x, z = player.z, head = ceilingAt(x, z, rig.feet) - rig.feet;
+  const x = player.x, z = player.z, head = ceilingAt(x, z, rig.feet, [-Math.sin(player.yaw), -Math.cos(player.yaw)]) - rig.feet;
   if (head < DUCK_MIN) return 1;
   const st = stemUnder(x, z, rig.feet), tf = TRACTION[footKind] ?? MAX_SLOPE;
   supportRef = rig.feet; const steep = st ? st.slope : supportGrad(x, z, 0.3);
@@ -1833,7 +1974,7 @@ function duckPosture(ux, uz, spd) {
   for (let a = 0; a <= ahead + 1e-6; a += 0.1) pts.push([a, 0, 0]);
   for (let b = 0.1; b <= 0.8; b += 0.1) pts.push([0, b, 0], [0.25, b, 0]);
   for (const [a, b, s] of pts) {
-    const x = player.x + ux * a + fx * b - uz * s, z = player.z + uz * a + fz * b + ux * s, y = ceilingAt(x, z, feet);
+    const x = player.x + ux * a + fx * b - uz * s, z = player.z + uz * a + fz * b + ux * s, y = ceilingAt(x, z, feet, [ux, uz]); // a stem rising the way you go is climbed, not ducked
     if (y < c) { c = y; cx = x; cz = z; }
   }
   if (c === Infinity) return null;
@@ -1983,7 +2124,7 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
   };
   if (!M) { eye.x = player.x; eye.z = player.z; } // motion off: steady eye at standing height above the controller
   if (!four) { // the head is solid: if the posture springs lag a sudden rise (a step up under a stem), the knees give at once
-    const c = ceilingAt(eye.x, eye.z, rig.feet), over = eye.y + 0.17 - (c - 0.03);
+    const c = ceilingAt(eye.x, eye.z, rig.feet, [-Math.sin(player.yaw), -Math.cos(player.yaw)]), over = eye.y + 0.17 - (c - 0.03);
     if (over > 0) { body.crouch -= over; eye.y -= over; }
   }
   const sol = SK.solvePose(bodyPose()); body.sol = sol;
@@ -2110,7 +2251,7 @@ function updateSkeleton() {
 
 // ---------------------------------------------------------------- input
 const keyTarget = (e) => e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName);
-addEventListener('keydown', (e) => { if (keyTarget(e)) return; input.keys.add(e.code); if (e.code === 'KeyM') toggle('pMap'); if (e.code === 'KeyV') { settings.view = settings.view === 'third' ? 'first' : 'third'; fView.value = settings.view; } });
+addEventListener('keydown', (e) => { if (keyTarget(e)) return; input.keys.add(e.code); if (e.code === 'KeyM') toggle('pMap'); if (e.code === 'KeyC') captureSpot(); if (W?.gym && e.code === 'BracketRight') goStation(gymAt + 1); if (W?.gym && e.code === 'BracketLeft') goStation(gymAt - 1); if (W?.gym && e.code === 'KeyR') goStation(gymAt); if (e.code === 'KeyV') { settings.view = settings.view === 'third' ? 'first' : 'third'; fView.value = settings.view; } });
 addEventListener('keyup', (e) => input.keys.delete(e.code));
 addEventListener('blur', () => input.keys.clear());
 const stickEl = $('stick'), knob = $('knob');
@@ -2284,7 +2425,8 @@ function roundTop(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x, y + h); g.lineT
 
 // world panel
 const fSeed = $('fSeed'), fAge = $('fAge'), fMoist = $('fMoist'), fStorm = $('fStorm'), fQual = $('fQual'), fGeo = $('fGeo'), fMotion = $('fMotion'), fView = $('fView'), fBody = $('fBody');
-function syncForm() { fSeed.value = settings.seed; fAge.value = String(settings.age); fMoist.value = settings.moisture; fStorm.value = settings.storms; fQual.value = settings.quality; fGeo.value = settings.geology; fMotion.value = settings.motion || 'full'; }
+const fPlace = $('fPlace');
+function syncForm() { fPlace.value = settings.place || 'forest'; fSeed.value = settings.seed; fAge.value = String(settings.age); fMoist.value = settings.moisture; fStorm.value = settings.storms; fQual.value = settings.quality; fGeo.value = settings.geology; fMotion.value = settings.motion || 'full'; }
 fMotion.addEventListener('change', () => { settings.motion = fMotion.value; saveSettings(); });
 fView.value = settings.view || 'first'; fBody.value = settings.body || 'hidden';
 fView.addEventListener('change', () => { settings.view = fView.value; saveSettings(); });
@@ -2293,7 +2435,7 @@ syncForm();
 $('bDice').addEventListener('click', () => { fSeed.value = 1 + Math.floor(Math.random() * 99999); });
 $('bRegen').addEventListener('click', () => {
   const q = fQual.value !== settings.quality;
-  Object.assign(settings, { seed: clamp(parseInt(fSeed.value, 10) || 1, 1, 999999), age: +fAge.value, moisture: fMoist.value, storms: fStorm.value, geology: fGeo.value, quality: fQual.value });
+  Object.assign(settings, { place: fPlace.value, seed: clamp(parseInt(fSeed.value, 10) || 1, 1, 999999), age: +fAge.value, moisture: fMoist.value, storms: fStorm.value, geology: fGeo.value, quality: fQual.value });
   saveSettings(); toggle(null);
   if (q && renderer.capabilities) { location.reload(); return; } // antialiasing is fixed at context creation
   start();
@@ -2333,7 +2475,7 @@ function loop(now) {
   if (fpsT > 0.5) {
     $('fps').textContent = `${Math.round(frames / fpsT)} fps`; frames = 0; fpsT = 0;
     const f = fieldAt(player.x, player.z);
-    $('hudHere').textContent = `elev ${ground(player.x, player.z).toFixed(0)} m · slope ${Math.round(Math.atan(f.sl) * 57.3)}° · sky ${Math.round(f.L * 100)}% · wet ${f.wet.toFixed(2)}`;
+    if (W.gym) $('hudHere').textContent = gymStatus(); else $('hudHere').textContent = `elev ${ground(player.x, player.z).toFixed(0)} m · slope ${Math.round(Math.atan(f.sl) * 57.3)}° · sky ${Math.round(f.L * 100)}% · wet ${f.wet.toFixed(2)}`;
     if (!$('pMap').hidden) drawMapTop();
   }
 }
@@ -2357,14 +2499,16 @@ async function start() {
   const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
   try {
     applyQuality();
-    W = await generateWorld({ seed: settings.seed, age: settings.age, moisture: settings.moisture, storms: settings.storms, geology: settings.geology }, async (msg, p) => {
+    if (settings.place === 'gym') W = buildGymWorld(loadCaptures());
+    else W = await generateWorld({ seed: settings.seed, age: settings.age, moisture: settings.moisture, storms: settings.storms, geology: settings.geology }, async (msg, p) => {
       stage.textContent = msg; fill.style.width = `${Math.round(p * 100)}%`; await nextFrame();
     });
+    $('gymNav').hidden = !W.gym;
     stage.textContent = 'Building meshes'; await nextFrame();
     buildWorld(); spawn(); refreshNear(player.x, player.z, true);
     drawMapBase(); fillStand();
     const s = W.stats;
-    $('hudWorld').textContent = `seed ${W.seed} · ${W.age} yr · ${Math.round(s.stems)} trees/ha · ${s.logVol.toFixed(0)} m³/ha down wood`;
+    if (W.gym) showStation(); else $('hudWorld').textContent = `seed ${W.seed} · ${W.age} yr · ${Math.round(s.stems)} trees/ha · ${s.logVol.toFixed(0)} m³/ha down wood`;
     $('genNote').textContent = `Last generation took ${(W.genMs / 1000).toFixed(1)} s on this device for ${W.trees.length.toLocaleString()} stems, snags and logs.`;
     fill.style.width = '100%';
     renderer.shadowMap.needsUpdate = true;
@@ -2381,6 +2525,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
+  gym: { get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },
   loco: { stemAt, stemUnder, assess, grade, holdsNear, placeContact, stability, quadAllows, limbAt, GAIT4, TRACTION, get need() { return body.need; }, get q() { return body.q; } }, col: { topOf, supportAt, ceilingAt, duckPosture, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },
   info() { return { near: Object.fromEntries(Object.entries(near.b).map(([k, v]) => [k, v.n])), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries }; },

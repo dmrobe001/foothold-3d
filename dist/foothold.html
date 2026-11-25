@@ -24,6 +24,8 @@
   #hud .name { font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; font-size: 13px; color: var(--accent); }
   #hud .line { font-family: var(--mono); font-size: 11px; color: var(--ink-2); margin-top: 3px; font-variant-numeric: tabular-nums; line-height: 1.45; }
   @media (max-width: 560px) { #hud { top: calc(56px + env(safe-area-inset-top, 0px)); max-width: calc(100vw - 20px); } }
+  #gymNav { position: fixed; bottom: calc(56px + env(safe-area-inset-bottom, 0px)); right: calc(10px + env(safe-area-inset-right, 0px)); display: flex; gap: 6px; }
+  #capOut { width: 100%; height: 110px; margin-top: 10px; font-family: var(--mono); font-size: 11px; background: var(--panel-solid); color: var(--ink-2); border: 1px solid var(--line); border-radius: 6px; }
   #buttons { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); right: calc(10px + env(safe-area-inset-right, 0px)); display: flex; gap: 6px; }
   button, select, input { font: inherit; color: var(--ink); }
   .btn { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; font-size: 14px; font-weight: 500; letter-spacing: 0.04em; cursor: pointer; min-height: 38px; }
@@ -88,6 +90,11 @@
   <button class="btn" id="bStand" aria-pressed="false">Stand</button>
   <button class="btn" id="bWorld" aria-pressed="false">World</button>
 </div>
+<div id="gymNav" hidden>
+  <button class="btn" id="gPrev" aria-label="Previous station">◀</button>
+  <button class="btn" id="gAgain" aria-label="Restart this station">↺</button>
+  <button class="btn" id="gNext" aria-label="Next station">▶</button>
+</div>
 
 <section class="panel" id="pMap" hidden>
   <button class="btn close" data-close>Close</button>
@@ -122,6 +129,7 @@
   <h2>World</h2>
   <p class="sub">Every world is reproducible from these settings. Regenerating re-runs terrain, hydrology and the forest simulation.</p>
   <div class="form">
+    <label for="fPlace">Place<select id="fPlace"><option value="forest">Forest</option><option value="gym">Testing gym</option></select></label>
     <label for="fSeed">Seed<span class="seedrow"><input id="fSeed" type="number" inputmode="numeric" min="1" max="999999"><button class="btn" id="bDice" type="button" aria-label="Random seed">↻</button></span></label>
     <label for="fAge">Years since fire<select id="fAge"><option value="40">40 · young</option><option value="90">90</option><option value="160">160 · mature</option><option value="300">300 · old growth</option></select></label>
     <label for="fMoist">Climate<select id="fMoist"><option value="dry">Dry</option><option value="mesic">Mesic</option><option value="wet">Wet</option></select></label>
@@ -132,8 +140,10 @@
     <label for="fBody">Body<select id="fBody"><option value="hidden">Hidden</option><option value="shown">Shown (debug)</option></select></label>
     <label for="fQual">Graphics<select id="fQual"><option value="low">Phone</option><option value="high">Desktop</option></select></label>
   </div>
-  <div class="actions"><button class="btn primary" id="bRegen">Regenerate</button></div>
+  <div class="actions"><button class="btn primary" id="bRegen">Regenerate</button><button class="btn" id="bCapture" type="button">Copy this spot</button></div>
   <p class="note" id="genNote"></p>
+  <p class="note">Copy this spot (key C) records the obstacles within 5 m of you, facing the way you look, as a new gym station: it is added to your own testing gym, and the text below can be pasted to Claude to make it permanent.</p>
+  <textarea id="capOut" hidden readonly></textarea>
 </section>
 
 <div id="stick" hidden><div id="knob"></div></div>
@@ -1018,6 +1028,118 @@ function settleDeadfall(W, support) {
   return stats;
 }
 
+// ---- gym ----
+// Testing gym: a level clearing with fixed obstacle stations, each stating the outcome the movement rules should give.
+// It is an ordinary world record (the same shape generateWorld returns), so the game builds, draws and collides with it
+// exactly as it does a forest; only the content is placed by hand instead of grown.
+//
+// Station frame: x is to your right, f is forward, y is up from the lane's ground (0). You start at f = -4 facing
+// forward; the feature sits around f = 0; the goal line is f = +4. Feature kinds:
+//   log:   [x0, f0, under0, x1, f1, under1], r      a straight stem of radius r; `under` is its underside height at each end
+//   stem:  [x, f], ang, len, r, yaw = 0, prop       a stem resting on the ground at its foot, rising at `ang` degrees
+//                                                  (yaw in degrees, 0 = rising straight ahead); prop: a trunk holds its top
+//   block: [x, f], size [w, h, l], y = 0, pitch, roll, yaw   a rock box standing on its bottom face centre; pitch raises
+//                                                  its far edge, roll its right edge, yaw turns it (all degrees)
+//   trunk: [x, f], d                               a standing tree of diameter d (cm); d < 8 is a sapling you brush past
+//   ramp:  [f0, f1], rise, w                       soil rising from f0 to f1 by `rise` over a width w, then level
+//   wad:   [x, f, y], a [ax, ay, af], u [ux, uz]   a root wad (soil ellipsoid; u: its long axis, gym-world x/z)
+//   rock:  [x, f, y], i, e [16]                   a captured outcrop: big rock shape i with its turn and scale (matrix e)
+//   grid:  { step, n, h: [...] }                   a captured patch of ground heights, n × n samples centred on the start
+//   near:  [[type, x, f, yaw, a, b, c, v], ...]    captured near-field items (rocks, fallen branches) as the forest makes them
+// Angles of captured things (yaw of rocks and near items, wad axes) are in the gym world's own frame: the capture
+// turns the world so the way you were looking becomes the lane's forward.
+// expect (what a station scores):
+//   cross: reach the goal line          stop: never get past f = 1         height: the feet reach at least this high
+//   clean: no head, neck or chest in a stem       hands: true (must go on hands) / false (must not)
+//   plan:  the intended way through, in words (not scored yet)
+
+const hurdle = (top, r = 0.25) => ({ log: [-2.5, 0, top - 2 * r, 2.5, 0, top - 2 * r], r });
+const STATIONS = [
+  { name: 'Hung stem, 1.4 m under', features: [{ log: [-3, 0, 1.4, 3, 0, 1.4], r: 0.2 }], expect: { cross: true, clean: true, hands: false }, plan: 'duck under, staying on your feet' },
+  { name: 'Hung stem, 0.9 m under', features: [{ log: [-3, 0, 0.9, 3, 0, 0.9], r: 0.2 }], expect: { cross: true, clean: true, hands: true }, plan: 'drop to hands and knees and crawl under' },
+  { name: 'Hung stem, 0.6 m under', features: [{ log: [-3, 0, 0.6, 3, 0, 0.6], r: 0.2 }], expect: { cross: true, clean: true, hands: true }, plan: 'crawl under, flat and low' },
+  { name: 'Sloped overhang', features: [{ log: [-3, 0, 0.6, 3, 0, 1.6], r: 0.2 }], expect: { cross: true, clean: true }, plan: 'lean toward the high (right) side and duck through' },
+  { name: 'Hurdle, 0.5 m', features: [hurdle(0.5)], expect: { cross: true, hands: false }, plan: 'step over' },
+  { name: 'Hurdle, 0.85 m', features: [hurdle(0.85)], expect: { cross: true }, plan: 'hands on the stem and swing the legs over (not a pull-up onto it)' },
+  { name: 'Tilted hurdle', features: [{ log: [-2.5, 0, 0, 2.5, 0, 0.6], r: 0.25 }], expect: { cross: true }, plan: 'swing the legs over the low (left) end' },
+  { name: 'Hurdle, 1.2 m', features: [hurdle(1.2, 0.3)], expect: { cross: true }, plan: 'climb over: pull up, then down the far side' },
+  { name: 'Stem at 30°', features: [{ stem: [0, -1], ang: 30, len: 9, r: 0.2, prop: true }], expect: { height: 3, hands: false }, plan: 'walk up it' },
+  { name: 'Stem at 50°', features: [{ stem: [0, -1], ang: 50, len: 8, r: 0.2, prop: true }], expect: { height: 3, hands: true }, plan: 'climb it on hands and feet' },
+  { name: 'Stem at 65°', features: [{ stem: [0, -1], ang: 65, len: 7, r: 0.2, prop: true }], expect: { height: 2.5, hands: true }, plan: 'climb it hand over hand' },
+  { name: 'Stem at 75°', features: [{ stem: [0, -1], ang: 75, len: 7, r: 0.2, prop: true }], expect: { hands: true }, plan: 'too steep: get on it, but no higher than a reach (expect under 1.5 m)', maxHeight: 1.5 },
+  { name: 'Ledge, 0.5 m', features: [{ block: [0, 3], size: [5, 0.5, 6] }], expect: { cross: true, height: 0.45, hands: false }, plan: 'step up' },
+  { name: 'Ledge, 1.2 m', features: [{ block: [0, 3], size: [5, 1.2, 6] }], expect: { cross: true, height: 1.15 }, plan: 'pull up onto it' },
+  { name: 'Wall, 1.8 m', features: [{ block: [0, 1], size: [5, 1.8, 1.2] }], expect: { stop: true }, plan: 'too high: stopped' },
+  { name: 'Rock slab, 40°', features: [{ block: [0, 3], size: [4, 0.6, 9], pitch: 40, y: -0.4 }], expect: { height: 1.8, hands: false }, plan: 'walk up' },
+  { name: 'Rock slab, 55°', features: [{ block: [0, 3], size: [4, 0.6, 9], pitch: 55, y: -0.4 }], expect: { height: 2.5, hands: true }, plan: 'scramble up, hands pressed on the rock' },
+  { name: 'Trunks 1.3 m apart', features: [{ trunk: [-0.85, 0], d: 40 }, { trunk: [0.85, 0], d: 40 }], expect: { cross: true }, plan: 'walk between' },
+];
+
+const COLS = 6, DX = 14, DZ = 18;
+// station i's origin in the world, and its frame: forward is world -z, right is world +x
+function stationOrigin(i) { return [(i % COLS - (COLS - 1) / 2) * DX, (Math.floor(i / COLS) - 1) * DZ]; }
+const gymToWorld = (i, x, f) => { const [ox, oz] = stationOrigin(i); return [ox + x, oz - f]; };
+
+// The world record. Trees use the same fields the forest's do; the deadfall step is skipped (stems lie where placed).
+function buildGymWorld(extra = []) {
+  const stations = [...STATIONS, ...extra];
+  const H = new Float32Array(N * N), HF = new Float32Array(NF * NF);
+  const fine = (WORLD / (NF - 1));
+  const raise = (fn, x0, x1, z0, z1) => { // apply a height function over a world box to the fine grid
+    for (let J = Math.max(0, Math.floor((z0 + HALF) / fine)); J <= Math.min(NF - 1, Math.ceil((z1 + HALF) / fine)); J++)
+      for (let I = Math.max(0, Math.floor((x0 + HALF) / fine)); I <= Math.min(NF - 1, Math.ceil((x1 + HALF) / fine)); I++) {
+        const k = J * NF + I, v = fn(I * fine - HALF, J * fine - HALF); if (v !== null) HF[k] = v;
+      }
+  };
+  const trees = [], blocks = [], nearItems = [], wads = [], rocks = [];
+  const log = (x0, z0, y0, x1, z1, y1, r) => { // centre heights at each end
+    const L = Math.hypot(x1 - x0, y1 - y0, z1 - z0);
+    trees.push({ st: 2, sp: 0, x: x0, z: z0, d: r * 200, h: L, t: 1, gym: true, rest: { a: Math.atan2(z1 - z0, x1 - x0), sx: r, sz: r, L, fd: 0, pieces: [{ x0, y0, z0, x1, y1, z1, u0: 0.2, u1: 0.8, rx0: r, rx1: r, rz0: r, rz1: r, r }] } });
+  };
+  const trunk = (x, z, d) => trees.push({ st: 0, sp: 2, x, z, d, h: d < 8 ? 2 + d * 0.5 : 18 + d * 0.1, t: 0, gym: true });
+  stations.forEach((s, i) => {
+    const W2 = (x, f) => gymToWorld(i, x, f);
+    for (const ft of s.features || []) {
+      if (ft.log) { const [x0, f0, u0, x1, f1, u1] = ft.log, a = W2(x0, f0), b = W2(x1, f1); log(a[0], a[1], u0 + ft.r, b[0], b[1], u1 + ft.r, ft.r); }
+      if (ft.stem) {
+        const a = W2(...ft.stem), A = (ft.ang * Math.PI) / 180, yw = ((ft.yaw || 0) * Math.PI) / 180, hl = ft.len * Math.cos(A);
+        const b = W2(ft.stem[0] + Math.sin(yw) * hl, ft.stem[1] + Math.cos(yw) * hl), top = ft.r + ft.len * Math.sin(A);
+        log(a[0], a[1], ft.r, b[0], b[1], top, ft.r);
+        if (ft.prop) { const p = W2(ft.stem[0] + Math.sin(yw) * (hl + ft.r + 0.25), ft.stem[1] + Math.cos(yw) * (hl + ft.r + 0.25)); trunk(p[0], p[1], 50); }
+      }
+      if (ft.trunk) { const a = W2(...ft.trunk); trunk(a[0], a[1], ft.d); }
+      if (ft.block) { const a = W2(...ft.block); blocks.push({ x: a[0], z: a[1], y: ft.y || 0, size: ft.size, pitch: ft.pitch || 0, roll: ft.roll || 0, yaw: ft.yaw || 0 }); }
+      if (ft.wad) { const a = W2(ft.wad[0], ft.wad[1]); wads.push({ x: a[0], y: ft.wad[2], z: a[1], ax: ft.a[0], ay: ft.a[1], az: ft.a[2], ux: ft.u?.[0] ?? 1, uz: ft.u?.[1] ?? 0 }); }
+      if (ft.rock) { const a = W2(ft.rock[0], ft.rock[1]); rocks.push({ x: a[0], y: ft.rock[2], z: a[1], i: ft.i, e: ft.e }); }
+      if (ft.ramp) {
+        const [f0, f1] = ft.ramp, w = ft.w || 5, [ox, oz] = stationOrigin(i);
+        raise((x, z) => { const f = oz - z; if (Math.abs(x - ox) > w / 2) return null; return Math.max(HF[0], ft.rise * clamp((f - f0) / (f1 - f0), 0, 1)); }, ox - w / 2, ox + w / 2, oz - 6, oz + 6);
+      }
+      if (ft.grid) {
+        const { step, n, h } = ft.grid, [ox, oz] = stationOrigin(i), c = (n - 1) / 2, sx = ox, sz = oz + 4; // centred on the start
+        raise((x, z) => {
+          const gx = (x - sx) / step + c, gf = (sz - z) / step + c; if (gx < 0 || gf < 0 || gx > n - 1 || gf > n - 1) return null;
+          const a = Math.min(n - 2, Math.floor(gx)), b = Math.min(n - 2, Math.floor(gf)), u = gx - a, v = gf - b;
+          return h[b * n + a] * (1 - u) * (1 - v) + h[b * n + a + 1] * u * (1 - v) + h[(b + 1) * n + a] * (1 - u) * v + h[(b + 1) * n + a + 1] * u * v;
+        }, sx - c * step, sx + c * step, sz - c * step, sz + c * step);
+      }
+      if (ft.near) for (const it of ft.near) { const a = W2(it[1], it[2]); nearItems.push([it[0], a[0], a[1], ...it.slice(3)]); }
+    }
+  });
+  // the coarse 2 m grid (far terrain) follows the fine one
+  const ratio = (NF - 1) / (N - 1);
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) H[j * N + i] = HF[j * ratio * NF + i * ratio];
+  const fill = (n, v) => new Float32Array(n * n).fill(v);
+  const LN = 129;
+  const world = {
+    gym: { stations, blocks, nearItems, wads, rocks }, seed: 1, age: 0, opt: { geology: 'granite', moisture: 'mesic', storms: 'none' }, geology: GEOLOGY.granite,
+    H, HF, hmax: 2, slope: fill(N, 0), wet: fill(N, 0.3), stream: fill(N, 0), moist: fill(N, 0.5), rock: fill(N, 0), north: fill(N, 0), soil: fill(N, 0.6),
+    light: fill(LN, 0.7), conShare: fill(LN, 0), LN, trees, pits: [], windDir: [1, 0], stats: null, genMs: 0, deadfall: { gym: true, ms: 0 },
+  };
+  world.stats = standStats(world); world.stats.storms = 0;
+  return world;
+}
+
 // ---- skeleton ----
 const SK = (() => {
 // A small articulated skeleton: one hierarchy of joints, solved each frame from a few posture variables and four
@@ -1123,8 +1245,9 @@ const $ = (id) => document.getElementById(id);
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 
 // ---------------------------------------------------------------- settings
-const settings = { seed: 1, age: 160, moisture: 'mesic', storms: 'occasional', geology: 'granite', quality: isTouch ? 'low' : 'high', motion: 'full', view: 'first', body: 'hidden' };
+const settings = { seed: 1, age: 160, moisture: 'mesic', storms: 'occasional', geology: 'granite', quality: isTouch ? 'low' : 'high', motion: 'full', view: 'first', body: 'hidden', place: 'forest' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('foothold.settings') || '{}')); } catch (e) { /* storage unavailable */ }
+try { if (/(^|[?#&])gym\b/.test(location.search.slice(1) + '&' + location.hash.slice(1))) settings.place = 'gym'; } catch (e) { /* no location */ }
 const saveSettings = () => { try { localStorage.setItem('foothold.settings', JSON.stringify(settings)); } catch (e) { /* ignore */ } };
 
 // ---------------------------------------------------------------- renderer, scene, lights
@@ -2021,9 +2144,11 @@ function buildWorld() {
       const col = mix3(lith.col, [0.5, 0.5, 0.48], 0.15 * r()), v = 0.85 + 0.25 * r();
       const vi = Math.floor(r() * 4), yaw = r() * 6.283, sx = s * (0.9 + 0.5 * r()), sy = s * (0.75 + 0.5 * r()), sz = s * (0.8 + 0.5 * r()), sink = s * (0.08 + 0.15 * r());
       B[tileOf(x, z)].rk[vi].add(trs(x, gy - sink, z, yaw, sx, sy, sz, Math.atan2(hz, 2) * 0.8 * (tilt > 0 ? 1 : 0), -Math.atan2(hx, 2) * 0.8), col[0] * v, col[1] * v, col[2] * v, s);
-      addSolid(meshSolid(rocks.big[vi], trs(x, gy - sink, z, yaw, sx, sy, sz, Math.atan2(hz, 2) * 0.8 * (tilt > 0 ? 1 : 0), -Math.atan2(hx, 2) * 0.8), x, z), s * 1.6);
+      addSolid(Object.assign(meshSolid(rocks.big[vi], trs(x, gy - sink, z, yaw, sx, sy, sz, Math.atan2(hz, 2) * 0.8 * (tilt > 0 ? 1 : 0), -Math.atan2(hx, 2) * 0.8), x, z), { big: vi }), s * 1.6);
     }
   }
+  W.rockStyle = [lith.kind, rounding];
+  if (W.gym) buildGymExtras(rocks);
   // deadfall: how each fallen stem came to rest among the standing ones, on terrain and rock (decided once per world)
   if (!W.deadfall) { const t0 = performance.now(); W.deadfall = settleDeadfall(W, rockSupport); W.deadfall.ms = Math.round(performance.now() - t0); }
   for (const t of W.trees) {
@@ -2161,6 +2286,7 @@ function fieldAt(x, z) {
   };
 }
 function genCell(ci, cj) {
+  if (W.gym) return gymCell(ci, cj);
   const r = mulberry32(hash3(ci, cj, W.seed * 13 + 5)), items = [];
   const x0 = ci * NC - HALF, z0 = cj * NC - HALF;
   const f = fieldAt(x0 + NC / 2, z0 + NC / 2);
@@ -2272,10 +2398,146 @@ function refreshNear(px, pz, force = false) {
   for (const nb of Object.values(near.b)) nb.commit();
 }
 
+// ---------------------------------------------------------------- testing gym
+// Stations from src/gym.js, plus spots captured in the forest on this device (stored locally). See gym.js for the format.
+let gymAt = 0;
+const DEG = Math.PI / 180;
+function loadCaptures() { try { return JSON.parse(localStorage.getItem('foothold.captures') || '[]'); } catch (e) { return []; } }
+function buildGymExtras(rocks) {
+  const G = W.gym, stone = new THREE.MeshLambertMaterial({ color: new THREE.Color().setRGB(0.5, 0.48, 0.45, THREE.SRGBColorSpace) });
+  const box = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+  const put = (geo, mat, M) => { const m = new THREE.Mesh(geo, mat); m.matrixAutoUpdate = false; m.matrix.copy(M); m.castShadow = m.receiveShadow = true; worldGroup.add(m); };
+  for (const b of G.blocks) {
+    const M = trs(b.x, b.y, b.z, b.yaw * DEG, b.size[0], b.size[1], b.size[2], b.pitch * DEG, b.roll * DEG).clone();
+    put(box, stone, M); addSolid(meshSolid(box, M, b.x, b.z), 0);
+  }
+  for (const r of G.rocks) { // captured outcrops: the same big-rock shapes the forest uses (this gym's bedrock style)
+    const M = new THREE.Matrix4().fromArray(r.e); M.elements[12] += r.x; M.elements[13] += r.y; M.elements[14] += r.z;
+    const geo = rocks.big[r.i % rocks.big.length]; put(geo, stone, M); addSolid(meshSolid(geo, M, r.x, r.z), 0);
+  }
+  const sphere = new THREE.SphereGeometry(1, 18, 12);
+  for (const w of G.wads) {
+    const M = new THREE.Matrix4().makeBasis(new THREE.Vector3(w.ux * w.ax, 0, w.uz * w.ax), new THREE.Vector3(0, w.ay, 0), new THREE.Vector3(-w.uz * w.az, 0, w.ux * w.az)).setPosition(w.x, w.y, w.z);
+    put(sphere, mats.soil, M); addSolid(ellipsoid(w.x, w.y, w.z, w.ax, w.ay, w.az, w.ux, w.uz), Math.max(w.ax, w.az));
+  }
+  // lane marks (start and goal lines) and a sign naming each station
+  const line = new THREE.PlaneGeometry(3, 0.07).rotateX(-Math.PI / 2);
+  const startMat = new THREE.MeshBasicMaterial({ color: 0xd9d2c0 }), goalMat = new THREE.MeshBasicMaterial({ color: 0xd4ad3a });
+  G.stations.forEach((s, i) => {
+    for (const [f, mat] of [[-4, startMat], [4, goalMat]]) { const [x, z] = gymToWorld(i, 0, f), m = new THREE.Mesh(line, mat); m.position.set(x, ground(x, z) + 0.03, z); worldGroup.add(m); }
+    const t = canvasTex(512, 128, (g, w, h) => {
+      g.fillStyle = 'rgba(28,30,26,0.82)'; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#d4ad3a'; g.font = 'bold 54px sans-serif'; g.fillText(String(i + 1), 18, 64);
+      g.fillStyle = '#ece6d6'; g.font = '34px sans-serif'; g.fillText(s.name.slice(0, 26), 96, 58);
+      g.fillStyle = '#b9b3a3'; g.font = '22px sans-serif'; g.fillText((s.plan || '').slice(0, 40), 96, 100);
+    });
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t })); const [x, z] = gymToWorld(i, -2.4, -4.5);
+    sp.position.set(x, ground(x, z) + 2.1, z); sp.scale.set(2.4, 0.6, 1); worldGroup.add(sp);
+  });
+}
+function gymCell(ci, cj) { // a little grass and litter, plus captured near-field items in this cell
+  const r = mulberry32(hash3(ci, cj, 5)), items = [], x0 = ci * NC - HALF, z0 = cj * NC - HALF;
+  for (let k = 0; k < 26; k++) { const s = 0.2 + 0.3 * r(); items.push(['grass', x0 + r() * NC, z0 + r() * NC, r() * 6.28, s * 1.6, s, 0.8 + 0.3 * r(), r()]); }
+  for (let k = 0; k < 8; k++) { const s = 0.35 + 0.5 * r(); items.push(['litter', x0 + r() * NC, z0 + r() * NC, r() * 6.28, s, s, 0.8 + 0.35 * r(), r()]); }
+  for (const it of W.gym.nearItems) if (it[1] >= x0 && it[1] < x0 + NC && it[2] >= z0 && it[2] < z0 + NC) items.push([...it]);
+  return items;
+}
+function goStation(i) {
+  const n = W.gym.stations.length; gymAt = ((i % n) + n) % n;
+  const [x, z] = gymToWorld(gymAt, 0, -4);
+  player.x = x; player.z = z; player.yaw = 0; player.pitch = -0.12;
+  refreshNear(x, z, true); resetRig(); showStation();
+}
+function showStation() { const s = W.gym.stations[gymAt]; $('hudWorld').textContent = `Gym ${gymAt + 1}/${W.gym.stations.length} · ${s.name}`; $('hudHere').textContent = gymStatus(); }
+const gymProgress = () => { const [, oz] = stationOrigin(gymAt); return oz - player.z; };
+function gymStatus() { const s = W.gym.stations[gymAt]; return `intended: ${s.plan || '—'} · [ ] or ◀ ▶ to change, R or ↺ to restart`; }
+// Walk a station straight ahead for `secs` simulated seconds and score it against its intended outcome.
+function gymRun(i, secs = 16) {
+  goStation(i); const s = W.gym.stations[gymAt], e = s.expect || {};
+  const g0 = ground(player.x, player.z);
+  let maxF = -9, maxH = 0, hands = false, lifts = 0, worst = 9, worstAt = '', lifting = false, eyeJump = 0, lastEye = null;
+  for (let k = 0; k < secs * 60; k++) {
+    input.keys.clear(); input.keys.add('KeyW'); movePlayer(1 / 60); refreshNear(player.x, player.z);
+    const f = gymProgress(); maxF = Math.max(maxF, f); maxH = Math.max(maxH, rig.feet - g0);
+    if (body.four) hands = true; if (rig.lift && !lifting) lifts++; lifting = !!rig.lift;
+    if (f >= 5) break; // past the goal: stop before reaching the next row of stations
+    if (lastEye !== null) eyeJump = Math.max(eyeJump, Math.abs(player.eye - lastEye)); lastEye = player.eye;
+    const J = body.sol?.J; if (J) for (const nm of ['head', 'neck', 'chest']) { const j = J[nm], c = ceilingAt(j[0], j[2], rig.feet, [0, -1]), gap = c - (j[1] + (nm === 'head' ? 0.11 : 0.06)); if (gap < worst) { worst = gap; worstAt = nm; } }
+  }
+  input.keys.clear();
+  const checks = [];
+  if (e.cross) checks.push(['cross', maxF >= 4]);
+  if (e.stop) checks.push(['stop', maxF < 1]);
+  if (e.height !== undefined) checks.push([`height ≥ ${e.height}`, maxH >= e.height]);
+  if (s.maxHeight !== undefined) checks.push([`height ≤ ${s.maxHeight}`, maxH <= s.maxHeight]);
+  if (e.clean) checks.push(['clean', worst >= -0.02]);
+  if (e.hands !== undefined) checks.push([e.hands ? 'on hands' : 'on feet', hands === e.hands]);
+  return { i: gymAt + 1, name: s.name, pass: checks.every((c) => c[1]), checks: checks.map(([n, ok]) => `${ok ? '✓' : '✗'} ${n}`).join(' '),
+    reached: +maxF.toFixed(2), height: +maxH.toFixed(2), hands, pullups: lifts, clearance: +worst.toFixed(2), clearanceAt: worstAt, eyeJump: +eyeJump.toFixed(3), plan: s.plan };
+}
+$('gPrev').addEventListener('click', () => goStation(gymAt - 1));
+$('gNext').addEventListener('click', () => goStation(gymAt + 1));
+$('gAgain').addEventListener('click', () => goStation(gymAt));
+// Record the obstacles within R m as a gym station, in the frame of where you stand (the start) and look (forward).
+function captureSpot(R = 5) {
+  if (!W) return;
+  const Y = player.yaw, F = [-Math.sin(Y), -Math.cos(Y)], Rt = [Math.cos(Y), -Math.sin(Y)], px = player.x, pz = player.z, g0 = ground(px, pz);
+  const q = (v) => Math.round(v * 100) / 100;
+  const loc = (x, z) => { const dx = x - px, dz = z - pz; return [q(dx * Rt[0] + dz * Rt[1]), q(dx * F[0] + dz * F[1] - 4)]; };
+  const near2 = (x, z, pad = 0) => Math.hypot(x - px, z - pz) < R + pad;
+  const feats = [], seen = new Set();
+  // ground, as heights relative to where you stand
+  const n = 2 * Math.round(R / 0.5) + 1, h = [];
+  for (let b = 0; b < n; b++) for (let a = 0; a < n; a++) { const x = (a - (n - 1) / 2) * 0.5, f = (b - (n - 1) / 2) * 0.5; h.push(q(ground(px + x * Rt[0] + f * F[0], pz + x * Rt[1] + f * F[1]) - g0)); }
+  feats.push({ grid: { step: 0.5, n, h } });
+  for (const t of W.trees) {
+    if (t.st === 2 && t.rest) for (const p of t.rest.pieces) {
+      if (W.gym && t.gym === undefined) continue;
+      // keep the part of the piece within R + 2 m of you
+      const vx = p.x1 - p.x0, vz = p.z1 - p.z0, L2 = vx * vx + vz * vz || 1, u = clamp(((px - p.x0) * vx + (pz - p.z0) * vz) / L2, 0, 1);
+      if (!near2(p.x0 + vx * u, p.z0 + vz * u, 1)) continue;
+      const half = (R + 2) / Math.sqrt(L2), ua = clamp(u - half, 0, 1), ub = clamp(u + half, 0, 1);
+      const at = (k) => [p.x0 + vx * k, p.y0 + (p.y1 - p.y0) * k, p.z0 + vz * k], A = at(ua), B = at(ub);
+      const r = q((p.rx0 + p.rx1) / 2), rz = (p.rz0 + p.rz1) / 2;
+      feats.push({ log: [...loc(A[0], A[2]), q(A[1] - rz - g0), ...loc(B[0], B[2]), q(B[1] - rz - g0)], r });
+    }
+  }
+  for (const map of [colTrunks, saplingCells]) for (const a of map.values()) for (const t of a) {
+    const x = t.sap ? t.tx : t.x, z = t.sap ? t.tz : t.z; if (!near2(x, z) || seen.has(t)) continue; seen.add(t);
+    feats.push({ trunk: loc(x, z), d: Math.round((t.r - (t.sap ? 0.04 : 0.25)) * 200) });
+  }
+  const turn = new THREE.Matrix4().makeRotationY(-Y);
+  for (const a of solids.values()) for (const o of a) {
+    if (seen.has(o)) continue; seen.add(o);
+    if (o.kind === 'ell' && near2(o.x, o.z, 1)) { const [x, f] = loc(o.x, o.z), ux = o.ux * Math.cos(Y) - o.uz * Math.sin(Y), uz = o.ux * Math.sin(Y) + o.uz * Math.cos(Y); feats.push({ wad: [x, f, q(o.y - g0)], a: [q(o.ax), q(o.ay), q(o.az)], u: [q(ux), q(uz)] }); }
+    if (o.kind === 'mesh' && o.big !== undefined && near2(o.x, o.z, 3)) {
+      const M = new THREE.Matrix4().fromArray(o.e); M.elements[12] -= px; M.elements[13] -= g0; M.elements[14] -= pz; M.premultiply(turn);
+      const m = M.elements; feats.push({ rock: [q(m[12]), q(-m[14] - 4), q(m[13])], i: o.big, e: m.map((v, k) => (k >= 12 && k <= 14 ? 0 : Math.round(v * 1000) / 1000)) });
+    }
+  }
+  const items = [];
+  for (const a of near.cells.values()) for (const it of a) {
+    if (!/^(rock|round|twig|stick|limb|tall|shrub)/.test(it[0]) || !near2(it[1], it[2])) continue;
+    const [x, f] = loc(it[1], it[2]), yaw = /^(rock|round|tall|shrub)/.test(it[0]) ? it[3] - Y : it[3] + Y;
+    items.push([it[0], x, f, q(yaw), ...it.slice(4).map(q)]);
+  }
+  if (items.length) feats.push({ near: items });
+  const st = { name: `Captured ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`, features: feats, expect: { cross: true }, plan: '(describe what should happen)',
+    from: W.gym ? 'gym' : { seed: W.seed, age: settings.age, moisture: settings.moisture, storms: settings.storms, geology: settings.geology, x: q(px), z: q(pz), yaw: q(Y), rockStyle: W.rockStyle } };
+  const txt = JSON.stringify(st);
+  const caps = loadCaptures(); caps.push(st); try { localStorage.setItem('foothold.captures', JSON.stringify(caps)); } catch (e) { /* storage unavailable */ }
+  const out = $('capOut'); out.hidden = false; out.value = txt;
+  try { navigator.clipboard?.writeText(txt).catch(() => {}); } catch (e) { /* no clipboard */ }
+  $('hint').textContent = `Spot captured: gym station ${STATIONS.length + caps.length} (the World panel shows its text)`; $('hint').style.opacity = 1; clearTimeout(hintTimer); hintTimer = setTimeout(hideHint, 4000);
+  return st;
+}
+$('bCapture').addEventListener('click', () => captureSpot());
+
 // ---------------------------------------------------------------- player
 const player = { x: 0, z: 0, yaw: 0, pitch: -0.05, eye: 0 };
 const input = { f: 0, s: 0, run: false, keys: new Set(), stick: null, look: null };
 function spawn() {
+  if (W.gym) { goStation(gymAt); return; }
   const r = mulberry32(W.seed + 1);
   let best = null, bestScore = -1e9;
   for (let k = 0; k < 300; k++) {
@@ -2680,7 +2942,7 @@ function quadAllows(nx, nz, px, pz) {
 }
 // standing still: do the hands stay needed where you are?
 function needHere() {
-  const x = player.x, z = player.z, head = ceilingAt(x, z, rig.feet) - rig.feet;
+  const x = player.x, z = player.z, head = ceilingAt(x, z, rig.feet, [-Math.sin(player.yaw), -Math.cos(player.yaw)]) - rig.feet;
   if (head < DUCK_MIN) return 1;
   const st = stemUnder(x, z, rig.feet), tf = TRACTION[footKind] ?? MAX_SLOPE;
   supportRef = rig.feet; const steep = st ? st.slope : supportGrad(x, z, 0.3);
@@ -2948,7 +3210,7 @@ function duckPosture(ux, uz, spd) {
   for (let a = 0; a <= ahead + 1e-6; a += 0.1) pts.push([a, 0, 0]);
   for (let b = 0.1; b <= 0.8; b += 0.1) pts.push([0, b, 0], [0.25, b, 0]);
   for (const [a, b, s] of pts) {
-    const x = player.x + ux * a + fx * b - uz * s, z = player.z + uz * a + fz * b + ux * s, y = ceilingAt(x, z, feet);
+    const x = player.x + ux * a + fx * b - uz * s, z = player.z + uz * a + fz * b + ux * s, y = ceilingAt(x, z, feet, [ux, uz]); // a stem rising the way you go is climbed, not ducked
     if (y < c) { c = y; cx = x; cz = z; }
   }
   if (c === Infinity) return null;
@@ -3098,7 +3360,7 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
   };
   if (!M) { eye.x = player.x; eye.z = player.z; } // motion off: steady eye at standing height above the controller
   if (!four) { // the head is solid: if the posture springs lag a sudden rise (a step up under a stem), the knees give at once
-    const c = ceilingAt(eye.x, eye.z, rig.feet), over = eye.y + 0.17 - (c - 0.03);
+    const c = ceilingAt(eye.x, eye.z, rig.feet, [-Math.sin(player.yaw), -Math.cos(player.yaw)]), over = eye.y + 0.17 - (c - 0.03);
     if (over > 0) { body.crouch -= over; eye.y -= over; }
   }
   const sol = SK.solvePose(bodyPose()); body.sol = sol;
@@ -3225,7 +3487,7 @@ function updateSkeleton() {
 
 // ---------------------------------------------------------------- input
 const keyTarget = (e) => e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName);
-addEventListener('keydown', (e) => { if (keyTarget(e)) return; input.keys.add(e.code); if (e.code === 'KeyM') toggle('pMap'); if (e.code === 'KeyV') { settings.view = settings.view === 'third' ? 'first' : 'third'; fView.value = settings.view; } });
+addEventListener('keydown', (e) => { if (keyTarget(e)) return; input.keys.add(e.code); if (e.code === 'KeyM') toggle('pMap'); if (e.code === 'KeyC') captureSpot(); if (W?.gym && e.code === 'BracketRight') goStation(gymAt + 1); if (W?.gym && e.code === 'BracketLeft') goStation(gymAt - 1); if (W?.gym && e.code === 'KeyR') goStation(gymAt); if (e.code === 'KeyV') { settings.view = settings.view === 'third' ? 'first' : 'third'; fView.value = settings.view; } });
 addEventListener('keyup', (e) => input.keys.delete(e.code));
 addEventListener('blur', () => input.keys.clear());
 const stickEl = $('stick'), knob = $('knob');
@@ -3399,7 +3661,8 @@ function roundTop(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x, y + h); g.lineT
 
 // world panel
 const fSeed = $('fSeed'), fAge = $('fAge'), fMoist = $('fMoist'), fStorm = $('fStorm'), fQual = $('fQual'), fGeo = $('fGeo'), fMotion = $('fMotion'), fView = $('fView'), fBody = $('fBody');
-function syncForm() { fSeed.value = settings.seed; fAge.value = String(settings.age); fMoist.value = settings.moisture; fStorm.value = settings.storms; fQual.value = settings.quality; fGeo.value = settings.geology; fMotion.value = settings.motion || 'full'; }
+const fPlace = $('fPlace');
+function syncForm() { fPlace.value = settings.place || 'forest'; fSeed.value = settings.seed; fAge.value = String(settings.age); fMoist.value = settings.moisture; fStorm.value = settings.storms; fQual.value = settings.quality; fGeo.value = settings.geology; fMotion.value = settings.motion || 'full'; }
 fMotion.addEventListener('change', () => { settings.motion = fMotion.value; saveSettings(); });
 fView.value = settings.view || 'first'; fBody.value = settings.body || 'hidden';
 fView.addEventListener('change', () => { settings.view = fView.value; saveSettings(); });
@@ -3408,7 +3671,7 @@ syncForm();
 $('bDice').addEventListener('click', () => { fSeed.value = 1 + Math.floor(Math.random() * 99999); });
 $('bRegen').addEventListener('click', () => {
   const q = fQual.value !== settings.quality;
-  Object.assign(settings, { seed: clamp(parseInt(fSeed.value, 10) || 1, 1, 999999), age: +fAge.value, moisture: fMoist.value, storms: fStorm.value, geology: fGeo.value, quality: fQual.value });
+  Object.assign(settings, { place: fPlace.value, seed: clamp(parseInt(fSeed.value, 10) || 1, 1, 999999), age: +fAge.value, moisture: fMoist.value, storms: fStorm.value, geology: fGeo.value, quality: fQual.value });
   saveSettings(); toggle(null);
   if (q && renderer.capabilities) { location.reload(); return; } // antialiasing is fixed at context creation
   start();
@@ -3448,7 +3711,7 @@ function loop(now) {
   if (fpsT > 0.5) {
     $('fps').textContent = `${Math.round(frames / fpsT)} fps`; frames = 0; fpsT = 0;
     const f = fieldAt(player.x, player.z);
-    $('hudHere').textContent = `elev ${ground(player.x, player.z).toFixed(0)} m · slope ${Math.round(Math.atan(f.sl) * 57.3)}° · sky ${Math.round(f.L * 100)}% · wet ${f.wet.toFixed(2)}`;
+    if (W.gym) $('hudHere').textContent = gymStatus(); else $('hudHere').textContent = `elev ${ground(player.x, player.z).toFixed(0)} m · slope ${Math.round(Math.atan(f.sl) * 57.3)}° · sky ${Math.round(f.L * 100)}% · wet ${f.wet.toFixed(2)}`;
     if (!$('pMap').hidden) drawMapTop();
   }
 }
@@ -3472,14 +3735,16 @@ async function start() {
   const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
   try {
     applyQuality();
-    W = await generateWorld({ seed: settings.seed, age: settings.age, moisture: settings.moisture, storms: settings.storms, geology: settings.geology }, async (msg, p) => {
+    if (settings.place === 'gym') W = buildGymWorld(loadCaptures());
+    else W = await generateWorld({ seed: settings.seed, age: settings.age, moisture: settings.moisture, storms: settings.storms, geology: settings.geology }, async (msg, p) => {
       stage.textContent = msg; fill.style.width = `${Math.round(p * 100)}%`; await nextFrame();
     });
+    $('gymNav').hidden = !W.gym;
     stage.textContent = 'Building meshes'; await nextFrame();
     buildWorld(); spawn(); refreshNear(player.x, player.z, true);
     drawMapBase(); fillStand();
     const s = W.stats;
-    $('hudWorld').textContent = `seed ${W.seed} · ${W.age} yr · ${Math.round(s.stems)} trees/ha · ${s.logVol.toFixed(0)} m³/ha down wood`;
+    if (W.gym) showStation(); else $('hudWorld').textContent = `seed ${W.seed} · ${W.age} yr · ${Math.round(s.stems)} trees/ha · ${s.logVol.toFixed(0)} m³/ha down wood`;
     $('genNote').textContent = `Last generation took ${(W.genMs / 1000).toFixed(1)} s on this device for ${W.trees.length.toLocaleString()} stems, snags and logs.`;
     fill.style.width = '100%';
     renderer.shadowMap.needsUpdate = true;
@@ -3496,6 +3761,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
+  gym: { get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },
   loco: { stemAt, stemUnder, assess, grade, holdsNear, placeContact, stability, quadAllows, limbAt, GAIT4, TRACTION, get need() { return body.need; }, get q() { return body.q; } }, col: { topOf, supportAt, ceilingAt, duckPosture, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },
   info() { return { near: Object.fromEntries(Object.entries(near.b).map(([k, v]) => [k, v.n])), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries }; },

@@ -29,6 +29,8 @@
   #hud .name { font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; font-size: 13px; color: var(--accent); }
   #hud .line { font-family: var(--mono); font-size: 11px; color: var(--ink-2); margin-top: 3px; font-variant-numeric: tabular-nums; line-height: 1.45; }
   @media (max-width: 560px) { #hud { top: calc(56px + env(safe-area-inset-top, 0px)); max-width: calc(100vw - 20px); } }
+  #gymNav { position: fixed; bottom: calc(56px + env(safe-area-inset-bottom, 0px)); right: calc(10px + env(safe-area-inset-right, 0px)); display: flex; gap: 6px; }
+  #capOut { width: 100%; height: 110px; margin-top: 10px; font-family: var(--mono); font-size: 11px; background: var(--panel-solid); color: var(--ink-2); border: 1px solid var(--line); border-radius: 6px; }
   #buttons { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); right: calc(10px + env(safe-area-inset-right, 0px)); display: flex; gap: 6px; }
   button, select, input { font: inherit; color: var(--ink); }
   .btn { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; font-size: 14px; font-weight: 500; letter-spacing: 0.04em; cursor: pointer; min-height: 38px; }
@@ -95,6 +97,11 @@
   <button class="btn" id="bStand" aria-pressed="false">Stand</button>
   <button class="btn" id="bWorld" aria-pressed="false">World</button>
 </div>
+<div id="gymNav" hidden>
+  <button class="btn" id="gPrev" aria-label="Previous station">◀</button>
+  <button class="btn" id="gAgain" aria-label="Restart this station">↺</button>
+  <button class="btn" id="gNext" aria-label="Next station">▶</button>
+</div>
 
 <section class="panel" id="pMap" hidden>
   <button class="btn close" data-close>Close</button>
@@ -129,6 +136,7 @@
   <h2>World</h2>
   <p class="sub">Every world is reproducible from these settings. Regenerating re-runs terrain, hydrology and the forest simulation.</p>
   <div class="form">
+    <label for="fPlace">Place<select id="fPlace"><option value="forest">Forest</option><option value="gym">Testing gym</option></select></label>
     <label for="fSeed">Seed<span class="seedrow"><input id="fSeed" type="number" inputmode="numeric" min="1" max="999999"><button class="btn" id="bDice" type="button" aria-label="Random seed">↻</button></span></label>
     <label for="fAge">Years since fire<select id="fAge"><option value="40">40 · young</option><option value="90">90</option><option value="160">160 · mature</option><option value="300">300 · old growth</option></select></label>
     <label for="fMoist">Climate<select id="fMoist"><option value="dry">Dry</option><option value="mesic">Mesic</option><option value="wet">Wet</option></select></label>
@@ -139,8 +147,10 @@
     <label for="fBody">Body<select id="fBody"><option value="hidden">Hidden</option><option value="shown">Shown (debug)</option></select></label>
     <label for="fQual">Graphics<select id="fQual"><option value="low">Phone</option><option value="high">Desktop</option></select></label>
   </div>
-  <div class="actions"><button class="btn primary" id="bRegen">Regenerate</button></div>
+  <div class="actions"><button class="btn primary" id="bRegen">Regenerate</button><button class="btn" id="bCapture" type="button">Copy this spot</button></div>
   <p class="note" id="genNote"></p>
+  <p class="note">Copy this spot (key C) records the obstacles within 5 m of you, facing the way you look, as a new gym station: it is added to your own testing gym, and the text below can be pasted to Claude to make it permanent.</p>
+  <textarea id="capOut" hidden readonly></textarea>
 </section>
 
 <div id="stick" hidden><div id="knob"></div></div>
