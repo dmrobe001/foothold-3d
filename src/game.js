@@ -1513,7 +1513,8 @@ function grade(x, z, sup, ux, uz) {
 // The best hand hold within reach: 2 = something to close a hand round (a stem, a sapling, a slim trunk),
 // 1 = a surface ahead to press on, 0 = nothing.
 function holdsNear(x, z, sup, ux, uz) {
-  if (stemUnder(x, z, sup) || stemAt(x, z, sup - 0.15, 0.5)) return 2; // the stem you are on  for (const d of [0, 0.3, 0.55, 0.8]) for (const w of [0, -0.15, 0.15, -0.3, 0.3]) for (const h of [-0.1, 0.3, 0.7, 1.1]) { // stems are narrow: search across as well as ahead
+  if (stemUnder(x, z, sup) || stemAt(x, z, sup - 0.15, 0.5)) return 2; // the stem you are on
+  for (const d of [0, 0.3, 0.55, 0.8]) for (const w of [0, -0.15, 0.15, -0.3, 0.3]) for (const h of [-0.1, 0.3, 0.7, 1.1]) { // stems are narrow: search across as well as ahead
     const st = stemAt(x + ux * d - uz * w, z + uz * d + ux * w, sup + h, 0.35); if (st && st.rx >= 0.03) return 2;
   }
   for (const t of nearbyTrunks(x, z)) if (t.r < 0.2 && Math.hypot(t.x - x, t.z - z) - t.r < 0.75) return 2;
