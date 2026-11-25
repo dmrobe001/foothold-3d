@@ -1147,6 +1147,13 @@ let solids = null; // 8 m hash of static solids
 let saplingCells = null; // small simulated trees (dbh < 8 cm): stems to walk around, crowns to push
 const ckey8 = (x, z) => Math.floor((x + HALF) / 8) * 4096 + Math.floor((z + HALF) / 8);
 function addSolid(o, r) {
+  if (o.kind === 'mesh') { // every 8 m cell the world box touches
+    for (let ci = Math.floor((o.x0 + HALF) / 8); ci <= Math.floor((o.x1 + HALF) / 8); ci++)
+      for (let cj = Math.floor((o.z0 + HALF) / 8); cj <= Math.floor((o.z1 + HALF) / 8); cj++) {
+        const k = ci * 4096 + cj; let a = solids.get(k); if (!a) solids.set(k, (a = [])); a.push(o);
+      }
+    return;
+  }
   const seen = new Set();
   for (const [ox, oz] of [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r], [r, r], [-r, -r], [r, -r], [-r, r]]) {
     const k = ckey8(o.x + ox, o.z + oz); if (seen.has(k)) continue; seen.add(k);
@@ -1155,19 +1162,25 @@ function addSolid(o, r) {
 }
 function ellipsoid(x, y, z, ax, ay, az, ux, uz) { return { kind: 'ell', x, y, z, ax, ay, az, ux, uz }; }
 
-// Top-surface heightfield of a mesh in its local frame: for each cell of a grid over the x/z footprint, the highest
-// point of the surface above it. Built once per geometry by rasterising triangles.
-const topFields = new Map();
-function topField(geo, res = 48) {
-  let tf = topFields.get(geo); if (tf) return tf;
-  geo.computeBoundingBox();
-  const bb = geo.boundingBox, p = geo.attributes.position, ix = geo.index ? geo.index.array : null;
-  const x0 = bb.min.x, z0 = bb.min.z, dx = (bb.max.x - x0) / (res - 1), dz = (bb.max.z - z0) / (res - 1);
-  const H = new Float32Array(res * res).fill(-Infinity), n = ix ? ix.length : p.count;
-  for (let t = 0; t < n; t += 3) {
-    const a = ix ? ix[t] : t, b = ix ? ix[t + 1] : t + 1, c = ix ? ix[t + 2] : t + 2;
-    const ax = p.getX(a), ay = p.getY(a), az = p.getZ(a), bx = p.getX(b), by = p.getY(b), bz = p.getZ(b), cx = p.getX(c), cy = p.getY(c), cz = p.getZ(c);
-    const det = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz); if (Math.abs(det) < 1e-9) continue;
+// Top-surface heightfield of a placed mesh, in the WORLD frame: for each cell of a grid over its world x/z footprint,
+// the highest point of the transformed surface above it. Rasterising after the transform keeps tilted and
+// non-uniformly scaled rocks exact (a local-frame field would shear under tilt). Built lazily, on first contact.
+function topField(geo, e, cellSize = 0.08, maxRes = 128) {
+  const p = geo.attributes.position, n = p.count, W = new Float32Array(n * 3);
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const wx = e[0] * x + e[4] * y + e[8] * z + e[12], wz = e[2] * x + e[6] * y + e[10] * z + e[14];
+    W[i * 3] = wx; W[i * 3 + 1] = e[1] * x + e[5] * y + e[9] * z + e[13]; W[i * 3 + 2] = wz;
+    if (wx < x0) x0 = wx; if (wx > x1) x1 = wx; if (wz < z0) z0 = wz; if (wz > z1) z1 = wz;
+  }
+  const res = Math.max(16, Math.min(maxRes, Math.ceil(Math.max(x1 - x0, z1 - z0) / cellSize) + 1));
+  const dx = (x1 - x0) / (res - 1), dz = (z1 - z0) / (res - 1), ix = geo.index ? geo.index.array : null, nt = ix ? ix.length : n;
+  const H = new Float32Array(res * res).fill(-Infinity);
+  for (let t = 0; t < nt; t += 3) {
+    const a = (ix ? ix[t] : t) * 3, b = (ix ? ix[t + 1] : t + 1) * 3, c = (ix ? ix[t + 2] : t + 2) * 3;
+    const ax = W[a], ay = W[a + 1], az = W[a + 2], bx = W[b], by = W[b + 1], bz = W[b + 2], cx = W[c], cy = W[c + 1], cz = W[c + 2];
+    const det = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz); if (Math.abs(det) < 1e-12) continue;
     const i0 = Math.max(0, Math.floor((Math.min(ax, bx, cx) - x0) / dx)), i1 = Math.min(res - 1, Math.ceil((Math.max(ax, bx, cx) - x0) / dx));
     const j0 = Math.max(0, Math.floor((Math.min(az, bz, cz) - z0) / dz)), j1 = Math.min(res - 1, Math.ceil((Math.max(az, bz, cz) - z0) / dz));
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
@@ -1177,30 +1190,28 @@ function topField(geo, res = 48) {
       const y = l1 * ay + l2 * by + l3 * cy, k = j * res + i; if (y > H[k]) H[k] = y;
     }
   }
-  tf = { res, x0, z0, dx, dz, H };
-  topFields.set(geo, tf);
-  return tf;
+  return { res, x0, z0, dx, dz, H };
 }
-function sampleTop(tf, lx, lz) {
-  const gx = (lx - tf.x0) / tf.dx, gz = (lz - tf.z0) / tf.dz;
+function sampleTop(tf, x, z) {
+  const gx = (x - tf.x0) / tf.dx, gz = (z - tf.z0) / tf.dz;
   if (gx < 0 || gz < 0 || gx > tf.res - 1 || gz > tf.res - 1) return -Infinity;
   const i = Math.min(tf.res - 2, Math.floor(gx)), j = Math.min(tf.res - 2, Math.floor(gz)), fx = gx - i, fz = gz - j, H = tf.H, r = tf.res;
   const h00 = H[j * r + i], h10 = H[j * r + i + 1], h01 = H[(j + 1) * r + i], h11 = H[(j + 1) * r + i + 1];
   if (h00 > -1e9 && h10 > -1e9 && h01 > -1e9 && h11 > -1e9) return h00 * (1 - fx) * (1 - fz) + h10 * fx * (1 - fz) + h01 * (1 - fx) * fz + h11 * fx * fz;
-  // at the rim, hold the nearest real sample so edges don't crumble
-  const near = [[h00, (1 - fx) * (1 - fz)], [h10, fx * (1 - fz)], [h01, (1 - fx) * fz], [h11, fx * fz]].filter(([h, w]) => h > -1e9 && w > 0.2);
+  // at the rim, hold the nearest real sample (within half a cell) so edges don't crumble or overhang
+  const near = [[h00, (1 - fx) * (1 - fz)], [h10, fx * (1 - fz)], [h01, (1 - fx) * fz], [h11, fx * fz]].filter(([h, w]) => h > -1e9 && w > 0.25);
   return near.length ? Math.max(...near.map(([h]) => h)) : -Infinity;
 }
-const _inv = new THREE.Matrix4(), _v3 = new THREE.Vector3();
+const _bb = new THREE.Box3();
 function meshSolid(geo, matrix, x, z) {
-  const m = matrix.clone();
-  return { kind: 'mesh', x, z, tf: topField(geo), m, inv: m.clone().invert() };
+  if (!geo.boundingBox) geo.computeBoundingBox();
+  const bb = _bb.copy(geo.boundingBox).applyMatrix4(matrix); // conservative world box, for cell registration and quick rejects
+  return { kind: 'mesh', x, z, geo, e: matrix.elements.slice(), tf: null, x0: bb.min.x, x1: bb.max.x, z0: bb.min.z, z1: bb.max.z };
 }
 function topOf(o, x, z) {
   if (o.kind === 'mesh') {
-    _v3.set(x, o.m.elements[13], z).applyMatrix4(o.inv);
-    const h = sampleTop(o.tf, _v3.x, _v3.z); if (h === -Infinity) return -Infinity;
-    _v3.y = h; return _v3.applyMatrix4(o.m).y;
+    if (x < o.x0 || x > o.x1 || z < o.z0 || z > o.z1) return -Infinity;
+    return sampleTop(o.tf || (o.tf = topField(o.geo, o.e)), x, z);
   }
   if (o.kind === 'ell') {
     const dx = x - o.x, dz = z - o.z, a = dx * o.ux + dz * o.uz, b = -dx * o.uz + dz * o.ux;
@@ -1231,7 +1242,7 @@ function supportAt(x, z) {
     const items = near?.cells.get((ci + di) * 4096 + cj + dj); if (!items) continue;
     for (const it of items) {
       if (it.solid === undefined) it.solid = /^(rock|round)/.test(it[0]) && it[4] >= 0.18 ? nearRockSolid(it) : BRANCH_R[it[0]] ? branchSolid(it) : null;
-      if (!it.solid || ((di || dj) && it[4] < 0.8)) continue;
+      if (!it.solid) continue; // (meshes reject by world box inside topOf, so overhangs into this cell count)
       const t = topOf(it.solid, x, z); if (t > y) y = t;
     }
   }
@@ -1967,7 +1978,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
-  col: { saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, standable, scrambleTarget, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
+  col: { topOf, supportAt, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, standable, scrambleTarget, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },
   info() { return { near: Object.fromEntries(Object.entries(near.b).map(([k, v]) => [k, v.n])), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries }; },
   renderOnce() { refreshNear(player.x, player.z, true); applyCamera(); sky.position.copy(camera.position); renderer.shadowMap.needsUpdate = true; uTime.value = 0; updateTiles(); terrainU.uCenter.value.set(Math.round(player.x / 8) * 8, Math.round(player.z / 8) * 8); renderer.render(scene, camera); },
