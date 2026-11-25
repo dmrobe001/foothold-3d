@@ -41,6 +41,8 @@ Climate and geology change **processes**, not just colours:
 
 ## Trees: forks, branch hierarchy, stubs
 
+Superseded by the fuller design in [`plants.md`](plants.md).
+
 The current stem is one bent tube with a cloud of foliage cards. To get forked trunks, real limbs and branch
 stubs, each tree needs a **skeleton**: a small graph of segments, grown by rules that depend on species traits and
 on the tree's simulated history.
