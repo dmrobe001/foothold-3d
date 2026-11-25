@@ -29,7 +29,9 @@ Panels: **Map** (tap to teleport), **Stand** (inventory, diameter distribution, 
 **Where you can go** (the collision body): you stand on the highest solid surface under your feet. Rock tops are
 sampled from each rock's geometry. Rises up to 0.55 m are steps. Pushing into something up to 1.35 m high with a
 standable top scrambles onto it. Trunks and woody stems taller than a leg (tall shrubs, saplings) are walked around.
-Low plants are waded through.
+Low plants are waded through. A stem hung up overhead is ducked under if its underside is at least 1.1 m up.
+A fallen stem sloping up to 35° can be walked up; from 35° to 68° you climb it on all fours (walk into its foot,
+facing up it; walk back to come down; step sideways off it where it is low). Steeper than 68° is too steep to grip.
 
 **How you move there** (a procedural body, mostly unrendered):
 - **Feet** plant one at a time on the real surface, in a gait cycle driven by distance (walk: always one foot down; run: brief flight).
@@ -37,11 +39,17 @@ Low plants are waded through.
 - **Torso** leans into slopes, heaves forward on each uphill push-off, and folds over ledges when scrambling.
 - **Arms** swing; one reaches out to push a tall shrub aside or plant on a ledge or low barrier.
 - **Shrubs** are springs: they bend from the base under the hand and sway back after you pass. Low plants part around your legs.
+- **Crawling** a steep stem: hands and feet hold the stem. Each limb steps when it falls a quarter stride behind its
+  home position, one at a time, so three always hold. Before a limb lifts, the body sways sideways until its centre of
+  mass is over the stem between the other three.
+- **Skeleton**: one joint hierarchy (pelvis, three spine segments, neck, collarbones, two-segment arms and legs) solved
+  each frame from the posture and the four hand and foot targets (`src/skeleton.js`). Walking and crawling feed it
+  the same way; a short blend eases between postures.
 - **Camera** is the eye. Like your vestibulo-ocular reflex, it passes about 20% of the rhythmic gait bounce but all
   of the terrain-driven and posture-driven motion.
 
 World panel: **Camera motion** (Full, Reduced, Off), **View** (first person, or third person for debugging; V toggles),
-**Body** (show the skeleton in first person). Tuning knobs are in `RIG` in `src/game.js`.
+**Body** (show the skeleton in first person). Tuning knobs are in `RIG` and `CRAWL` in `src/game.js`.
 
 ## Reproduce stand statistics without a browser
 

@@ -1018,6 +1018,103 @@ function settleDeadfall(W, support) {
   return stats;
 }
 
+// ---- skeleton ----
+const SK = (() => {
+// A small articulated skeleton: one hierarchy of joints, solved each frame from a few posture variables and four
+// end-effector targets (two hands, two feet). Nothing here knows about the world: callers decide where the pelvis
+// is, how the spine bends and where each hand and foot should be; solvePose turns that into joint positions and
+// reports how far each limb fell short of its target (the honest measure of whether a planted contact can hold).
+//
+// Frames are { R, U, F }: right, up and forward unit vectors. For the pelvis, U points along the spine and F out of
+// the belly, so a standing body has U = world up, and a body crawling up a stem has U along the stem, F into it.
+// Vectors are plain [x, y, z] arrays.
+
+const BONES = {
+  thigh: 0.45, shin: 0.45, foot: 0.17, hipW: 0.11,
+  spine: [0.17, 0.17, 0.16], spineW: [0.3, 0.35, 0.35], // segment lengths (sum 0.5) and the share of a bend each takes
+  neck: 0.22, clav: 0.19, shoulderDrop: 0.05, upperArm: 0.3, foreArm: 0.32,
+};
+// Joint ranges (radians) for each spine segment relative to its parent: pitch (+ = toward the belly), roll, twist.
+const LIMITS = { pitch: [-0.35, 0.75], roll: [-0.3, 0.3], twist: [-0.35, 0.35], neckPitch: [-0.9, 0.9] };
+
+const add = (a, b, k = 1) => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k];
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const len = (a) => Math.hypot(a[0], a[1], a[2]);
+const nrm = (a) => { const l = len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const clampv = (x, [lo, hi]) => Math.min(hi, Math.max(lo, x));
+const vec = { add, sub, dot, len, nrm, cross };
+
+// rotate a frame: pitch about R (U tips toward F), then roll about F (U tips toward R), then twist about U
+function turn(fr, pitch, roll, twist) {
+  let { R, U, F } = fr, c = Math.cos(pitch), s = Math.sin(pitch);
+  [U, F] = [add(U.map((v) => v * c), F, s), add(F.map((v) => v * c), U, -s)];
+  c = Math.cos(roll); s = Math.sin(roll);
+  [U, R] = [add(U.map((v) => v * c), R, s), add(R.map((v) => v * c), U, -s)];
+  c = Math.cos(twist); s = Math.sin(twist);
+  [F, R] = [add(F.map((v) => v * c), R, s), add(R.map((v) => v * c), F, -s)];
+  return { R, U, F };
+}
+// A frame from an up (spine) direction and a rough forward (belly) direction.
+function frameFrom(U, Fhint) {
+  U = nrm(U); let F = sub(Fhint, U.map((v) => v * dot(Fhint, U)));
+  if (len(F) < 1e-6) F = Math.abs(U[1]) < 0.9 ? [0, 1, 0] : [0, 0, -1], F = sub(F, U.map((v) => v * dot(F, U)));
+  F = nrm(F); return { R: cross(F, U), U, F };
+}
+
+// Two-bone inverse kinematics: root a, target c, lengths l1 and l2, middle joint bent toward `pole`.
+// Returns the middle joint, the reached end point and the shortfall (0 when the target is within reach).
+function twoBone(a, c, l1, l2, pole) {
+  const d = sub(c, a), D = len(d), L = Math.min(Math.max(D, Math.abs(l1 - l2) + 1e-3), l1 + l2 - 1e-3), dir = D > 1e-6 ? d.map((v) => v / D) : [0, -1, 0];
+  const x = (l1 * l1 - l2 * l2 + L * L) / (2 * L), y = Math.sqrt(Math.max(0, l1 * l1 - x * x));
+  let perp = sub(pole, dir.map((v) => v * dot(pole, dir))); if (len(perp) < 1e-6) perp = Math.abs(dir[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+  perp = nrm(sub(perp, dir.map((v) => v * dot(perp, dir))));
+  const mid = add(add(a, dir, x), perp, y), end = add(a, dir, L);
+  return { mid, end, short: Math.max(0, D - L) };
+}
+
+// pose: {
+//   pelvis: [x,y,z], frame: {R,U,F} (pelvis frame), bend: [pitch, roll, twist] summed over the spine,
+//   neckPitch, feet: [[x,y,z] x2] ankle targets (left, right), toes: [[x,y,z] x2] directions the feet point,
+//   hands: [[x,y,z] x2] wrist targets, kneePole / elbowPole: [[x,y,z] x2] directions the knees / elbows point,
+// }
+// Returns joints by name, the chest and head frames, bone segments for drawing and each limb's shortfall.
+function solvePose(pose) {
+  const B = BONES, J = {}, short = {};
+  J.pelvis = pose.pelvis;
+  let fr = pose.frame, p = pose.pelvis;
+  const [bp, br, bt] = pose.bend || [0, 0, 0];
+  B.spine.forEach((l, i) => {
+    const w = B.spineW[i];
+    fr = turn(fr, clampv(bp * w, LIMITS.pitch), clampv(br * w, LIMITS.roll), clampv(bt * w, LIMITS.twist));
+    p = add(p, fr.U, l); J['spine' + (i + 1)] = p;
+  });
+  J.chest = p; const chest = fr;
+  const head = turn(chest, clampv(pose.neckPitch || 0, LIMITS.neckPitch), 0, 0);
+  J.neck = add(J.chest, head.U, B.neck); J.head = add(J.neck, head.U, 0.08);
+  const pf = pose.frame, segs = [[J.pelvis, J.spine1, 0.07], [J.spine1, J.spine2, 0.065], [J.spine2, J.chest, 0.06], [J.chest, J.neck, 0.045]];
+  ['L', 'R'].forEach((s, i) => {
+    const side = i ? 1 : -1;
+    // legs: hip -> knee -> ankle -> toe
+    const hip = add(J.pelvis, pf.R, side * B.hipW), leg = twoBone(hip, pose.feet[i], B.thigh, B.shin, pose.kneePole[i]);
+    J['hip' + s] = hip; J['knee' + s] = leg.mid; J['ankle' + s] = leg.end; short['foot' + s] = leg.short;
+    J['toe' + s] = add(leg.end, nrm(pose.toes ? pose.toes[i] : pf.F), B.foot);
+    // arms: collarbone -> shoulder -> elbow -> wrist
+    const clav = add(J.chest, chest.U, -B.shoulderDrop), sh = add(clav, chest.R, side * B.clav);
+    const arm = twoBone(sh, pose.hands[i], B.upperArm, B.foreArm, pose.elbowPole[i]);
+    J['shoulder' + s] = sh; J['elbow' + s] = arm.mid; J['hand' + s] = arm.end; short['hand' + s] = arm.short;
+    segs.push([hip, leg.mid, 0.06], [leg.mid, leg.end, 0.05], [leg.end, J['toe' + s], 0.035], [sh, arm.mid, 0.045], [arm.mid, arm.end, 0.04]);
+  });
+  segs.push([J.hipL, J.hipR, 0.06], [J.shoulderL, J.shoulderR, 0.05]);
+  return { J, chest, head, segs, short };
+}
+
+// Shoulder position for a pose's chest frame without solving the arms (for reach checks before committing a hand).
+function shoulderOf(chestP, chest, side) { return add(add(chestP, chest.U, -BONES.shoulderDrop), chest.R, side * BONES.clav); }
+
+return { BONES, LIMITS, vec, frameFrom, twoBone, solvePose, shoulderOf };
+})();
 // ---- game ----
 // Foothold renderer, controls and UI. World data comes from ./worldgen.js.
 import * as THREE from 'three';
@@ -2365,12 +2462,18 @@ const supportGrad = (x, z, e = 0.15) => Math.hypot(supportAt(x + e, z) - support
 function trunkHit(x, z) { for (const t of nearbyTrunks(x, z)) if (Math.hypot(t.x - x, t.z - z) < t.r) return true; return false; }
 // `climb` is how much height has been gained on steep rock since the last flat-enough footing. Steep bumps are fine
 // until they add up to more than a step, so you can cross uneven rock but can't creep up a tall smooth face.
+// Stems have their own rule: one steeper than CRAWL.min can't be walked up (you crawl it instead).
 function standable(x, z, feet, fromX, fromZ, climb = 0) {
   const sup = footSupport(x, z), rise = sup - feet;
   if (rise > STEP) return null;
   const g = ground(x, z);
   let steep = 0;
-  if (rise > 0.005 && sup - g > 0.25 && supportGrad(x, z) > MAX_SLOPE) { steep = rise; if (climb + steep > STEP) return null; }
+  const stem = rise > 0.005 ? stemUnder(x, z, sup) : null; // a round stem's top is steep crosswise: judge it by its axis
+  if (stem && stem.slope > CRAWL.min) { // walking up it is a crawl; stepping across it (a hurdle) is still a step
+    const mx = x - fromX, mz = z - fromZ, ml = Math.hypot(mx, mz) || 1;
+    if (Math.abs(mx * stem.ah[0] + mz * stem.ah[1]) / ml > 0.6) return null;
+  }
+  if (!stem && rise > 0.005 && sup - g > 0.25 && supportGrad(x, z) > MAX_SLOPE) { steep = rise; if (climb + steep > STEP) return null; }
   if (sup <= g + 0.05 && slopeAt(x, z) > MAX_GROUND_SLOPE && g > ground(fromX, fromZ) + 1e-3) return null;
   if (trunkHit(x, z)) return null;
   // a stem overhead too low to duck under, here or where the stooped head reaches
@@ -2382,11 +2485,20 @@ function scrambleTarget(px, pz, feet, ux, uz) { // a ledge within reach ahead th
   for (const d of [0.35, 0.6, 0.85, 1.1]) {
     const x = px + ux * d, z = pz + uz * d, sup = footSupport(x, z);
     if (sup - feet <= STEP || sup - feet > SCRAMBLE) continue;
-    if (supportGrad(x, z) > 1.3 || trunkHit(x, z)) continue; // scrambles may land on rougher, steeper tops than you could walk onto
+    if (supportGrad(x, z) > 1.3 || trunkHit(x, z) || alongSteepStem(x, z, sup, ux, uz)) continue; // scrambles may land on rougher, steeper tops than you could walk onto
     return { x, z, y: sup };
   }
   return null;
 }
+function stemUnder(x, z, sup) { // the stem whose surface is the footing at height sup under the footprint at (x, z), if any
+  for (let k = -1; k < 6; k++) {
+    const a = (k / 6) * 6.283, px = k < 0 ? x : x + Math.cos(a) * FOOT, pz = k < 0 ? z : z + Math.sin(a) * FOOT, st = stemAt(px, pz, sup, 0.6);
+    if (st && Math.abs(st.surf - sup) < 0.03) return st;
+  }
+  return null;
+}
+const steepStem = (x, z, sup) => (stemUnder(x, z, sup)?.slope ?? 0) > CRAWL.min;
+function alongSteepStem(x, z, sup, ux, uz) { const st = stemUnder(x, z, sup); return !!st && st.slope > CRAWL.min && Math.abs(ux * st.ah[0] + uz * st.ah[1]) > 0.6; }
 function blockedAt(x, z) { return trunkHit(x, z) || footSupport(x, z) - ground(x, z) > SCRAMBLE; }
 function nearbyTrunks(x, z) {
   const ci = Math.floor((x + HALF) / 8), cj = Math.floor((z + HALF) / 8), out = [];
@@ -2419,16 +2531,16 @@ const body = {
   hands: [{ side: -1, p: new THREE.Vector3(), v: new THREE.Vector3(), target: null }, { side: 1, p: new THREE.Vector3(), v: new THREE.Vector3(), target: null }],
   plants: [], duck: 0, duckLean: 0, duckHold: null, fwd: [0, -1], speed: 0, phase: 0, stems: new Map(), lastVx: 0, lastVz: 0, airborne: false,
 };
-const rig = { climb: 0, feet: 0, vy: 0, mantle: null };
+const rig = { climb: 0, feet: 0, vy: 0, mantle: null, crawl: null };
 body.veer = 1;
 function spring(x, v, target, k, dt, zeta = 1.1) {
   const c = 2 * zeta * Math.sqrt(k), n = Math.ceil(dt / 0.008), h = dt / n;
   for (let i = 0; i < n; i++) { v += (-k * (x - target) - c * v) * h; x += v * h; }
   return [x, v];
 }
-function resetRig() {
-  supportRef = ground(player.x, player.z); // stand on the ground, not on a stem hung up overhead
-  rig.feet = footSupport(player.x, player.z); rig.vy = 0; rig.mantle = null; rig.climb = 0;
+function resetRig(feetY) { // stand at the player's x, z: on the ground (not a stem hung overhead), or at a given support height
+  supportRef = feetY ?? ground(player.x, player.z);
+  rig.feet = feetY ?? footSupport(player.x, player.z); rig.vy = 0; rig.mantle = null; rig.crawl = null; rig.climb = 0; body.blend = null;
   const rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
   for (const f of body.feet) {
     f.x = player.x + rx * f.side * RIG.hipW; f.z = player.z + rz * f.side * RIG.hipW; f.y = supportAt(f.x, f.z);
@@ -2502,7 +2614,9 @@ function movePlayer(dt) {
   const speed = (run ? 4.2 : 1.6) * (1 - 0.55 * body.duck); // a stooped duck-walk is slow
   const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
   const px = player.x, pz = player.z;
+  if (rig.crawl) { crawlUpdate(dt, f, s); blendEye(dt); return; }
   if (!rig.mantle && rig.vy === 0) { const here = footSupport(px, pz); if (here - rig.feet > STEP) rig.feet = here; } // embedded (e.g. a rock streamed in around you): climb out
+  if (!rig.mantle && tryStartCrawl(f)) { crawlUpdate(dt, 0, 0); blendEye(dt); return; }
   if (rig.mantle) {
     const m = rig.mantle; m.t += dt / m.dur;
     const u = Math.min(1, m.t), up = 1 - (1 - Math.min(1, u * 1.6)) ** 2, over = u < 0.35 ? 0 : (u - 0.35) / 0.65;
@@ -2551,6 +2665,236 @@ function movePlayer(dt) {
   }
   const moved = Math.hypot(player.x - px, player.z - pz);
   updateBody(dt, moved, run, player.x - px, player.z - pz, f);
+  blendEye(dt);
+}
+
+// ---- crawling climb on steep stems
+// A stem steeper than you can walk (CRAWL.min) but no steeper than you can grip (CRAWL.max) is climbed on all fours.
+// Positions along the stem are axial offsets from the pelvis station P (a point on the stem's axis). Each limb has a
+// home offset; as the body advances a limb falls behind home, and when it is a quarter-stride behind it may step a
+// stride ahead. Limbs step one at a time, furthest behind first, so three always hold.
+// Before a limb lifts, the body sways sideways until its centre of mass is over the stem between the other three
+// contacts (the stem is narrow: sideways is how you fall off). Along the stem, the hands' grip is what holds you,
+// which is why the slope limit exists.
+const CRAWL = { min: 0.7, max: 2.5, exit: 0.55, stride: 0.4, speed: 0.5, swing: 0.26, homes: [0.72, 0.72, -0.3, -0.3], minR: 0.06 };
+const LIMB = [{ hand: true, side: -1 }, { hand: true, side: 1 }, { hand: false, side: -1 }, { hand: false, side: 1 }]; // LH RH LF RF
+const V = SK.vec;
+// the stem axis under (x, z) whose centre is nearest height y: axis point, radii, uphill direction and slope
+function stemAt(x, z, y, maxDy = 0.9) {
+  const list = solids?.get(ckey8(x, z)); if (!list) return null;
+  let best = null, bd = maxDy;
+  for (const o of list) {
+    if (o.kind !== 'log' || o.r0 === undefined) continue;
+    const vx = o.x1 - o.x0, vz = o.z1 - o.z0, L2 = vx * vx + vz * vz || 1, tr = ((x - o.x0) * vx + (z - o.z0) * vz) / L2, t = clamp(tr, 0, 1);
+    if (tr < -0.05 || tr > 1.05) continue; // past the end of this piece (the stem's end, or the next piece's job)
+    const cx = o.x0 + vx * t, cz = o.z0 + vz * t, rx = lerp(o.r0, o.r1, t);
+    const d = Math.hypot(x - cx, z - cz); if (d >= rx) continue;
+    const cy = lerp(o.ya0, o.ya1, t), e = Math.abs(cy - y) + (t !== tr ? 0.3 : 0); // prefer the piece the point is truly along
+    if (e < bd) { const rz = lerp(o.rz0, o.rz1, t); bd = e; best = { o, end: t !== tr, cx, cy, cz, rx, rz, surf: cy + rz * Math.sqrt(1 - (d / rx) ** 2) }; }
+  }
+  if (!best) return null;
+  const o = best.o; let a = [o.x1 - o.x0, o.ya1 - o.ya0, o.z1 - o.z0]; if (a[1] < 0) a = a.map((v) => -v);
+  const h = Math.hypot(a[0], a[2]) || 1e-6;
+  best.slope = a[1] / h; best.a = V.nrm(a); best.ah = [a[0] / h, a[2] / h];
+  best.C = [best.cx, best.cy, best.cz]; best.top = best.cy + best.rz;
+  return best;
+}
+// follow the stem's axis from point P (direction a) for signed distance s, re-finding the axis every 0.25 m so the
+// path bends with the stem; null if the stem ends first
+function alongStem(P, a, s) {
+  let p = P, d = s < 0 ? a.map((v) => -v) : a, left = Math.abs(s), st = null;
+  do {
+    const h = Math.min(0.25, left); left -= h;
+    const q = V.add(p, d, h); st = stemAt(q[0], q[2], q[1], 0.35); if (!st) return null;
+    p = st.C; d = V.dot(st.a, d) >= 0 ? st.a : st.a.map((v) => -v);
+  } while (left > 1e-6);
+  return st;
+}
+// frame of the stem at a hit: a uphill along the axis, R horizontal across it (the climber's right), n away from it
+function stemFrame(st) {
+  const a = st.a, R = V.nrm([-st.ah[1], 0, st.ah[0]]), n = V.cross(R, a);
+  return n[1] >= 0 ? { a, R, n } : { a, R: R.map((v) => -v), n: n.map((v) => -v) };
+}
+// where a hand or foot holds the stem at axial offset s from the pelvis station; feet may stand on the ground below
+function contactAt(c, limb, s) {
+  const q = V.add(c.P, c.fr.a, s), st = alongStem(c.P, c.fr.a, s), L = LIMB[limb];
+  if (st && st.rx >= CRAWL.minR * 0.8) {
+    const phi = L.hand ? 1.05 : 0.8, d = L.side * st.rx * Math.sin(phi), R = stemFrame(st).R;
+    return { p: [st.cx + R[0] * d, st.cy + st.rz * Math.cos(phi), st.cz + R[2] * d], stem: true };
+  }
+  if (L.hand) return null;
+  const x = q[0] + c.fr.R[0] * L.side * 0.12, z = q[2] + c.fr.R[2] * L.side * 0.12, y = supportAt(x, z);
+  return Math.abs(y - (c.st.top - 0.3)) < 0.9 ? { p: [x, y, z], stem: false } : null;
+}
+const axialOf = (c, p) => V.dot(V.sub(p, c.P), c.fr.a);
+const limbErr = (c, i) => (axialOf(c, c.limbs[i].p) - CRAWL.homes[i]) * c.dir;
+// signed distance of (u, v) inside the convex polygon pts (negative outside)
+function hullMargin(pts, u, v) {
+  const P = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const crossz = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], hi = [];
+  for (const p of P) { while (lo.length >= 2 && crossz(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+  for (const p of P.slice().reverse()) { while (hi.length >= 2 && crossz(hi[hi.length - 2], hi[hi.length - 1], p) <= 0) hi.pop(); hi.push(p); }
+  const H = lo.slice(0, -1).concat(hi.slice(0, -1)); if (H.length < 3) return -1;
+  let m = Infinity;
+  for (let i = 0; i < H.length; i++) {
+    const a = H[i], b = H[(i + 1) % H.length], ex = b[0] - a[0], ev = b[1] - a[1], l = Math.hypot(ex, ev) || 1;
+    m = Math.min(m, (ex * (v - a[1]) - ev * (u - a[0])) / l); // counter-clockwise hull: inside is to the left of each edge
+  }
+  return m;
+}
+// sideways stability: the centre of mass, slid along the stem into the support's axial span, against the planted contacts
+function stability(c, skip, sway) {
+  const pts = []; let u0 = Infinity, u1 = -Infinity;
+  c.limbs.forEach((l, i) => { if (i === skip || l.sw) return; const d = V.sub(l.p, c.P), u = V.dot(d, c.fr.a); pts.push([u, V.dot(d, c.fr.R)]); u0 = Math.min(u0, u); u1 = Math.max(u1, u); });
+  if (pts.length < 3) return { m: -1, need: 0 };
+  const u = clamp(c.comU, u0 + 0.05, u1 - 0.05), v = sway;
+  const m = hullMargin(pts, u, v);
+  // the sideways interval of the support at u, to know which way to sway
+  let vlo = Infinity, vhi = -Infinity;
+  for (let k = -0.3; k <= 0.3001; k += 0.005) if (hullMargin(pts, u, k) >= 0) { vlo = Math.min(vlo, k); vhi = Math.max(vhi, k); }
+  return { m, need: vlo <= vhi ? (vlo + vhi) / 2 : sway }; // sway toward the middle of what supports you
+}
+function tryStartCrawl(fwdIn) {
+  if (fwdIn < 0.3 || rig.mantle || body.airborne || rig.vy !== 0) return false;
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  for (const d of [0.25, 0.5, 0.75, 1.0]) {
+    const x = player.x + fx * d, z = player.z + fz * d, st = stemAt(x, z, rig.feet + 0.3, 1.0);
+    if (!st || st.rx < CRAWL.minR || st.slope < CRAWL.min || st.slope > CRAWL.max) continue;
+    if (st.top - rig.feet < -0.25 || st.top - rig.feet > 0.9 || fx * st.ah[0] + fz * st.ah[1] < 0.7) continue;
+    startCrawl(st);
+    return true;
+  }
+  return false;
+}
+function startCrawl(st) {
+  const fr = stemFrame(st), c = { P: V.add(st.C, fr.a, 0.15), fr, st, dir: 1, sway: 0, vsway: 0, last: -1, wait: 0, comU: 0.2, stats: { lifts: 0, forced: 0, minM: Infinity, short: 0, steps: 0 } };
+  const s0 = stemAt(c.P[0], c.P[2], c.P[1], 0.5) || st; c.st = s0; c.P = s0.C; c.fr = stemFrame(s0);
+  const stagger = [-0.25, 0.25, 0.5, 0] ; // LH due first, then RF, RH, LF
+  c.limbs = LIMB.map((L, i) => {
+    let ct = null;
+    for (const ds of [0, -0.1, -0.2, 0.1, 0.2]) { ct = contactAt(c, i, CRAWL.homes[i] + stagger[i] * CRAWL.stride + ds); if (ct) break; }
+    if (!ct) ct = { p: V.add(c.P, c.fr.a, CRAWL.homes[i]), stem: false };
+    return { p: ct.p, stem: ct.stem, sw: null };
+  });
+  snapshotPose(0.8);
+  rig.crawl = c; rig.mantle = null; body.plants = []; body.duck = 0; body.duckHold = null;
+  crawlPose(c, 0);
+}
+function snapshotPose(dur) {
+  const sol = currentJoints();
+  body.blend = { J: sol.J, segs: sol.segs, eye: body.eye ? { ...body.eye } : null, t: 0, dur };
+}
+function endCrawl(x, z) { // stand up at (x, z), on whatever is there
+  const c = rig.crawl; snapshotPose(0.6); rig.crawl = null;
+  player.x = x; player.z = z; supportRef = Math.max(c.st.top, ground(x, z)) + 0.05;
+  const keep = body.blend; resetRig(footSupport(x, z)); body.blend = keep;
+}
+// transitions: the eye eases from where it was when the posture changed
+function blendEye(dt) {
+  const bl = body.blend; if (!bl) return;
+  bl.t = Math.min(1, bl.t + dt / bl.dur);
+  if (bl.eye && body.eye) { const e = bl.t * bl.t * (3 - 2 * bl.t); body.eye = { x: lerp(bl.eye.x, body.eye.x, e), y: lerp(bl.eye.y, body.eye.y, e), z: lerp(bl.eye.z, body.eye.z, e) }; player.eye = body.eye.y; }
+  if (bl.t >= 1) body.blend = null;
+}
+// coming down, the stem has run out under the lead foot: stand up on the ground just past its butt end
+function offBottom(c) {
+  let e = c.st; for (let k = 0; k < 12; k++) { const n = alongStem(e.C, c.fr.a, -0.25); if (!n || n === e || V.dot(V.sub(n.C, e.C), c.fr.a) > -0.01) break; e = n; }
+  const ah = Math.hypot(c.fr.a[0], c.fr.a[2]) || 1, bx = -c.fr.a[0] / ah, bz = -c.fr.a[2] / ah;
+  for (const [d, sd] of [[0.4, 0], [0.6, 0], [0.4, 1], [0.4, -1], [0.8, 0]]) {
+    const x = e.cx + bx * (d + e.rx * 0.5) + c.fr.R[0] * sd * (e.rx + 0.35), z = e.cz + bz * (d + e.rx * 0.5) + c.fr.R[2] * sd * (e.rx + 0.35);
+    if (trunkHit(x, z) || steepStem(x, z, footSupport(x, z)) || footSupport(x, z) - ground(x, z) > 0.5) continue;
+    endCrawl(x, z); return true;
+  }
+  return false;
+}
+function crawlUpdate(dt, f, s) {
+  const c = rig.crawl, fr = c.fr;
+  // input: the walking direction, projected on the stem
+  const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw), mx = -sy * f + cy * s, mz = -cy * f - sy * s, mag = Math.hypot(mx, mz);
+  const along = mag > 0.1 ? (mx * fr.a[0] + mz * fr.a[2]) / Math.hypot(fr.a[0], fr.a[2]) : 0;
+  const across = mag > 0.1 ? mx * fr.R[0] + mz * fr.R[2] : 0;
+  // step off sideways where the stem is low
+  if (Math.abs(across) > 0.8 && Math.abs(along) < 0.45 && c.st.top - ground(c.P[0], c.P[2]) < 0.8) {
+    const sd = Math.sign(across), x = c.P[0] + fr.R[0] * sd * (c.st.rx + 0.4), z = c.P[2] + fr.R[2] * sd * (c.st.rx + 0.4);
+    if (!trunkHit(x, z) && footSupport(x, z) - ground(x, z) < 0.3) { endCrawl(x, z); return; }
+  }
+  if (Math.abs(along) > 0.2) c.dir = Math.sign(along);
+  let want = Math.abs(along) > 0.2 ? Math.min(1, Math.abs(along) / Math.max(mag, 1e-3)) * CRAWL.speed * dt : 0;
+  if (body.blend && body.blend.t < 1) want = 0;
+  // limbs: finish swings; lift the next in order when it is due and the body is over the other three
+  for (const l of c.limbs) if (l.sw) {
+    l.sw.t = Math.min(1, l.sw.t + dt / l.sw.dur);
+    if (l.sw.t >= 1) { l.p = l.sw.to; l.stem = l.sw.stem; l.sw = null; c.stats.steps++; }
+  }
+  const swinging = c.limbs.some((l) => l.sw);
+  let swayT = 0;
+  if (!swinging && want > 0) {
+    // the limb furthest behind steps next; on even ground that settles into hand, opposite foot, other hand, other foot
+    let i = -1, ie = -CRAWL.stride * 0.25;
+    for (let j = 0; j < 4; j++) { const e = limbErr(c, j) - (j === c.last ? 0.05 : 0); if (e < ie) { ie = e; i = j; } }
+    if (i >= 0) {
+      const st = stability(c, i, c.sway); swayT = st.need;
+      if (st.m >= 0.01 || c.wait > 0.6) {
+        const s1 = CRAWL.homes[i] + c.dir * (CRAWL.stride * 0.5 + CRAWL.speed * CRAWL.swing * 0.5);
+        let ct = null;
+        for (const ds of [0, -0.08, -0.16]) { ct = contactAt(c, i, s1 + ds * c.dir); if (ct) break; }
+        if (ct && !ct.stem && c.dir < 0 && !LIMB[i].hand && offBottom(c)) return;
+        if (ct && !(LIMB[i].hand && trunkHit(ct.p[0], ct.p[2]))) {
+          c.limbs[i].sw = { from: c.limbs[i].p, to: ct.p, stem: ct.stem, t: 0, dur: CRAWL.swing };
+          c.stats.lifts++; if (st.m < 0.01) c.stats.forced++; c.stats.minM = Math.min(c.stats.minM, st.m);
+          c.last = i; c.wait = 0;
+        }
+      } else c.wait += dt;
+    } else if (c.limbs.every((l, j) => limbErr(c, j) > -CRAWL.stride * 0.25)) c.wait = 0;
+  } else if (swinging) { const j = c.limbs.findIndex((l) => l.sw); swayT = stability(c, j, c.sway).need; }
+  [c.sway, c.vsway] = spring(c.sway, c.vsway, clamp(swayT, -0.15, 0.15), 260, dt);
+  // body: advance unless a planted limb would be left out of reach behind, or there is nothing ahead to hold
+  if (want > 0) {
+    const lim = -CRAWL.stride * 0.5 - 0.12;
+    let ok = c.limbs.every((l, i) => l.sw || (axialOf(c, l.p) - want * c.dir - CRAWL.homes[i]) * c.dir > lim);
+    const P1 = V.add(c.P, fr.a, want * c.dir), st1 = stemAt(P1[0], P1[2], P1[1], 0.5), pastEnd = !st1 || st1.end;
+    if (ok && c.dir > 0) { const sh = alongStem(c.P, fr.a, CRAWL.homes[0] + 0.3); if (!sh || sh.end || sh.rx < CRAWL.minR * 0.8 || trunkHit(sh.cx, sh.cz)) ok = false; }
+    if (ok) {
+      if (pastEnd) { // the pelvis has passed the butt going down: stand on the ground
+        if (c.dir < 0) { const x = P1[0] - fr.a[0] * 0.3, z = P1[2] - fr.a[2] * 0.3; endCrawl(x, z); return; }
+      } else { c.P = st1.C; c.st = st1; c.fr = stemFrame(st1); }
+    }
+  }
+  // leave: the stem has flattened enough to walk, or you have come down to the ground
+  if (c.st.slope < CRAWL.exit && c.limbs.every((l) => !l.sw)) { endCrawl(c.P[0], c.P[2]); return; }
+  if (c.dir < 0 && want > 0 && c.st.top - ground(c.P[0], c.P[2]) < 0.45) { const x = c.P[0] - c.fr.a[0] * 0.35, z = c.P[2] - c.fr.a[2] * 0.35; if (!trunkHit(x, z)) { endCrawl(x, z); return; } }
+  player.x = c.P[0]; player.z = c.P[2]; rig.feet = c.st.top; supportRef = rig.feet;
+  crawlPose(c, dt);
+}
+// the climbing posture: hips and chest low over the stem, spine along it, head up to look ahead
+function crawlPose(c, dt) {
+  // the body turns with the stem smoothly: the axis changes direction abruptly where one collision piece meets the next
+  c.fa = c.fa ? V.nrm(V.add(c.fa, V.sub(c.fr.a, c.fa), Math.min(1, dt * 4))) : c.fr.a;
+  const ah = Math.hypot(c.fa[0], c.fa[2]) || 1e-6, fr = stemFrame({ a: c.fa, ah: [c.fa[0] / ah, c.fa[2] / ah] }), st = c.st, steep = smoothstep(CRAWL.min, CRAWL.max, st.slope);
+  const top = [st.cx, st.top, st.cz], hipH = lerp(0.3, 0.2, steep);
+  const pel = V.add(V.add(V.add(top, fr.n, hipH - st.rz * 0.3), fr.R, c.sway), fr.a, -0.05);
+  const U = V.nrm(V.add(fr.a, fr.n, 0.12)), frame = SK.frameFrom(U, fr.n.map((v) => -v));
+  const live = c.limbs.map((l) => {
+    if (!l.sw) return l.p;
+    const e = l.sw.t * l.sw.t * (3 - 2 * l.sw.t), p = [0, 1, 2].map((k) => lerp(l.sw.from[k], l.sw.to[k], e));
+    return V.add(p, fr.n, Math.sin(Math.PI * l.sw.t) * 0.12);
+  });
+  const out = (side, k) => V.nrm(V.add(fr.R.map((v) => v * side), fr.a, k));
+  const pose = {
+    pelvis: pel, frame, bend: [0.12, 0, 0], neckPitch: -0.35 - 0.4 * steep,
+    hands: [V.add(live[0], fr.n, 0.04), V.add(live[1], fr.n, 0.04)],
+    feet: [V.add(live[2], fr.n, 0.07), V.add(live[3], fr.n, 0.07)], toes: [out(-0.4, 1), out(0.4, 1)],
+    kneePole: [V.add(out(-1, 0.6), fr.n, 0.15), V.add(out(1, 0.6), fr.n, 0.15)],
+    elbowPole: [V.add(out(-1, -0.5), fr.n, 0.4), V.add(out(1, -0.5), fr.n, 0.4)],
+  };
+  const sol = SK.solvePose(pose); c.sol = sol; c.comU = V.dot(V.sub(V.add(pel, sol.J.chest).map((v) => v / 2), c.P), fr.a);
+  c.stats.short = Math.max(c.stats.short, ...c.limbs.map((l, i) => l.sw ? 0 : sol.short[['handL', 'handR', 'footL', 'footR'][i]]));
+  // the eye: in the head, looking where the player looks
+  const h = sol.J.head, e = { x: h[0] + fr.n[0] * 0.08 + fr.a[0] * 0.04, y: h[1] + fr.n[1] * 0.08 + fr.a[1] * 0.04, z: h[2] + fr.n[2] * 0.08 + fr.a[2] * 0.04 }; // the face is turned up the stem, off the bark
+  body.eye = e; player.eye = e.y; body.pelvis.set(pel[0], pel[1], pel[2]); body.lean = 0; body.duckLean = 0; body.roll = 0; body.crouch = 0;
+  for (const ft of body.feet) PUSH.uFeet.value[ft.side < 0 ? 0 : 1].set(0, 0, 0, 0);
+  for (let i = 0; i < 4; i++) PUSH.uPB.value[i].set(0, 0, 0, 0);
 }
 
 // ---- gait and posture: how the body stands on what the controller chose
@@ -2826,52 +3170,53 @@ function applyCamera() {
     camera.rotation.set(-0.28 + player.pitch * 0.3, cyaw, 0);
   } else {
     camera.position.set(e.x, e.y, e.z);
-    camera.rotation.set(clamp(player.pitch - (body.lean - 0.85 * body.duckLean) * RIG.gazeFollow * M, -1.45, 1.45), player.yaw, body.roll * M);
+    // crawling, the gaze tips up (or down) the stem by part of its slope, depending on which way you look along it
+    const c = rig.crawl, cpT = c ? 0.55 * Math.atan(c.st.slope) * (-Math.sin(player.yaw) * c.st.ah[0] - Math.cos(player.yaw) * c.st.ah[1]) : 0;
+    body.crawlPitch = lerp(body.crawlPitch || 0, cpT, 0.08);
+    camera.rotation.set(clamp(player.pitch - (body.lean - 0.85 * body.duckLean) * RIG.gazeFollow * M + body.crawlPitch, -1.45, 1.45), player.yaw, body.roll * M);
   }
   updateSkeleton();
 }
 
-// ---- debug skeleton (Settings → Body: shown, or the third-person debug view)
+// ---- the skeleton (Settings → Body: shown, or the third-person view)
+// Walking: the gait above already decides where the feet and hands are and how the trunk leans; walkPose hands that to
+// the shared solver. Crawling builds its own pose (crawlPose). A blend eases between the two at transitions.
+function walkPose() {
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), rX = Math.cos(player.yaw), rZ = -Math.sin(player.yaw);
+  return {
+    pelvis: [player.x + rX * body.lat, body.pelvis.y + body.crouch, player.z + rZ * body.lat],
+    frame: { R: [rX, 0, rZ], U: [0, 1, 0], F: [fx, 0, fz] }, bend: [body.lean, 0, 0], neckPitch: -body.lean * 0.5,
+    feet: body.feet.map((ft) => [ft.x, ft.y + 0.06, ft.z]), toes: [[fx, 0, fz], [fx, 0, fz]],
+    hands: body.hands.map((h) => [h.p.x, h.p.y, h.p.z]),
+    kneePole: [[fx, 0, fz], [fx, 0, fz]],
+    elbowPole: [-1, 1].map((side) => [-fx + rX * side * 0.5, -0.6, -fz + rZ * side * 0.5]),
+  };
+}
+// joints of the current pose, eased from a snapshot taken at the last transition
+function currentJoints() {
+  const sol = rig.crawl ? rig.crawl.sol : SK.solvePose(walkPose()), bl = body.blend;
+  if (!bl || bl.t >= 1) return sol;
+  const e = bl.t * bl.t * (3 - 2 * bl.t), mix = (a, b) => [lerp(a[0], b[0], e), lerp(a[1], b[1], e), lerp(a[2], b[2], e)];
+  const J = {}; for (const k in sol.J) J[k] = bl.J[k] ? mix(bl.J[k], sol.J[k]) : sol.J[k];
+  const segs = sol.segs.map(([a, b, r], i) => [bl.segs[i] ? mix(bl.segs[i][0], a) : a, bl.segs[i] ? mix(bl.segs[i][1], b) : b, r]);
+  return { ...sol, J, segs };
+}
 let skel = null;
 function updateSkeleton() {
+  const sol = currentJoints(); body.sol = sol;
   const show = settings.view === 'third' || settings.body === 'shown';
   if (!skel) {
     const mat = new THREE.MeshLambertMaterial({ color: 0xc9b79a }), g = new THREE.CylinderGeometry(1, 1, 1, 6); g.translate(0, 0.5, 0);
-    skel = { group: new THREE.Group(), bones: Array.from({ length: 13 }, () => new THREE.Mesh(g, mat)), head: new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 8), mat) };
+    skel = { group: new THREE.Group(), bones: Array.from({ length: 20 }, () => new THREE.Mesh(g, mat)), head: new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 8), mat) };
     skel.bones.forEach((b) => skel.group.add(b)); skel.group.add(skel.head); scene.add(skel.group);
   }
   skel.group.visible = show; if (!show || !body.eye) return;
-  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), rX = Math.cos(player.yaw), rZ = -Math.sin(player.yaw);
-  const pel = new THREE.Vector3(player.x + rX * body.lat, body.pelvis.y + body.crouch, player.z + rZ * body.lat);
-  const chest = new THREE.Vector3(pel.x + fx * RIG.spine * Math.sin(body.lean), pel.y + RIG.spine * Math.cos(body.lean), pel.z + fz * RIG.spine * Math.sin(body.lean));
-  const head = new THREE.Vector3(chest.x + fx * RIG.neck * Math.sin(body.lean), chest.y + RIG.neck * Math.cos(body.lean), chest.z + fz * RIG.neck * Math.sin(body.lean));
-  const joints = [], V = (x, y, z) => new THREE.Vector3(x, y, z);
-  const ik = (a, c, l1, l2, bend) => { // two-bone inverse kinematics: law of cosines, bend toward `bend`
-    const d = c.clone().sub(a), L = Math.min(d.length(), l1 + l2 - 1e-3), dir = d.normalize();
-    const x = (l1 * l1 - l2 * l2 + L * L) / (2 * L), y = Math.sqrt(Math.max(0, l1 * l1 - x * x));
-    const perp = bend.clone().sub(dir.clone().multiplyScalar(bend.dot(dir))).normalize();
-    return a.clone().addScaledVector(dir, x).addScaledVector(perp, y);
-  };
-  const seg = [];
-  seg.push([pel, chest, 0.07], [chest, head, 0.045]);
-  for (const ft of body.feet) {
-    const hip = V(pel.x + rX * ft.side * RIG.hipW, pel.y, pel.z + rZ * ft.side * RIG.hipW), foot = V(ft.x, ft.y + 0.06, ft.z);
-    const knee = ik(hip, foot, 0.45, 0.45, V(fx, 0, fz));
-    seg.push([hip, knee, 0.06], [knee, foot, 0.05]);
-  }
-  for (const hnd of body.hands) {
-    const sh = V(chest.x + rX * hnd.side * RIG.shoulderW, chest.y - 0.05, chest.z + rZ * hnd.side * RIG.shoulderW);
-    const elbow = ik(sh, hnd.p.clone(), RIG.upperArm, RIG.foreArm, V(-fx + rX * hnd.side * 0.5, -0.6, -fz + rZ * hnd.side * 0.5));
-    seg.push([sh, elbow, 0.045], [elbow, hnd.p.clone(), 0.04]);
-  }
-  seg.push([V(pel.x - rX * RIG.hipW, pel.y, pel.z - rZ * RIG.hipW), V(pel.x + rX * RIG.hipW, pel.y, pel.z + rZ * RIG.hipW), 0.06]);
-  seg.push([V(chest.x - rX * RIG.shoulderW, chest.y - 0.05, chest.z - rZ * RIG.shoulderW), V(chest.x + rX * RIG.shoulderW, chest.y - 0.05, chest.z + rZ * RIG.shoulderW), 0.05]);
   skel.bones.forEach((b, i) => {
-    const s = seg[i]; if (!s) { b.visible = false; return; }
-    b.visible = true; const [a, c, r] = s, d = c.clone().sub(a);
-    b.matrixAutoUpdate = false; b.matrix.copy(along(a.x, a.y, a.z, d.x, d.y, d.z, r, d.length(), r));
+    const s = sol.segs[i]; if (!s) { b.visible = false; return; }
+    b.visible = true; const [a, c, r] = s, d = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    b.matrixAutoUpdate = false; b.matrix.copy(along(a[0], a[1], a[2], d[0], d[1], d[2], r, Math.hypot(...d), r));
   });
-  skel.head.position.copy(head).add(V(0, 0.06, 0));
+  const h = sol.J.head; skel.head.position.set(h[0], h[1], h[2]);
   skel.head.visible = settings.view === 'third';
 }
 
@@ -3148,7 +3493,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
-  col: { topOf, supportAt, ceilingAt, duckPosture, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, standable, scrambleTarget, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
+  crawl: { stemAt, CRAWL, get state() { return rig.crawl; } }, col: { topOf, supportAt, ceilingAt, duckPosture, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, standable, scrambleTarget, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },
   info() { return { near: Object.fromEntries(Object.entries(near.b).map(([k, v]) => [k, v.n])), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries }; },
   view(x, y, z, tx, ty, tz) { // free camera for inspection: player stands at the target so near detail loads there
