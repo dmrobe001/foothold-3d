@@ -69,6 +69,25 @@ A stem, a sapling or a slim trunk is something a hand can close round; any other
 World panel: **Camera motion** (Full, Reduced, Off), **View** (first person, or third person for debugging; V toggles),
 **Body** (show the skeleton in first person). Tuning knobs are in `RIG`, `TRACTION` and `GAIT4` in `src/game.js`.
 
+## Performance panel
+
+Tap the fps counter (or press P). It shows:
+- the median, 95th-percentile and worst frame interval;
+- CPU time per stage: body, near-field refresh, set-up and render submission, with frames that redraw the shadow map
+  kept apart from the others;
+- GPU time, where the browser exposes a timer (`EXT_disjoint_timer_query_webgl2`);
+- draw calls and triangles.
+
+Switches let you change, live:
+- how often shadows update;
+- the grown-tree radius;
+- whether roots and ground cover are shown;
+- the pixel ratio.
+
+**Run benchmark** (about a minute; stand still) settles for 1.5 s and then measures 3 s in each of 11 configurations,
+and writes a report you can copy and paste back. On a 60 Hz screen frame intervals come in 16.7 ms steps, so the CPU
+and GPU columns are the sharper measure.
+
 ## Testing gym
 
 World panel → **Place: Testing gym** (or open the page with `#gym` on the address) loads a level clearing with

@@ -66,7 +66,9 @@
   #stick { position: fixed; left: calc(28px + env(safe-area-inset-left, 0px)); bottom: calc(28px + env(safe-area-inset-bottom, 0px)); width: 120px; height: 120px; border-radius: 50%; border: 1px solid rgba(236, 230, 216, 0.28); background: rgba(28, 25, 20, 0.25); pointer-events: none; opacity: 0.7; }
   #knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%; background: rgba(236, 230, 216, 0.32); border: 1px solid rgba(236, 230, 216, 0.45); }
   #hint { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); padding: 7px 12px; font-size: 13px; color: var(--ink-2); pointer-events: none; transition: opacity 1.2s; white-space: nowrap; }
-  #fps { position: fixed; right: calc(10px + env(safe-area-inset-right, 0px)); bottom: calc(8px + env(safe-area-inset-bottom, 0px)); font-family: var(--mono); font-size: 10px; color: rgba(236, 230, 216, 0.5); pointer-events: none; }
+  #fps { position: fixed; right: calc(10px + env(safe-area-inset-right, 0px)); bottom: calc(8px + env(safe-area-inset-bottom, 0px)); font-family: var(--mono); font-size: 10px; color: rgba(236, 230, 216, 0.6); pointer-events: auto; cursor: pointer; padding: 6px 4px; }
+  #perfLive { font-family: var(--mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; margin: 8px 0; }
+  #perfOut { width: 100%; min-height: 140px; font-family: var(--mono); font-size: 10px; background: rgba(0,0,0,0.25); color: inherit; border: 1px solid var(--line); border-radius: 6px; }
   #loading { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: radial-gradient(120% 90% at 50% 30%, #2a2a1f 0%, #15130f 70%); }
   #loading .box { width: min(360px, calc(100vw - 48px)); }
   #loading .title { font-size: 34px; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent); }
@@ -148,7 +150,23 @@
 
 <div id="stick" hidden><div id="knob"></div></div>
 <div id="hint" class="chip">Drag to look · WASD to walk · Shift to run</div>
-<div id="fps"></div>
+<div id="fps" role="button" aria-label="Performance" title="Performance (P)"></div>
+
+<section class="panel" id="pPerf" hidden>
+  <button class="btn close" id="perfClose">Close</button>
+  <h2>Performance</h2>
+  <p class="sub">Live timings on this device. Run the benchmark standing still: it switches each cost off in turn for a few seconds and measures the difference. Copy the report and paste it to Claude.</p>
+  <div id="perfLive"></div>
+  <div class="form">
+    <label for="qShadow">Shadows<select id="qShadow"><option value="1">Every frame</option><option value="2" selected>Every 2nd frame</option><option value="4">Every 4th frame</option><option value="0">Off</option></select></label>
+    <label for="qRing">Grown trees within<select id="qRing"><option value="0">None (cards only)</option><option value="20">20 m</option><option value="32" selected>32 m</option><option value="40">40 m</option></select></label>
+    <label for="qRoots">Roots<select id="qRoots"><option value="1">Shown</option><option value="0">Hidden</option></select></label>
+    <label for="qGround">Ground cover<select id="qGround"><option value="1">Shown</option><option value="0">Hidden</option></select></label>
+    <label for="qPR">Resolution<select id="qPR"><option value="auto">Default</option><option value="1">1× pixels</option><option value="0.75">0.75× pixels</option><option value="0.5">0.5× pixels</option></select></label>
+  </div>
+  <div class="actions"><button class="btn primary" id="bBench" type="button">Run benchmark (~40 s)</button><button class="btn" id="bPerfCopy" type="button">Copy report</button></div>
+  <textarea id="perfOut" readonly></textarea>
+</section>
 
 <div id="loading">
   <div class="box">
@@ -2560,7 +2578,7 @@ class NearBatch { // fixed-capacity instanced mesh refilled as the player moves
 // Live trees and saplings within PLANT_R of the player are drawn from a library of grown plants (src/plants.js): per
 // species, size class and crown shape, two seeded skeletons (plus a forked one), normalised to unit height and instanced.
 // Beyond the ring, the tiles' card crowns draw them, and those hide the trees inside it (uNear), so each tree is drawn once.
-const PLANT_R = 32, PCLASS = [1.5, 4, 10, 20, 35, 60], PSHAPE = ['shaded', 'open', 'forked'];
+let PLANT_R = 32; const PCLASS = [1.5, 4, 10, 20, 35, 60], PSHAPE = ['shaded', 'open', 'forked'];
 const uNear = { value: new THREE.Vector3(1e9, 1e9, 0) };
 function hidePatch(sh, origin, declare = false) {
   sh.uniforms.uNear = uNear;
@@ -2623,6 +2641,7 @@ function plantMeshes(v, need) { // (re)allocate a variant's instanced meshes to 
 function refreshPlants(px, pz, force) {
   if (!force && Math.hypot(px - plantNear.cx, pz - plantNear.cz) < 5) return;
   plantNear.cx = px; plantNear.cz = pz;
+  if (PLANT_R <= 0) { for (const v of plantLib.values()) if (v.bark) v.bark.visible = v.leaf.visible = false; uNear.value.set(px, pz, 0); refreshRoots(px, pz); return; }
   const pick = [], R2 = PLANT_R * PLANT_R, c0 = Math.floor((px - PLANT_R + HALF) / 16), c1 = Math.floor((px + PLANT_R + HALF) / 16), d0 = Math.floor((pz - PLANT_R + HALF) / 16), d1 = Math.floor((pz + PLANT_R + HALF) / 16);
   for (let ci = c0; ci <= c1; ci++) for (let cj = d0; cj <= d1; cj++) for (const r of plantCells.get(ci * 4096 + cj) || []) if ((r.x - px) ** 2 + (r.z - pz) ** 2 < R2) pick.push(r);
   for (const v of plantLib.values()) v.n = 0;
@@ -2680,7 +2699,7 @@ function refreshRoots(px, pz) {
       }
   if (rootMeshObj) { plantGroup.remove(rootMeshObj); rootMeshObj.geometry.dispose(); rootMeshObj = null; }
   if (!out.idx.length) return;
-  rootMeshObj = new THREE.Mesh(arraysGeo(out), mats.root); rootMeshObj.castShadow = true; rootMeshObj.receiveShadow = true; rootMeshObj.frustumCulled = false;
+  rootMeshObj = new THREE.Mesh(arraysGeo(out), mats.root); rootMeshObj.visible = perfOpt.roots; rootMeshObj.castShadow = true; rootMeshObj.receiveShadow = true; rootMeshObj.frustumCulled = false;
   plantGroup.add(rootMeshObj);
 }
 // the roots that tore out with a fallen tree's plate: its root graph, turned up about the plate's hinge so the stem's
@@ -4489,27 +4508,161 @@ let last = performance.now(), frames = 0, fpsT = 0, frameNo = 0, running = false
 function loop(now) {
   requestAnimationFrame(loop);
   if (!running) return;
-  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  const dt = Math.min(0.1, (now - last) / 1000), interval = now - last; last = now;
   uTime.value = now / 1000;
+  const c0 = performance.now();
   movePlayer(dt);
+  const c1 = performance.now();
   refreshNear(player.x, player.z);
+  const c2 = performance.now();
   applyCamera();
   sky.position.copy(camera.position);
   // shadow camera follows the player, snapped to texels to avoid shimmering
   const texel = 96 / sun.shadow.mapSize.x, sx = Math.round(player.x / texel) * texel, sz = Math.round(player.z / texel) * texel;
   sun.target.position.set(sx, player.eye - 1.6, sz); sun.position.copy(sun.target.position).addScaledVector(sunDir, 150);
-  renderer.shadowMap.needsUpdate = frameNo % 2 === 0;
+  const shadowNow = perfOpt.shadow > 0 && frameNo % perfOpt.shadow === 0;
+  renderer.shadowMap.needsUpdate = shadowNow;
   updateTiles();
   terrainU.uCenter.value.set(Math.round(player.x / 8) * 8, Math.round(player.z / 8) * 8);
+  const c3 = performance.now();
+  gpuBegin();
   renderer.render(scene, camera);
+  gpuEnd(shadowNow);
+  perfFrame(interval, c1 - c0, c2 - c1, c3 - c2, performance.now() - c3, shadowNow);
   frameNo++; frames++; fpsT += dt;
   if (fpsT > 0.5) {
     $('fps').textContent = `${Math.round(frames / fpsT)} fps`; frames = 0; fpsT = 0;
     const f = fieldAt(player.x, player.z);
     if (W.gym) $('hudHere').textContent = gymStatus(); else $('hudHere').textContent = `elev ${ground(player.x, player.z).toFixed(0)} m · slope ${Math.round(Math.atan(f.sl) * 57.3)}° · sky ${Math.round(f.L * 100)}% · wet ${f.wet.toFixed(2)}`;
     if (!$('pMap').hidden) drawMapTop();
+    if (!$('pPerf').hidden) $('perfLive').textContent = perfSummary(120);
   }
 }
+
+// ---------------------------------------------------------------- performance: live profiling and an on-device benchmark
+// Per frame: the interval between frames (what you feel), CPU time in each stage (movement and body; near-field and
+// plant refresh; camera, tiles and shadow set-up; submitting the render), GPU time where the browser exposes a timer
+// (EXT_disjoint_timer_query_webgl2), draw calls and triangles (shadow pass included). Frames that redraw the shadow map
+// are kept apart, since shadows update every other frame by default and an uneven pair of frames reads as judder.
+// Note: a 60 Hz display rounds frame intervals to 16.7 ms steps, so the CPU and GPU times say more than fps does.
+const perfOpt = { shadow: 2, roots: true, ground: true, pr: 'auto' };
+const perf = { n: 600, i: 0, count: 0, rows: new Float32Array(600 * 10), gpuQ: [], gpuPool: [], gpu: null };
+{
+  const gl = renderer.getContext();
+  const ext = gl.getExtension && gl.getExtension('EXT_disjoint_timer_query_webgl2');
+  perf.gpu = ext ? { gl, ext } : null;
+  const dbg = gl.getExtension && gl.getExtension('WEBGL_debug_renderer_info');
+  perf.device = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+}
+let gpuOpen = null, lastGpu = NaN, lastGpuShadow = 0;
+function gpuBegin() {
+  if (!perf.gpu) return; const { gl, ext } = perf.gpu;
+  const q = perf.gpuPool.pop() || gl.createQuery(); gl.beginQuery(ext.TIME_ELAPSED_EXT, q); gpuOpen = q;
+}
+function gpuEnd(shadow) {
+  if (!perf.gpu || !gpuOpen) return; const { gl, ext } = perf.gpu;
+  gl.endQuery(ext.TIME_ELAPSED_EXT); perf.gpuQ.push([gpuOpen, shadow]); gpuOpen = null;
+  while (perf.gpuQ.length) { // results arrive a few frames late
+    const [q, sh] = perf.gpuQ[0]; if (!gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE)) break;
+    const bad = gl.getParameter(ext.GPU_DISJOINT_EXT), ns = gl.getQueryParameter(q, gl.QUERY_RESULT);
+    perf.gpuQ.shift(); perf.gpuPool.push(q);
+    if (!bad) { lastGpu = ns / 1e6; lastGpuShadow = sh ? 1 : 0; }
+  }
+}
+function perfFrame(interval, move, nearT, setup, submit, shadow) {
+  const r = perf.rows, k = perf.i * 10, info = renderer.info.render;
+  r[k] = interval; r[k + 1] = move; r[k + 2] = nearT; r[k + 3] = setup; r[k + 4] = submit; r[k + 5] = shadow ? 1 : 0;
+  r[k + 6] = info.calls; r[k + 7] = info.triangles; r[k + 8] = lastGpu; r[k + 9] = lastGpuShadow; lastGpu = NaN; // GPU results arrive late: col 9 says whether that frame drew shadows
+  perf.i = (perf.i + 1) % perf.n; perf.count++;
+}
+function perfStats(frames) { // over the last `frames` frames
+  const m = Math.min(frames, perf.count, perf.n), r = perf.rows, cols = Array.from({ length: 10 }, () => []);
+  for (let j = 1; j <= m; j++) { const k = ((perf.i - j + perf.n) % perf.n) * 10; for (let c = 0; c < 10; c++) cols[c].push(r[k + c]); }
+  const q = (a, p) => { const b = a.filter((v) => !Number.isNaN(v)).sort((x, y) => x - y); return b.length ? b[Math.min(b.length - 1, Math.floor(p * b.length))] : NaN; };
+  const sh = (c, want) => cols[c].filter((_, j) => cols[5][j] === want);
+  const gS = cols[8].filter((_, j) => cols[9][j] === 1), gN = cols[8].filter((_, j) => cols[9][j] === 0);
+  return { m, med: q(cols[0], 0.5), p95: q(cols[0], 0.95), max: q(cols[0], 1), move: q(cols[1], 0.5), near: q(cols[2], 0.5), nearMax: q(cols[2], 1), setup: q(cols[3], 0.5),
+    submit: q(cols[4], 0.5), submitShadow: q(sh(4, 1), 0.5), submitPlain: q(sh(4, 0), 0.5), calls: q(cols[6], 0.5), tris: q(cols[7], 0.5),
+    gpu: q(cols[8], 0.5), gpuShadow: q(gS, 0.5), gpuPlain: q(gN, 0.5) };
+}
+const f1 = (v) => (Number.isNaN(v) ? '—' : v.toFixed(1));
+function perfSummary(frames) {
+  const s = perfStats(frames);
+  return `frame   median ${f1(s.med)} ms (${Math.round(1000 / s.med)} fps) · 95% ${f1(s.p95)} · worst ${f1(s.max)}
+cpu     body ${f1(s.move)} · near refresh ${f1(s.near)} (worst ${f1(s.nearMax)}) · set-up ${f1(s.setup)} · render submit ${f1(s.submit)} (shadow frames ${f1(s.submitShadow)}, others ${f1(s.submitPlain)})
+gpu     ${perf.gpu ? `${f1(s.gpu)} ms (shadow frames ${f1(s.gpuShadow)}, others ${f1(s.gpuPlain)})` : 'no timer in this browser'}
+scene   ${Math.round(s.calls)} draw calls · ${(s.tris / 1e6).toFixed(2)} M triangles (shadow pass included)`;
+}
+function applyPerfOpt() {
+  PLANT_R = +$('qRing').value; perfOpt.shadow = +$('qShadow').value; perfOpt.roots = $('qRoots').value === '1'; perfOpt.ground = $('qGround').value === '1'; perfOpt.pr = $('qPR').value;
+  sun.castShadow = perfOpt.shadow > 0; if (!sun.castShadow) renderer.shadowMap.needsUpdate = true;
+  if (rootMeshObj) rootMeshObj.visible = perfOpt.roots;
+  if (near) for (const nb of Object.values(near.b)) nb.mesh.visible = perfOpt.ground;
+  renderer.setPixelRatio(perfOpt.pr === 'auto' ? Math.min(devicePixelRatio || 1, settings.quality === 'high' ? 2 : 1.25) : +perfOpt.pr); // numbers: device pixels per CSS pixel
+  resize(); plantNear.cx = 1e9; refreshPlants(player.x, player.z, true);
+}
+for (const id of ['qShadow', 'qRing', 'qRoots', 'qGround', 'qPR']) $(id).addEventListener('change', applyPerfOpt);
+function perfPanel(show) { $('pPerf').hidden = !(show ?? $('pPerf').hidden); if (!$('pPerf').hidden) { toggle(null); $('perfLive').textContent = perfSummary(120); } }
+$('fps').addEventListener('click', () => perfPanel());
+$('perfClose').addEventListener('click', () => perfPanel(false));
+addEventListener('keydown', (e) => { if (e.code === 'KeyP' && !keyTarget(e)) perfPanel(); });
+function perfHeader() {
+  const c = renderer.domElement;
+  return `Foothold performance report
+device   ${perf.device} · ${navigator.userAgent.replace(/\s+/g, ' ').slice(0, 140)}
+screen   ${innerWidth}×${innerHeight} css px · devicePixelRatio ${devicePixelRatio} · canvas ${c.width}×${c.height} · graphics ${settings.quality}
+world    ${W.gym ? 'gym' : `seed ${W.seed} · ${W.age} yr · ${W.opt.moisture} · ${W.opt.storms} · ${W.opt.geology}`} · at ${player.x.toFixed(0)}, ${player.z.toFixed(0)}`;
+}
+$('bPerfCopy').addEventListener('click', async () => {
+  const txt = $('perfOut').value || `${perfHeader()}\n\nlive, last 4 s\n${perfSummary(240)}`;
+  $('perfOut').value = txt;
+  try { await navigator.clipboard.writeText(txt); $('bPerfCopy').textContent = 'Copied'; } catch (e) { $('perfOut').select(); $('bPerfCopy').textContent = 'Select and copy'; }
+  setTimeout(() => { $('bPerfCopy').textContent = 'Copy report'; }, 2000);
+});
+// The benchmark: stand still, then for each configuration settle for 1.5 s (shader compiles, refills) and measure 3 s.
+const BENCH = [
+  ['baseline (your settings)', {}],
+  ['shadows off', { qShadow: '0' }],
+  ['shadows every frame', { qShadow: '1' }],
+  ['shadows every 4th frame', { qShadow: '4' }],
+  ['no grown trees (cards only)', { qRing: '0' }],
+  ['grown trees within 20 m', { qRing: '20' }],
+  ['grown trees within 40 m', { qRing: '40' }],
+  ['roots hidden', { qRoots: '0' }],
+  ['ground cover hidden', { qGround: '0' }],
+  ['1× pixels', { qPR: '1' }],
+  ['0.5× pixels', { qPR: '0.5' }],
+];
+let benching = false;
+$('bBench').addEventListener('click', async () => {
+  if (benching) return; benching = true; $('bBench').disabled = true;
+  const keep = Object.fromEntries(['qShadow', 'qRing', 'qRoots', 'qGround', 'qPR'].map((id) => [id, $(id).value]));
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const rows = [];
+  input.keys.clear?.();
+  for (const [name, set] of BENCH) {
+    for (const [id, v] of Object.entries(keep)) $(id).value = set[id] ?? v;
+    applyPerfOpt();
+    $('perfLive').textContent = `measuring: ${name} …`;
+    await wait(1500); const c0 = perf.count; await wait(3000);
+    const s = perfStats(perf.count - c0); rows.push([name, s]);
+  }
+  for (const [id, v] of Object.entries(keep)) $(id).value = v;
+  applyPerfOpt();
+  const b = rows[0][1];
+  const pad = (t, n) => (t + ' '.repeat(n)).slice(0, n);
+  const table = rows.map(([n, s]) => `${pad(n, 30)} ${pad(f1(s.med), 6)} ${pad(f1(s.p95), 6)} ${pad(f1(s.submit), 7)} ${pad(f1(s.gpu), 7)} ${pad(String(Math.round(s.calls)), 6)} ${(s.tris / 1e6).toFixed(2)}M${s === b ? '' : `   gpu ${Number.isNaN(s.gpu) ? '—' : (s.gpu - b.gpu >= 0 ? '+' : '') + f1(s.gpu - b.gpu)} · frame ${(s.med - b.med >= 0 ? '+' : '') + f1(s.med - b.med)}`}`).join('\n');
+  $('perfOut').value = `${perfHeader()}
+
+benchmark (ms; frame = time between frames, median and 95th percentile; submit = CPU to issue the render; gpu = GPU time)
+${pad('configuration', 30)} ${pad('frame', 6)} ${pad('p95', 6)} ${pad('submit', 7)} ${pad('gpu', 7)} ${pad('calls', 6)} tris
+${table}
+
+live before the benchmark
+${perfSummary(240)}`;
+  $('perfLive').textContent = perfSummary(120);
+  benching = false; $('bBench').disabled = false;
+});
 renderer.shadowMap.autoUpdate = false;
 
 function updateTiles() {
