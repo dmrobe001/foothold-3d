@@ -1217,13 +1217,19 @@ const gymProgress = () => { const [, oz] = stationOrigin(gymAt); return oz - pla
 function gymStatus() { const s = W.gym.stations[gymAt]; return `intended: ${s.plan || '—'} · [ ] or ◀ ▶ to change, R or ↺ to restart`; }
 // Walk a station straight ahead for `secs` simulated seconds and score it against its intended outcome.
 function gymRun(i, secs = 16) {
-  goStation(i); const s = W.gym.stations[gymAt], e = s.expect || {}; body.lastVault = null; let vaults = 0, wasV = false, rollMax = 0;
+  goStation(i); const s = W.gym.stations[gymAt], e = s.expect || {}; body.lastVault = null; let vaults = 0, wasV = false, rollMax = 0, cam = 9;
+  const [ox, oz] = stationOrigin(gymAt), pieces = W.trees.filter((t) => t.st === 2 && Math.abs(t.x - ox) < 7 && Math.abs(t.z - oz) < 9).flatMap((t) => t.rest.pieces);
+  const toStem = (p) => Math.min(9, ...pieces.map((q) => { // camera to stem surface
+    const vx = q.x1 - q.x0, vy = q.y1 - q.y0, vz = q.z1 - q.z0, t = clamp(((p.x - q.x0) * vx + (p.y - q.y0) * vy + (p.z - q.z0) * vz) / (vx * vx + vy * vy + vz * vz), 0, 1);
+    return Math.hypot(p.x - q.x0 - vx * t, p.y - q.y0 - vy * t, p.z - q.z0 - vz * t) - q.r;
+  }));
   const g0 = ground(player.x, player.z);
   let maxF = -9, maxH = 0, hands = false, lifts = 0, worst = 9, worstAt = '', lifting = false, eyeJump = 0, lastEye = null;
   for (let k = 0; k < secs * 60; k++) {
     input.keys.clear(); input.keys.add('KeyW'); movePlayer(1 / 60); refreshNear(player.x, player.z);
     const f = gymProgress(); maxF = Math.max(maxF, f); maxH = Math.max(maxH, rig.feet - g0);
     if (body.four) hands = true; if (rig.lift && !lifting) lifts++; lifting = !!rig.lift; if (rig.vault && !wasV) vaults++; wasV = !!rig.vault; if (Math.abs(body.roll) > Math.abs(rollMax)) rollMax = body.roll;
+    cam = Math.min(cam, toStem(body.eye));
     if (f >= 5) break; // past the goal: stop before reaching the next row of stations
     if (lastEye !== null) eyeJump = Math.max(eyeJump, Math.abs(player.eye - lastEye)); lastEye = player.eye;
     const J = body.sol?.J; if (J) for (const nm of ['head', 'neck', 'chest']) { const j = J[nm], c = ceilingAt(j[0], j[2], rig.feet, [0, -1]), gap = c - (j[1] + (nm === 'head' ? 0.11 : 0.06)); if (gap < worst) { worst = gap; worstAt = nm; } }
@@ -1234,12 +1240,12 @@ function gymRun(i, secs = 16) {
   if (e.stop) checks.push(['stop', maxF < 1]);
   if (e.height !== undefined) checks.push([`height ≥ ${e.height}`, maxH >= e.height]);
   if (s.maxHeight !== undefined) checks.push([`height ≤ ${s.maxHeight}`, maxH <= s.maxHeight]);
-  if (e.clean) checks.push(['clean', worst >= -0.02]);
+  if (e.clean) checks.push(['clean', worst >= -0.02 && cam >= 0.12]); // no body in a stem; the camera (near plane 0.1 m) keeps clear
   if (e.hands !== undefined) checks.push([e.hands ? 'on hands' : 'on feet', hands === e.hands]);
   if (e.lean) checks.push([`lean ${e.lean}`, e.lean === 'right' ? rollMax > 0.15 : rollMax < -0.15]);
   if (e.vault) checks.push([typeof e.vault === 'string' ? `vault ${e.vault}` : 'vault', vaults > 0 && (typeof e.vault !== 'string' || (body.lastVault?.side < 0 ? 'left' : 'right') === e.vault)]);
   return { i: gymAt + 1, name: s.name, pass: checks.every((c) => c[1]), checks: checks.map(([n, ok]) => `${ok ? '✓' : '✗'} ${n}`).join(' '),
-    reached: +maxF.toFixed(2), height: +maxH.toFixed(2), hands, pullups: lifts, vaults, vaultSide: body.lastVault ? (body.lastVault.side < 0 ? 'left' : 'right') + ` at ${body.lastVault.s}` : '', roll: +rollMax.toFixed(2), clearance: +worst.toFixed(2), clearanceAt: worstAt, eyeJump: +eyeJump.toFixed(3), plan: s.plan };
+    reached: +maxF.toFixed(2), height: +maxH.toFixed(2), hands, pullups: lifts, vaults, vaultSide: body.lastVault ? (body.lastVault.side < 0 ? 'left' : 'right') + ` at ${body.lastVault.s}` : '', roll: +rollMax.toFixed(2), clearance: +worst.toFixed(2), clearanceAt: worstAt, camera: +cam.toFixed(2), eyeJump: +eyeJump.toFixed(3), plan: s.plan };
 }
 $('gPrev').addEventListener('click', () => goStation(gymAt - 1));
 $('gNext').addEventListener('click', () => goStation(gymAt + 1));
@@ -1850,7 +1856,7 @@ function movePlayer(dt) {
   body.mix = clamp((body.mix || 0) + (body.four ? dt * 3 : -dt * 3), 0, 1); // the posture eases between walking and on hands
   { // headroom over the body's length (on hands the head and chest are well ahead of the hips)
     const fx = body.four ? body.q.a[0] : -Math.sin(player.yaw), fz = body.four ? body.q.a[2] : -Math.cos(player.yaw), fl = Math.hypot(fx, fz) || 1;
-    let c = Infinity; for (const d of [-0.2, 0, 0.3, 0.6, 0.9]) c = Math.min(c, ceilingAt(player.x + fx / fl * d, player.z + fz / fl * d, rig.feet, [fx / fl, fz / fl]));
+    let c = Infinity; for (let d = -0.2; d <= 0.95; d += 0.1) c = Math.min(c, ceilingAt(player.x + fx / fl * d, player.z + fz / fl * d, rig.feet, [fx / fl, fz / fl]));
     body.head = c === Infinity ? 2 : c - rig.feet;
   }
   const moved = Math.hypot(player.x - px, player.z - pz);
@@ -2128,7 +2134,7 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
     pTarget = Math.max(pTarget, rig.feet + 0.68); // walking never folds into a squat; landings use the crouch spring
   }
   // ducking under a stem overhead: stoop and bend the knees just enough to keep the head below it
-  const dk = four ? null : duckPosture(ux, uz, spd);
+  const dk = (body.mix || 0) < 1 ? duckPosture(ux, uz, spd) : null; // until the hands are fully down, the walking posture still ducks (the eye is a blend of both)
   body.duck += ((dk ? dk.amt : 0) - body.duck) * Math.min(1, dt * 8);
   body.duckLean += ((dk ? dk.lean : 0) - body.duckLean) * Math.min(1, dt * 10);
   body.duckHold = dk && dk.amt > 0.25 ? dk : null;

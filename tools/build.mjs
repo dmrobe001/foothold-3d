@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 const root = new URL('..', import.meta.url);
 const read = (p) => readFileSync(new URL(p, root), 'utf8');
 const worldgen = read('src/worldgen.js').replace(/^export (const|function|async function|let|class) /gm, '$1 ');
-const gym = read('src/gym.js').replace(/^import \{[^}]*\} from '\.\/worldgen\.js';\n/m, '').replace(/^export (const|function) /gm, '$1 ');
+const gym = read('src/gym.js').replace(/^import \{[^}]*\} from '\.\/(worldgen|deadfall)\.js';\n/gm, '').replace(/^export (const|function) /gm, '$1 ');
 const deadfall = read('src/deadfall.js').replace(/^import \{[^}]*\} from '\.\/worldgen\.js';\n/m, '').replace(/^export (const|function) /gm, '$1 ');
 // the skeleton module keeps its short helper names (add, dot, ...) private: it becomes one namespace object, SK
 const skelSrc = read('src/skeleton.js'), skelNames = [...skelSrc.matchAll(/^export (?:const|function) (\w+)/gm)].map((m) => m[1]);

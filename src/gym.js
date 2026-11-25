@@ -19,11 +19,12 @@
 // turns the world so the way you were looking becomes the lane's forward.
 // expect (what a station scores):
 //   cross: reach the goal line          stop: never get past f = 1         height: the feet reach at least this high
-//   clean: no head, neck or chest in a stem       hands: true (must go on hands) / false (must not)
+//   clean: no head, neck or chest in a stem, camera 0.12 m clear of it      hands: true (must go on hands) / false (must not)
 //   lean:  'left' or 'right' (the torso leans that way, more than 0.15 rad, to get the head under)
 //   vault: true (goes over with a vault) / 'left' or 'right' (and its legs pass that side)
 //   plan:  the intended way through, in words (not scored yet)
 import { N, NF, WORLD, HALF, GEOLOGY, standStats, clamp } from './worldgen.js';
+import { trunkProfile } from './deadfall.js';
 
 const hurdle = (top, r = 0.25) => ({ log: [-2.5, 0, top - 2 * r, 2.5, 0, top - 2 * r], r });
 export const STATIONS = [
@@ -67,7 +68,8 @@ export function buildGymWorld(extra = []) {
   const trees = [], blocks = [], nearItems = [], wads = [], rocks = [];
   const log = (x0, z0, y0, x1, z1, y1, r) => { // centre heights at each end
     const L = Math.hypot(x1 - x0, y1 - y0, z1 - z0);
-    trees.push({ st: 2, sp: 0, x: x0, z: z0, d: r * 200, h: L, t: 1, gym: true, rest: { a: Math.atan2(z1 - z0, x1 - x0), sx: r, sz: r, L, fd: 0, pieces: [{ x0, y0, z0, x1, y1, z1, u0: 0.2, u1: 0.8, rx0: r, rx1: r, rz0: r, rz1: r, r }] } });
+    const k = r / trunkProfile(0.5); // a broken piece is drawn at the stem's taper for its middle: undo it so the radius is r
+    trees.push({ st: 2, sp: 0, x: x0, z: z0, d: r * 200, h: L, t: 1, gym: true, rest: { a: Math.atan2(z1 - z0, x1 - x0), sx: k, sz: k, L, fd: 0, pieces: [{ x0, y0, z0, x1, y1, z1, u0: 0.2, u1: 0.8, rx0: r, rx1: r, rz0: r, rz1: r, r }] } });
   };
   const trunk = (x, z, d) => trees.push({ st: 0, sp: 2, x, z, d, h: d < 8 ? 2 + d * 0.5 : 18 + d * 0.1, t: 0, gym: true });
   stations.forEach((s, i) => {
