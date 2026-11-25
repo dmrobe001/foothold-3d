@@ -1101,8 +1101,8 @@ function logBreak(r, node, drop) {
   if (!r.gone) r.gone = new Uint8Array(P.n);
   const fresh = Array.from(g, (x, i) => x && !r.gone[i] && M.segs[i * 7 + 6] > 0);
   for (let i = 0; i < P.n; i++) if (g[i]) r.gone[i] = 1;
-  if (drop) dropPiece({ src: logSources(M), toW: (x, y, z) => M.W3(x, y, z), nrm: (x, y, z) => [x * M.X.x + y * M.a.x + z * M.Z.x, x * M.X.y + y * M.a.y + z * M.Z.y, x * M.X.z + y * M.a.z + z * M.Z.z], ws: M.segs, P, s: M.s, gone: fresh, node, tint: mix3(TINT.bark[r.t.sp], [0.55, 0.50, 0.44], 0.6).map(lin), conifer: SPECIES[r.t.sp].kind === 'conifer' || SPECIES[r.t.sp].kind === 'pine', leaves: M.T < 3 });
   for (const o of M.solids) removeSolid(o);
+  if (drop) fallOrDrop({ trunkR: 0, src: logSources(M), toW: (x, y, z) => M.W3(x, y, z), nrm: (x, y, z) => [x * M.X.x + y * M.a.x + z * M.Z.x, x * M.X.y + y * M.a.y + z * M.Z.y, x * M.X.z + y * M.a.z + z * M.Z.z], ws: M.segs, P, s: M.s, gone: fresh, node, tint: mix3(TINT.bark[r.t.sp], [0.55, 0.50, 0.44], 0.6).map(lin), conifer: SPECIES[r.t.sp].kind === 'conifer' || SPECIES[r.t.sp].kind === 'pine', leaves: M.T < 3 });
   r.m = logBranches(r.t, r.gone); for (const o of r.m.solids) addSolid(o, o.reach);
   if (r.ph) physDropOwner(r); // its branches regrouped next time round
   logDirty = true; rootWork(0);
@@ -1117,7 +1117,7 @@ function breakBranch(rec, node) {
   for (const o of rec.solids || []) if (rec.gone[o.node]) removeSolid(o);
   rec.solids = (rec.solids || []).filter((o) => !rec.gone[o.node]);
   const v = rec.v, X = treeXf(rec), M3 = new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().fromArray(rec.m)), nv = new THREE.Vector3();
-  dropPiece({ src: { bark: { pos: v.barkGeo.attributes.position.array, nor: v.barkGeo.attributes.normal.array, uv: v.barkGeo.attributes.uv.array, idx: v.barkGeo.index.array, node: v.barkGeo.attributes.aNode.array, ps: v.hRep },
+  fallOrDrop({ trunkR: rec.t ? rec.t.d / 200 : 0, src: { bark: { pos: v.barkGeo.attributes.position.array, nor: v.barkGeo.attributes.normal.array, uv: v.barkGeo.attributes.uv.array, idx: v.barkGeo.index.array, node: v.barkGeo.attributes.aNode.array, ps: v.hRep },
     leaf: { pos: v.leafGeo.attributes.position.array, nor: v.leafGeo.attributes.normal.array, uv: v.leafGeo.attributes.uv.array, col: v.leafGeo.attributes.color.array, idx: v.leafGeo.index.array, node: v.leafGeo.attributes.aNode.array, ps: v.hRep } },
     toW: X.toW, nrm: (x, y, z) => { nv.set(x, y, z).applyMatrix3(M3).normalize(); return [nv.x, nv.y, nv.z]; }, ws: treeSegs(rec), P, s: X.s, gone: fresh, node, tint: rec.bc, conifer: SPECIES[v.sp].kind === 'conifer' || SPECIES[v.sp].kind === 'pine', leaves: true });
   customTree(rec);
@@ -1141,6 +1141,101 @@ function customTree(rec) { // this tree's own mesh: the variant's buffers minus 
 // what broke off falls: turned so it lies roughly level, about the joint where it broke, and dropped onto the ground.
 // o: { src: {bark, leaf} buffers with a node per vertex and positions in plant metres times ps, toW(plant metres) ->
 // world, nrm(local normal) -> world normal, ws: world segments, P, s: world scale, gone, node, tint, conifer, leaves }
+function fallOrDrop(o) { return falls.size < 12 && (phys.worker || phys.core) ? spawnFall(o) : dropPiece(o); }
+// the broken-off part's triangles in the world, where they were when it broke (place: an optional extra transform)
+function pieceGeometry(o, place = (p) => _pg.set(p[0], p[1], p[2])) {
+  const { gone } = o, tmp = new THREE.Vector3();
+  const piece = { pos: [], nor: [], uv: [], idx: [] }, leaf = { pos: [], nor: [], uv: [], col: [], idx: [] };
+  const take = (S, out, withCol, q) => {
+    const map = new Map();
+    for (let t = 0; t < S.idx.length; t += 3) {
+      if (!(gone[S.node[S.idx[t]]] && gone[S.node[S.idx[t + 1]]] && gone[S.node[S.idx[t + 2]]])) continue;
+      for (let c = 0; c < 3; c++) {
+        const vi = S.idx[t + c]; let k = map.get(vi);
+        if (k === undefined) {
+          k = out.pos.length / 3; map.set(vi, k);
+          const w = place(o.toW(S.pos[vi * 3] * S.ps, S.pos[vi * 3 + 1] * S.ps, S.pos[vi * 3 + 2] * S.ps)); out.pos.push(w.x, w.y, w.z);
+          const nn = o.nrm(S.nor[vi * 3], S.nor[vi * 3 + 1], S.nor[vi * 3 + 2]); tmp.set(nn[0], nn[1] + (withCol ? 1.2 : 0), nn[2]).normalize(); if (q) tmp.applyQuaternion(q); out.nor.push(tmp.x, tmp.y, tmp.z);
+          out.uv.push(S.uv[vi * 2], S.uv[vi * 2 + 1]); if (withCol) out.col.push(S.col[vi * 3], S.col[vi * 3 + 1], S.col[vi * 3 + 2]);
+        }
+        out.idx.push(k);
+      }
+    }
+  };
+  take(o.src.bark, piece, false, o.q); if (o.leaves) take(o.src.leaf, leaf, true, o.q);
+  return { piece, leaf };
+}
+const _pg = new THREE.Vector3();
+function pieceMeshes(o, G, parent) {
+  const mk = (b, mat) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(b.nor, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2)); if (b.col) g.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3)); g.setIndex(b.idx); const m = new THREE.Mesh(g, mat); m.castShadow = true; m.receiveShadow = true; parent.add(m); return m; };
+  const barkMat = new THREE.MeshLambertMaterial({ map: tex.bark }); barkMat.color.setRGB(o.tint[0] * 1.6, o.tint[1] * 1.6, o.tint[2] * 1.6);
+  if (G.piece.idx.length) mk(G.piece, barkMat);
+  if (G.leaf.idx.length) mk(G.leaf, o.conifer ? mats.needleStill : mats.leafStill);
+}
+// ---- falling pieces: a rigid body of capsules (one per segment) simulated with the branches it falls through
+const falls = new Map(); let fallId = 1;
+function spawnFall(o) {
+  const { P, ws, gone, node } = o;
+  let M = 0, cx = 0, cy = 0, cz = 0; const segs = [];
+  for (let i = 0; i < P.n; i++) {
+    if (!gone[i]) continue;
+    const k = i * 7, r = ws[k + 6]; if (r <= 0) continue;
+    let ax = ws[k], ay = ws[k + 1], az = ws[k + 2]; const bx = ws[k + 3], by = ws[k + 4], bz = ws[k + 5];
+    let L = Math.hypot(bx - ax, by - ay, bz - az); if (L < 1e-4) continue;
+    if (i === node && o.trunkR) { const cut = Math.min(L * 0.5, o.trunkR + r); ax += (bx - ax) * cut / L; ay += (by - ay) * cut / L; az += (bz - az) * cut / L; L -= cut; } // start at the bark, not the stem's axis
+    const m = 800 * Math.PI * r * r * L + (P.ord[i] >= 2 ? 0.02 : 0.005);
+    segs.push({ ax, ay, az, bx, by, bz, r, L, m }); M += m; cx += m * (ax + bx) / 2; cy += m * (ay + by) / 2; cz += m * (az + bz) / 2;
+  }
+  if (!segs.length || M < 1e-3) return;
+  cx /= M; cy /= M; cz /= M;
+  // inertia about the centre of mass: each segment a thin rod (parallel axis plus its own L²/12 across its length)
+  const I = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  let rad = 0;
+  for (const g of segs) {
+    const mx = (g.ax + g.bx) / 2 - cx, my = (g.ay + g.by) / 2 - cy, mz = (g.az + g.bz) / 2 - cz, dx = (g.bx - g.ax) / g.L, dy = (g.by - g.ay) / g.L, dz = (g.bz - g.az) / g.L, c2 = mx * mx + my * my + mz * mz, l2 = g.L * g.L / 12;
+    const c = [mx, my, mz], d = [dx, dy, dz];
+    for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) I[a * 3 + b] += g.m * ((a === b ? c2 + l2 + g.r * g.r / 2 : 0) - c[a] * c[b] - l2 * d[a] * d[b]);
+    rad = Math.max(rad, Math.hypot(g.ax - cx, g.ay - cy, g.az - cz), Math.hypot(g.bx - cx, g.by - cy, g.bz - cz));
+  }
+  const Iinv = new THREE.Matrix3().set(...I).invert().transpose().elements; // elements are column-major: transpose back to rows
+  // collision shapes: the thickest segments (up to 40)
+  segs.sort((a, b) => b.r - a.r);
+  const caps = new Float32Array(Math.min(40, segs.length) * 7);
+  segs.slice(0, 40).forEach((g, k) => caps.set([g.ax - cx, g.ay - cy, g.az - cz, g.bx - cx, g.by - cy, g.bz - cz, Math.max(0.01, g.r)], k * 7));
+  // the world under it: a 16 m top surface (ground, logs, rocks, stumps; not live limbs) and the standing trunks
+  const n = 33, step = 0.5, x0 = cx - 8, z0 = cz - 8, h = new Float32Array(n * n);
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) h[j * n + i] = topSurface(x0 + i * step, z0 + j * step);
+  const trunks = [];
+  for (let di = -2; di <= 2; di++) for (let dj = -2; dj <= 2; dj++) for (const t of colTrunks.get(ckey8(cx + di * 8, cz + dj * 8)) || []) if (!trunks.includes(t)) trunks.push(t);
+  const tr = new Float32Array(trunks.length * 3); trunks.forEach((t, k) => tr.set([t.x, t.z, t.r - 0.25], k * 3));
+  // its mesh, in body coordinates (centred on the centre of mass)
+  const G = pieceGeometry(o, (p) => _pg.set(p[0] - cx, p[1] - cy, p[2] - cz)), group = new THREE.Group();
+  group.position.set(cx, cy, cz); pieceMeshes(o, G, group); worldGroup.add(group);
+  const id = fallId++, spin = [(Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 0.6];
+  falls.set(id, { id, group, caps, rad, x: cx, z: cz, top: cy + rad, settled: false });
+  const b = { id, m: M, Iinv: Float32Array.from(Iinv), caps, p: [cx, cy, cz], q: [0, 0, 0, 1], v: [0, 0, 0], w: spin, hf: { x0, z0, step, n, h }, trunks: tr };
+  if (phys.worker) phys.worker.postMessage({ type: 'body', b }); else phys.core.addBody(b);
+  phys.t = 1; // wake the branches under it now
+}
+function topSurface(x, z) { // ground and the static solids on it (logs, rocks, stumps, fallen branches), not standing trees' limbs
+  let y = ground(x, z);
+  for (const o of solids.get(ckey8(x, z)) || []) if (!o.limb) y = Math.max(y, topOf(o, x, z));
+  return y;
+}
+function fallUpdate(st) { // positions from the solver; a piece at rest is baked: static, its thick parts solid
+  for (const b of st.bodies || []) {
+    const f = falls.get(b.id); if (!f) continue;
+    f.group.position.set(b.p[0], b.p[1], b.p[2]); f.group.quaternion.set(b.q[0], b.q[1], b.q[2], b.q[3]); f.x = b.p[0]; f.z = b.p[2]; f.top = b.p[1] + f.rad;
+    if (!b.settled) continue;
+    falls.delete(b.id); f.group.updateMatrixWorld(true);
+    const A = new THREE.Vector3(), B = new THREE.Vector3();
+    for (let k = 0; k < f.caps.length; k += 7) {
+      const r = f.caps[k + 6]; if (r < 0.02) continue;
+      A.set(f.caps[k], f.caps[k + 1], f.caps[k + 2]).applyMatrix4(f.group.matrixWorld); B.set(f.caps[k + 3], f.caps[k + 4], f.caps[k + 5]).applyMatrix4(f.group.matrixWorld);
+      addSolid({ kind: 'log', x: (A.x + B.x) / 2, z: (A.z + B.z) / 2, x0: A.x, z0: A.z, x1: B.x, z1: B.z, ya0: A.y, ya1: B.y, r }, A.distanceTo(B) / 2 + r);
+    }
+  }
+}
 function dropPiece(o) {
   const { P, ws, gone, node } = o;
   const pivot = [ws[node * 7], ws[node * 7 + 1], ws[node * 7 + 2]];
@@ -1194,7 +1289,7 @@ function physReset(mode) {
   if (mode) phys.mode = mode;
   if (phys.worker && (phys.mode !== 'worker')) { phys.worker.terminate(); phys.worker = null; }
   for (const o of phys.owners) physOwnerOff(o, true);
-  phys.groups.clear(); phys.owners.clear(); phys.pending = false; phys.force = [0, 0, 0]; phys.core = null;
+  phys.groups.clear(); phys.owners.clear(); phys.pending = false; phys.force = [0, 0, 0]; phys.core = null; falls.clear();
   if (phys.mode === 'worker' && !phys.worker) {
     try {
       phys.worker = new Worker(URL.createObjectURL(new Blob([PH.workerSource()], { type: 'text/javascript' })));
@@ -1249,10 +1344,30 @@ function physActivate(dt) {
       if (d < R2) want.push({ key: `l${r.x.toFixed(2)},${r.z.toFixed(2)}:${root}`, owner: r, kind: 'log', root, nodes, d, ws: M.segs, P });
     }
   }
+  // branches under a falling piece wake too: anything inside the column it falls through
+  for (const f of falls.values()) {
+    const R2f = (f.rad + 0.6) ** 2, inCol = (ws, nodes) => { for (const i of nodes) { const k = i * 7; for (const e of [0, 3]) if ((ws[k + e] - f.x) ** 2 + (ws[k + e + 2] - f.z) ** 2 < R2f && ws[k + e + 1] < f.top + 0.5) return true; } return false; };
+    const fi = Math.floor((f.x + HALF) / 16), fj = Math.floor((f.z + HALF) / 16);
+    for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (const rec of plantCells.get((fi + di) * 4096 + fj + dj) || []) {
+      if ((rec.x - f.x) ** 2 + (rec.z - f.z) ** 2 > (f.rad + 8) ** 2) continue;
+      const P = rec.v.P, ws = treeSegs(rec), sap = rec.t && rec.t.d < 8;
+      for (const root of sap ? [0] : (rec.v.limbRoots || (rec.v.limbRoots = limbRoots(P)))) {
+        if (rec.gone?.[root]) continue;
+        const nodes = sap ? subtreeNodes(P, 0, rec.gone ? (i) => !rec.gone[i] : null) : ((rec.v.sub || (rec.v.sub = {}))[root] || (rec.v.sub[root] = subtreeNodes(P, root))).filter((i) => !rec.gone?.[i]);
+        if (inCol(ws, nodes)) want.push({ key: `t${rec.x.toFixed(2)},${rec.z.toFixed(2)}:${root}`, owner: rec, kind: 'tree', root, nodes, d: -1, ws, P });
+      }
+    }
+    for (const r of logPick) {
+      const M = r.m; if (!M || f.x < M.box[0] - 3 || f.x > M.box[1] + 3 || f.z < M.box[2] - 3 || f.z > M.box[3] + 3) continue;
+      const P = M.v.P, kept = (i) => M.segs[i * 7 + 6] > 0 && !r.gone?.[i];
+      for (const root of M.roots || (M.roots = limbRoots(P, kept))) { if (!kept(root)) continue; const nodes = subtreeNodes(P, root, kept); if (inCol(M.segs, nodes)) want.push({ key: `l${r.x.toFixed(2)},${r.z.toFixed(2)}:${root}`, owner: r, kind: 'log', root, nodes, d: -1, ws: M.segs, P }); }
+    }
+  }
   want.sort((a, b) => a.d - b.d);
-  let total = 0; const keep = new Set();
+  let total = 0; const keep = new Set(), cap = PHYS_MAX + (falls.size ? 1500 : 0);
   for (const w of want) {
-    if (total + w.nodes.length > PHYS_MAX) break; total += w.nodes.length; keep.add(w.key);
+    if (keep.has(w.key)) continue;
+    if (total + w.nodes.length > cap) break; total += w.nodes.length; keep.add(w.key);
     if (!phys.groups.has(w.key)) physAddGroup(w);
   }
   for (const [key, g] of phys.groups) if (!keep.has(key) && g.asleep) physRemoveGroup(key);
@@ -1272,7 +1387,7 @@ function physAddGroup(w) {
     }
     const dead = deadAll || P.st[i] !== PL.LIVE, I = Math.PI * r ** 4 / 4;
     g.r[j] = r; g.L[j] = L; g.k[j] = 3 * E * I / L ** 3; g.w[j] = 1 / (800 * Math.PI * r * r * L + (P.ord[i] >= 2 ? 0.02 : 0.005));
-    g.lim[j] = MOR / E * (dead ? 1.2 : 4); // live wood bends well past its proportional limit before it fails [guess]
+    g.lim[j] = MOR / E * (dead ? 1.0 : 2.5); // green wood fails at roughly 1-2 % strain, about 2.5x its proportional limit MOR/E [rough]
   });
   const G = { ...w, id: g.id, asleep: false };
   phys.groups.set(w.key, G); physOwnerOn(owner, kind);
@@ -1351,7 +1466,7 @@ function logAssemble() { // the shared buffers hold every fallen tree near you t
 function physStep(dt) {
   if (!phys.core && !phys.worker) physReset();
   physActivate(dt);
-  if (!phys.groups.size) { phys.force = [0, 0, 0]; phys.nodes = 0; phys.ms = 0; return; }
+  if (!phys.groups.size && !falls.size) { phys.force = [0, 0, 0]; phys.nodes = 0; phys.ms = 0; return; }
   const caps = bodyCapsules();
   if (phys.worker) {
     if (phys.pending) { phys.acc += dt; return; }
@@ -1359,7 +1474,8 @@ function physStep(dt) {
   } else physState(phys.core.step(dt, caps));
 }
 function physState(st) {
-  phys.pending = false; phys.force = st.force; phys.ms = st.ms; phys.nodes = st.nodes;
+  phys.pending = false; phys.force = st.force; phys.ms = st.ms; phys.nodes = st.nodes; phys.hits = (phys.hits || 0) + (st.hits || 0);
+  fallUpdate(st);
   const byId = new Map(); for (const [key, G] of phys.groups) byId.set(G.id, [key, G]);
   const breaks = [];
   for (const res of st.groups) {
@@ -3512,7 +3628,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); physStep(dt); refreshNear(player.x, player.z); },
-  physics: { state: () => phys, useMain() { physReset('main'); }, useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
+  physics: { falls: () => falls, state: () => phys, useMain() { physReset('main'); }, useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
   branches: { logBuf: () => logBuf, logLeafBuf: () => logLeafBuf, logBranches, plantVariant, target: () => breakTargetAt, tryBreak, breakBranch, treeSegs, plantCells: () => plantCells, brokenTrees: () => brokenTrees, limbSolids, logBranchCells: () => branchLogCells },
   plants: { lib: plantLib, roots: () => rootMeshObj, rootQueue: () => rootQueue, rootCells: () => rootCells, PL },
   gym: { get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },

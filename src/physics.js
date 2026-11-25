@@ -16,11 +16,11 @@
 // Reaction on the body: each touching segment pushes back with the branch's cantilever stiffness out to the contact
 // point, k_eff = 3 E I / ℓ³ (ℓ: arc length from the group's anchor), times how far that point is from rest.
 export class PhysicsCore {
-  constructor() { this.groups = new Map(); }
+  constructor() { this.groups = new Map(); this.bodies = new Map(); }
   add(g) { // g: { id, n, par Int32, u, s0 (n*3), x0 (n*3), r, L, k, w, lim }
     const n = g.n;
     g.x = Float32Array.from(g.x0); g.xp = Float32Array.from(g.x0); g.v = new Float32Array(n * 3); g.S = new Float32Array(n * 3); g.T = new Float32Array(n * 3);
-    g.broken = new Uint8Array(n); g.quiet = 0; g.touch = new Uint8Array(n); g.ell = new Float32Array(n);
+    g.broken = new Uint8Array(n); g.quiet = 2; g.touch = new Uint8Array(n); g.ell = new Float32Array(n); // quiet: starts at rest, simulated only once something can reach it
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (let i = 0; i < n; i++) {
       const p = g.par[i]; g.ell[i] = (p >= 0 ? g.ell[p] - g.L[p] * (1 - g.u[i]) : 0) + g.L[i];
@@ -31,25 +31,38 @@ export class PhysicsCore {
     this.groups.set(g.id, g);
   }
   remove(id) { this.groups.delete(id); }
+  // ---- rigid bodies: pieces that broke off. b: { id, m, Iinv (local 3x3, row-major), caps (local: ax,ay,az,bx,by,bz,r),
+  // p (centre of mass), q (x,y,z,w), v, w, hf: { x0, z0, step, n, h } (top surface under it), trunks [x, z, r ...] }
+  addBody(b) {
+    b.v = b.v || [0, 0, 0]; b.w = b.w || [0, 0, 0]; b.wc = new Float32Array(b.caps.length); b.J = [0, 0, 0]; b.Tq = [0, 0, 0];
+    b.still = 0; b.age = 0; b.settled = false; b.Iw = new Float32Array(9); b.R = new Float32Array(9);
+    this.frameBody(b); this.bodies.set(b.id, b);
+  }
+  removeBody(id) { this.bodies.delete(id); }
   step(dt, caps) {
     const now = () => (typeof performance !== 'undefined' ? performance : Date).now(), t0 = now();
-    const out = [], F = [0, 0, 0], SUB = 4, ITER = 2, h = Math.min(dt, 1 / 30) / SUB;
+    const F = [0, 0, 0], SUB = 4, ITER = 2, h = Math.min(dt, 1 / 30) / SUB;
+    const groups = [...this.groups.values()], bodies = [...this.bodies.values()].filter((b) => !b.settled);
     let nodes = 0;
-    for (const g of this.groups.values()) {
-      nodes += g.n; g.touch.fill(0);
-      // capsules that could reach this group at all
-      const near = [];
-      for (let c = 0; c < caps.length; c += 7) {
-        const R = caps[c + 6] + g.span * 0.5, b = g.box;
-        if (Math.max(caps[c], caps[c + 3]) + R < b[0] || Math.min(caps[c], caps[c + 3]) - R > b[1] || Math.max(caps[c + 1], caps[c + 4]) + R < b[2] || Math.min(caps[c + 1], caps[c + 4]) - R > b[3] || Math.max(caps[c + 2], caps[c + 5]) + R < b[4] || Math.min(caps[c + 2], caps[c + 5]) - R > b[5]) continue;
-        near.push(c);
-      }
-      const moving = g.quiet < 1.5 || near.length;
-      if (moving) for (let s = 0; s < SUB; s++) {
+    for (const g of groups) { nodes += g.n; g.touch.fill(0); g.nearP = this.nearCaps(g, caps, 0); }
+    for (let s = 0; s < SUB; s++) {
+      // bodies: gravity and motion, then their capsules in the world
+      let nb = 0;
+      for (const b of bodies) { this.integrate(b, h); this.worldCaps(b); nb += b.wc.length; }
+      const all = new Float32Array(caps.length + nb), owner = new Int32Array(all.length / 7).fill(-1);
+      all.set(caps, 0); let off = caps.length;
+      bodies.forEach((b, k) => { all.set(b.wc, off); owner.fill(k, off / 7, (off + b.wc.length) / 7); off += b.wc.length; b.J[0] = b.J[1] = b.J[2] = 0; b.Tq[0] = b.Tq[1] = b.Tq[2] = 0; });
+      for (const g of groups) {
+        const near = bodies.length ? g.nearP.concat(this.nearCaps(g, all, caps.length)) : g.nearP;
+        if (!(g.quiet < 1.5 || near.length)) continue;
         for (let i = 0; i < g.n * 3; i++) { g.xp[i] = g.x[i]; g.x[i] += g.v[i] * h; }
-        for (let it = 0; it < ITER; it++) this.solve(g, h, caps, near, it === ITER - 1 && s === SUB - 1 ? F : null);
+        for (let it = 0; it < ITER; it++) this.solve(g, h, all, near, it === ITER - 1 && s === SUB - 1 ? F : null, owner, bodies, it === ITER - 1);
         for (let i = 0; i < g.n * 3; i++) g.v[i] = (g.x[i] - g.xp[i]) / h * 0.985;
       }
+      for (const b of bodies) { this.applyImpulse(b); this.contactEnv(b, h); }
+    }
+    const out = [];
+    for (const g of groups) {
       const breaks = [];
       let maxD = 0, maxV = 0, touched = false;
       for (let i = 0; i < g.n; i++) {
@@ -63,7 +76,110 @@ export class PhysicsCore {
       const disp = new Float32Array(g.n * 3); for (let i = 0; i < g.n * 3; i++) disp[i] = g.x[i] - g.x0[i];
       out.push({ id: g.id, disp, breaks, touched, sleep: g.quiet > 1.5 && maxD < 0.006 && maxV < 0.02 });
     }
-    return { groups: out, force: F, nodes, ms: now() - t0 };
+    const bout = [];
+    for (const b of [...this.bodies.values()]) {
+      if (!b.settled) { // at rest for half a second, or given up on after 15 s
+        b.age += dt; const sp = Math.hypot(...b.v), sw = Math.hypot(...b.w);
+        b.still = sp < 0.12 && sw < 0.3 ? b.still + dt : 0;
+        if (b.still > 0.4 || b.age > 15) b.settled = true;
+      }
+      bout.push({ id: b.id, p: [...b.p], q: [...b.q], settled: b.settled });
+      if (b.settled) this.bodies.delete(b.id);
+    }
+    const hits = this.bodyHits || 0; this.bodyHits = 0;
+    return { groups: out, bodies: bout, force: F, nodes, hits, ms: now() - t0 };
+  }
+  nearCaps(g, caps, from) { // capsule offsets that could reach this group
+    const near = [], b = g.box;
+    for (let c = from; c < caps.length; c += 7) {
+      const R = caps[c + 6] + (g.quiet < 1.5 ? g.span * 0.5 : 0.15); // a branch at rest is where it was; a moving one may swing up to its length
+      if (Math.max(caps[c], caps[c + 3]) + R < b[0] || Math.min(caps[c], caps[c + 3]) - R > b[1] || Math.max(caps[c + 1], caps[c + 4]) + R < b[2] || Math.min(caps[c + 1], caps[c + 4]) - R > b[3] || Math.max(caps[c + 2], caps[c + 5]) + R < b[4] || Math.min(caps[c + 2], caps[c + 5]) - R > b[5]) continue;
+      near.push(c);
+    }
+    return near;
+  }
+  // body frame: rotation matrix from the quaternion; world inverse inertia R I⁻¹ Rᵀ
+  frameBody(b) {
+    const [x, y, z, w] = b.q, R = b.R;
+    R[0] = 1 - 2 * (y * y + z * z); R[1] = 2 * (x * y - z * w); R[2] = 2 * (x * z + y * w);
+    R[3] = 2 * (x * y + z * w); R[4] = 1 - 2 * (x * x + z * z); R[5] = 2 * (y * z - x * w);
+    R[6] = 2 * (x * z - y * w); R[7] = 2 * (y * z + x * w); R[8] = 1 - 2 * (x * x + y * y);
+    const I = b.Iinv, T = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) { let a = 0; for (let k = 0; k < 3; k++) a += R[r * 3 + k] * I[k * 3 + c]; T[r * 3 + c] = a; }
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) { let a = 0; for (let k = 0; k < 3; k++) a += T[r * 3 + k] * R[c * 3 + k]; b.Iw[r * 3 + c] = a; }
+  }
+  integrate(b, h) {
+    b.v[1] -= 9.81 * h;
+    const air = 1 - 0.05 * h; b.v[0] *= air; b.v[1] *= air; b.v[2] *= air; const spin = 1 - 0.4 * h; b.w[0] *= spin; b.w[1] *= spin; b.w[2] *= spin;
+    b.p[0] += b.v[0] * h; b.p[1] += b.v[1] * h; b.p[2] += b.v[2] * h;
+    const qx = b.q[0], qy = b.q[1], qz = b.q[2], qw = b.q[3], wx = b.w[0], wy = b.w[1], wz = b.w[2]; // q += ½ h (ω, 0) ⊗ q
+    b.q[0] += 0.5 * h * (wx * qw + wy * qz - wz * qy); b.q[1] += 0.5 * h * (wy * qw + wz * qx - wx * qz);
+    b.q[2] += 0.5 * h * (wz * qw + wx * qy - wy * qx); b.q[3] += 0.5 * h * (-wx * qx - wy * qy - wz * qz);
+    const l = Math.hypot(b.q[0], b.q[1], b.q[2], b.q[3]) || 1; for (let k = 0; k < 4; k++) b.q[k] /= l;
+    this.frameBody(b);
+  }
+  worldCaps(b) {
+    const R = b.R, c = b.caps, o = b.wc;
+    for (let k = 0; k < c.length; k += 7) {
+      for (const e of [0, 3]) {
+        const x = c[k + e], y = c[k + e + 1], z = c[k + e + 2];
+        o[k + e] = b.p[0] + R[0] * x + R[1] * y + R[2] * z; o[k + e + 1] = b.p[1] + R[3] * x + R[4] * y + R[5] * z; o[k + e + 2] = b.p[2] + R[6] * x + R[7] * y + R[8] * z;
+      }
+      o[k + 6] = c[k + 6];
+    }
+  }
+  applyImpulse(b) { // what the branches it pushed through did to it this substep
+    b.v[0] += b.J[0] / b.m; b.v[1] += b.J[1] / b.m; b.v[2] += b.J[2] / b.m;
+    const I = b.Iw, T = b.Tq;
+    b.w[0] += I[0] * T[0] + I[1] * T[1] + I[2] * T[2]; b.w[1] += I[3] * T[0] + I[4] * T[1] + I[5] * T[2]; b.w[2] += I[6] * T[0] + I[7] * T[1] + I[8] * T[2];
+  }
+  hfAt(hf, x, z) { // bilinear top surface: [height, dh/dx, dh/dz]
+    const gx = (x - hf.x0) / hf.step, gz = (z - hf.z0) / hf.step, n = hf.n;
+    if (gx < 0 || gz < 0 || gx > n - 1 || gz > n - 1) return null;
+    const i = Math.min(n - 2, Math.floor(gx)), j = Math.min(n - 2, Math.floor(gz)), fx = gx - i, fz = gz - j, H = hf.h;
+    const a = H[j * n + i], b = H[j * n + i + 1], c = H[(j + 1) * n + i], d = H[(j + 1) * n + i + 1];
+    return [a * (1 - fx) * (1 - fz) + b * fx * (1 - fz) + c * (1 - fx) * fz + d * fx * fz, ((b - a) * (1 - fz) + (d - c) * fz) / hf.step, ((c - a) * (1 - fx) + (d - b) * fx) / hf.step];
+  }
+  // contacts with the world under it: the top surface (ground, logs, rocks) and standing trunks; impulses with
+  // restitution and Coulomb friction at spheres along each capsule, plus a positional push out of penetration
+  contactEnv(b, h) {
+    const wc = b.wc;
+    for (let k = 0; k < wc.length; k += 7) for (const t of [0, 0.5, 1]) {
+      const px = wc[k] + (wc[k + 3] - wc[k]) * t, py = wc[k + 1] + (wc[k + 4] - wc[k + 1]) * t, pz = wc[k + 2] + (wc[k + 5] - wc[k + 2]) * t, r = wc[k + 6];
+      const H = this.hfAt(b.hf, px, pz);
+      if (H) { const pen = H[0] + r - py; if (pen > 0) { const nl = Math.hypot(H[1], 1, H[2]); this.resolve(b, px, py - r, pz, -H[1] / nl, 1 / nl, -H[2] / nl, pen, h); } }
+      for (let q = 0; q < b.trunks.length; q += 3) {
+        const dx = px - b.trunks[q], dz = pz - b.trunks[q + 1], d = Math.hypot(dx, dz) || 1e-6, pen = b.trunks[q + 2] + r - d;
+        if (pen > 0) this.resolve(b, px - dx / d * r, py, pz - dz / d * r, dx / d, 0, dz / d, pen, h);
+      }
+    }
+  }
+  resolve(b, cx, cy, cz, nx, ny, nz, pen, h) {
+    const rx = cx - b.p[0], ry = cy - b.p[1], rz = cz - b.p[2], I = b.Iw;
+    const vel = () => [b.v[0] + b.w[1] * rz - b.w[2] * ry, b.v[1] + b.w[2] * rx - b.w[0] * rz, b.v[2] + b.w[0] * ry - b.w[1] * rx];
+    const kOf = (ax, ay, az) => { // 1/m + a · ((I⁻¹ (r × a)) × r)
+      const cx2 = ry * az - rz * ay, cy2 = rz * ax - rx * az, cz2 = rx * ay - ry * ax;
+      const ix = I[0] * cx2 + I[1] * cy2 + I[2] * cz2, iy = I[3] * cx2 + I[4] * cy2 + I[5] * cz2, iz = I[6] * cx2 + I[7] * cy2 + I[8] * cz2;
+      return 1 / b.m + ax * (iy * rz - iz * ry) + ay * (iz * rx - ix * rz) + az * (ix * ry - iy * rx);
+    };
+    const push = (jx, jy, jz) => {
+      b.v[0] += jx / b.m; b.v[1] += jy / b.m; b.v[2] += jz / b.m;
+      const tx = ry * jz - rz * jy, ty = rz * jx - rx * jz, tz = rx * jy - ry * jx;
+      b.w[0] += I[0] * tx + I[1] * ty + I[2] * tz; b.w[1] += I[3] * tx + I[4] * ty + I[5] * tz; b.w[2] += I[6] * tx + I[7] * ty + I[8] * tz;
+    };
+    let v = vel(); const vn = v[0] * nx + v[1] * ny + v[2] * nz;
+    let jn = 0;
+    if (vn < 0) { const e = vn < -1.2 ? 0.25 : 0; jn = -(1 + e) * vn / kOf(nx, ny, nz); push(jn * nx, jn * ny, jn * nz); }
+    v = vel(); const vn2 = v[0] * nx + v[1] * ny + v[2] * nz, tx = v[0] - vn2 * nx, ty = v[1] - vn2 * ny, tz = v[2] - vn2 * nz, vt = Math.hypot(tx, ty, tz);
+    if (vt > 1e-5) { // friction, bounded by μ times the normal impulse (resting contact counts its weight this substep)
+      const ux = tx / vt, uy = ty / vt, uz = tz / vt, jt = Math.min(vt / kOf(ux, uy, uz), 0.6 * Math.max(jn, b.m * 9.81 * h * Math.max(0, ny) * 0.5));
+      push(-jt * ux, -jt * uy, -jt * uz);
+    }
+    const c = Math.min(pen, 0.05) * 0.6; b.p[0] += nx * c; b.p[1] += ny * c; b.p[2] += nz * c;
+    b.w[0] *= 0.995; b.w[1] *= 0.995; b.w[2] *= 0.995; // rolling resistance: it settles instead of rocking forever
+    if (Math.hypot(b.v[0], b.v[1], b.v[2]) < 0.25 && Math.hypot(b.w[0], b.w[1], b.w[2]) < 0.6) { // slow and touching: rest damping kills contact jitter
+      b.v[0] *= 0.92; b.v[1] *= 0.92; b.v[2] *= 0.92; b.w[0] *= 0.92; b.w[1] *= 0.92; b.w[2] *= 0.92;
+    }
   }
   // S_i: where segment i starts now; T_i: its rest vector turned by the parent's current rotation, added to S_i
   frame(g, i) {
@@ -87,7 +203,7 @@ export class PhysicsCore {
     }
     T[k] = sx + dx; T[k + 1] = sy + dy; T[k + 2] = sz + dz;
   }
-  solve(g, h, caps, near, F) {
+  solve(g, h, caps, near, F, owner, bodies, last) {
     const x = g.x, S = g.S, T = g.T;
     for (let i = 0; i < g.n; i++) { // parents come before children
       this.frame(g, i);
@@ -106,10 +222,15 @@ export class PhysicsCore {
         const k1 = Math.min(hit.pen * b1 / den, 0.3), k0 = Math.min(hit.pen * b0 / den, 0.3);
         x[k] += hit.nx * k1; x[k + 1] += hit.ny * k1; x[k + 2] += hit.nz * k1; g.touch[i] = 1;
         if (p >= 0) { x[q] += hit.nx * k0; x[q + 1] += hit.ny * k0; x[q + 2] += hit.nz * k0; }
-        if (F) {
+        const ob = owner ? owner[c / 7] : -1;
+        if ((ob < 0 && F) || (ob >= 0 && last)) { // the branch pushes back with its stiffness out to the contact point
           const ell = Math.max(0.05, g.ell[i] - g.L[i] * (1 - hit.t)), keff = g.k[i] * g.L[i] ** 3 / ell ** 3;
           const dev = Math.hypot(x[k] - T[k], x[k + 1] - T[k + 1], x[k + 2] - T[k + 2]) * hit.t, f = keff * dev;
-          F[0] -= hit.nx * f; F[1] -= hit.ny * f; F[2] -= hit.nz * f;
+          if (ob < 0) { F[0] -= hit.nx * f; F[1] -= hit.ny * f; F[2] -= hit.nz * f; }
+          else { this.bodyHits = (this.bodyHits || 0) + 1; // on a falling piece: an impulse at the contact (capped: a branch cannot push harder than it takes to break it)
+            const b = bodies[ob], j = Math.min(f, 4000) * h, jx = -hit.nx * j, jy = -hit.ny * j, jz = -hit.nz * j, rx = hit.qx - b.p[0], ry = hit.qy - b.p[1], rz = hit.qz - b.p[2];
+            b.J[0] += jx; b.J[1] += jy; b.J[2] += jz; b.Tq[0] += ry * jz - rz * jy; b.Tq[1] += rz * jx - rx * jz; b.Tq[2] += rx * jy - ry * jx;
+          }
         }
       }
       const dx = x[k] - S[k], dy = x[k + 1] - S[k + 1], dz = x[k + 2] - S[k + 2], l = Math.hypot(dx, dy, dz) || 1, s = g.L[i] / l;
@@ -139,7 +260,7 @@ export class PhysicsCore {
     const nx = ax + d1x * s - q0x - d2x * t, ny = ay + d1y * s - q0y - d2y * t, nz = az + d1z * s - q0z - d2z * t, dist = Math.hypot(nx, ny, nz), pen = r + R - dist;
     if (pen <= 0) return false;
     const H = this.hit || (this.hit = {});
-    H.pen = pen; H.t = s;
+    H.pen = pen; H.t = s; H.qx = q0x + d2x * t; H.qy = q0y + d2y * t; H.qz = q0z + d2z * t;
     if (dist < 1e-6) { H.nx = 0; H.ny = 1; H.nz = 0; } else { H.nx = nx / dist; H.ny = ny / dist; H.nz = nz / dist; }
     return true;
   }
@@ -152,7 +273,8 @@ onmessage = (e) => {
   const m = e.data;
   if (m.type === 'add') core.add(m.g);
   else if (m.type === 'remove') core.remove(m.id);
-  else if (m.type === 'reset') core.groups.clear();
+  else if (m.type === 'reset') { core.groups.clear(); core.bodies.clear(); }
+  else if (m.type === 'body') core.addBody(m.b);
   else if (m.type === 'step') { const r = core.step(m.dt, m.caps); postMessage({ type: 'state', ...r }, r.groups.map((g) => g.disp.buffer)); }
 };`;
 }
