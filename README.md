@@ -69,6 +69,11 @@ A stem, a sapling or a slim trunk is something a hand can close round; any other
 World panel: **Camera motion** (Full, Reduced, Off), **View** (first person, or third person for debugging; V toggles),
 **Body** (show the skeleton in first person). Tuning knobs are in `RIG`, `TRACTION` and `GAIT4` in `src/game.js`.
 
+## Physics (prototype)
+
+Branches near your body are simulated as elastic rods on a worker thread. They bend as you pass, push back, and snap
+when strained past the wood's limit; a branch too stiff to push stops you. See `docs/physics.md`.
+
 ## Branches
 
 Look at a branch within reach and press **B** (or the **Break branch** button) to hang your weight on it. Whether it

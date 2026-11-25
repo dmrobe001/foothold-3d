@@ -10,16 +10,19 @@ const deadfall = read('src/deadfall.js').replace(/^import \{[^}]*\} from '\.\/wo
 // the skeleton module keeps its short helper names (add, dot, ...) private: it becomes one namespace object, SK
 const skelSrc = read('src/skeleton.js'), skelNames = [...skelSrc.matchAll(/^export (?:const|function) (\w+)/gm)].map((m) => m[1]);
 const skeleton = `const SK = (() => {\n${skelSrc.replace(/^export (const|function) /gm, '$1 ')}\nreturn { ${skelNames.join(', ')} };\n})();`;
+// the physics module too: PH (its class source also goes to the worker as a string)
+const phSrc = read('src/physics.js'), phNames = [...phSrc.matchAll(/^export (?:const|function|class) (\w+)/gm)].map((m) => m[1]);
+const physics = `const PH = (() => {\n${phSrc.replace(/^export (const|function|class) /gm, '$1 ')}\nreturn { ${phNames.join(', ')} };\n})();`;
 // the plants module likewise becomes a namespace, PL (its worldgen import is satisfied by the inlined worldgen)
 const plSrc = read('src/plants.js').replace(/^import \{[^}]*\} from '\.\/worldgen\.js';\n/m, ''), plNames = [...plSrc.matchAll(/^export (?:const|function) (\w+)/gm)].map((m) => m[1]);
 const plants = `const PL = (() => {\n${plSrc.replace(/^export (const|function) /gm, '$1 ')}\nreturn { ${plNames.join(', ')} };\n})();`;
-const game = read('src/game.js').replace(/^import \{[^}]*\} from '\.\/(worldgen|deadfall|gym)\.js';\n/gm, '').replace(/^import \* as SK from '\.\/skeleton\.js';\n/m, '').replace(/^import \* as PL from '\.\/plants\.js';\n/m, '');
-if (/^export /m.test(worldgen + game + deadfall + gym + plants + skeleton)) throw new Error('an export line was not stripped');
+const game = read('src/game.js').replace(/^import \{[^}]*\} from '\.\/(worldgen|deadfall|gym)\.js';\n/gm, '').replace(/^import \* as SK from '\.\/skeleton\.js';\n/m, '').replace(/^import \* as PL from '\.\/plants\.js';\n/m, '').replace(/^import \* as PH from '\.\/physics\.js';\n/m, '');
+if (/^export /m.test(worldgen + game + deadfall + gym + plants + skeleton + physics)) throw new Error('an export line was not stripped');
 if (/from '\.\/(worldgen|deadfall|skeleton|gym|plants)\.js'/.test(game + deadfall + gym + plants)) throw new Error('module import not stripped');
 let html = read('index.html')
   .replace(/<!doctype html>\n?/i, '').replace(/<\/?html[^>]*>\n?/g, '').replace(/<\/?head>\n?/g, '').replace(/<\/?body>\n?/g, '')
   .replace(/<meta charset[^>]*>\n?/, '').replace(/<meta name="viewport"[^>]*>\n?/, '');
-html = html.replace('<script type="module" src="./src/game.js"></script>', () => `<script type="module">\n${worldgen}\n// ---- deadfall ----\n${deadfall}\n// ---- gym ----\n${gym}\n// ---- skeleton ----\n${skeleton}\n// ---- plants ----\n${plants}\n// ---- game ----\n${game}\n</script>`);
+html = html.replace('<script type="module" src="./src/game.js"></script>', () => `<script type="module">\n${worldgen}\n// ---- deadfall ----\n${deadfall}\n// ---- gym ----\n${gym}\n// ---- skeleton ----\n${skeleton}\n// ---- plants ----\n${plants}\n// ---- physics ----\n${physics}\n// ---- game ----\n${game}\n</script>`);
 mkdirSync(new URL('dist/', root), { recursive: true });
 writeFileSync(new URL('dist/foothold.html', root), html);
 console.log(`dist/foothold.html  ${(html.length / 1024).toFixed(0)} KB`);
