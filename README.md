@@ -35,12 +35,17 @@ A stem, a sapling or a slim trunk is something a hand can close round; any other
 
 **Where the body goes** (coarse, forgiving rules, judged on each attempted move):
 - Rises up to 0.55 m are steps. A ledge up to 1.35 m is pulled up onto, hands on its lip, if there is something to hold.
+- A **hurdle** (too high to step, at most 1.15 m high and 0.9 m deep, with footing beyond) is vaulted: its top is
+  read along seven lines across the body's width, and you go over where it is lowest, hands on the top and legs swung
+  out over that side.
 - Trunks and woody stems taller than a leg are walked around; low plants are waded through.
 - The hands are needed when the path stays steeper than the footing's traction (one bump is a step, not a slope),
   when there is a ledge, or when the headroom is under 1.1 m (down to 0.55 m, crawling low). Then the best hold
   in reach sets how steep you can go: up to 68° with a hand closed round something, 56° pressing on a surface.
-  On hands you move slowly, and only as fast as the hands and feet can keep hold.
-- A stem hung overhead with at least 1.1 m under it is ducked under; with 0.55 to 1.1 m, crawled under.
+  On hands you move at about 1 m/s, and only as fast as the hands and feet can keep hold.
+- A stem hung overhead with at least 1.1 m under it is ducked under; with 0.55 to 1.1 m, crawled under. Lower than
+  that it is something to go over. Ducking reads the stem's underside across the body's width and leans the torso
+  (up to about 0.3 m sideways at the head) toward where it is highest.
 
 **How the body is placed**:
 - **Feet**, walking, plant one at a time on the real surface, in a gait cycle driven by distance (walk: always one foot

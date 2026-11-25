@@ -1217,13 +1217,13 @@ const gymProgress = () => { const [, oz] = stationOrigin(gymAt); return oz - pla
 function gymStatus() { const s = W.gym.stations[gymAt]; return `intended: ${s.plan || '—'} · [ ] or ◀ ▶ to change, R or ↺ to restart`; }
 // Walk a station straight ahead for `secs` simulated seconds and score it against its intended outcome.
 function gymRun(i, secs = 16) {
-  goStation(i); const s = W.gym.stations[gymAt], e = s.expect || {};
+  goStation(i); const s = W.gym.stations[gymAt], e = s.expect || {}; body.lastVault = null; let vaults = 0, wasV = false, rollMax = 0;
   const g0 = ground(player.x, player.z);
   let maxF = -9, maxH = 0, hands = false, lifts = 0, worst = 9, worstAt = '', lifting = false, eyeJump = 0, lastEye = null;
   for (let k = 0; k < secs * 60; k++) {
     input.keys.clear(); input.keys.add('KeyW'); movePlayer(1 / 60); refreshNear(player.x, player.z);
     const f = gymProgress(); maxF = Math.max(maxF, f); maxH = Math.max(maxH, rig.feet - g0);
-    if (body.four) hands = true; if (rig.lift && !lifting) lifts++; lifting = !!rig.lift;
+    if (body.four) hands = true; if (rig.lift && !lifting) lifts++; lifting = !!rig.lift; if (rig.vault && !wasV) vaults++; wasV = !!rig.vault; if (Math.abs(body.roll) > Math.abs(rollMax)) rollMax = body.roll;
     if (f >= 5) break; // past the goal: stop before reaching the next row of stations
     if (lastEye !== null) eyeJump = Math.max(eyeJump, Math.abs(player.eye - lastEye)); lastEye = player.eye;
     const J = body.sol?.J; if (J) for (const nm of ['head', 'neck', 'chest']) { const j = J[nm], c = ceilingAt(j[0], j[2], rig.feet, [0, -1]), gap = c - (j[1] + (nm === 'head' ? 0.11 : 0.06)); if (gap < worst) { worst = gap; worstAt = nm; } }
@@ -1236,8 +1236,10 @@ function gymRun(i, secs = 16) {
   if (s.maxHeight !== undefined) checks.push([`height ≤ ${s.maxHeight}`, maxH <= s.maxHeight]);
   if (e.clean) checks.push(['clean', worst >= -0.02]);
   if (e.hands !== undefined) checks.push([e.hands ? 'on hands' : 'on feet', hands === e.hands]);
+  if (e.lean) checks.push([`lean ${e.lean}`, e.lean === 'right' ? rollMax > 0.15 : rollMax < -0.15]);
+  if (e.vault) checks.push([typeof e.vault === 'string' ? `vault ${e.vault}` : 'vault', vaults > 0 && (typeof e.vault !== 'string' || (body.lastVault?.side < 0 ? 'left' : 'right') === e.vault)]);
   return { i: gymAt + 1, name: s.name, pass: checks.every((c) => c[1]), checks: checks.map(([n, ok]) => `${ok ? '✓' : '✗'} ${n}`).join(' '),
-    reached: +maxF.toFixed(2), height: +maxH.toFixed(2), hands, pullups: lifts, clearance: +worst.toFixed(2), clearanceAt: worstAt, eyeJump: +eyeJump.toFixed(3), plan: s.plan };
+    reached: +maxF.toFixed(2), height: +maxH.toFixed(2), hands, pullups: lifts, vaults, vaultSide: body.lastVault ? (body.lastVault.side < 0 ? 'left' : 'right') + ` at ${body.lastVault.s}` : '', roll: +rollMax.toFixed(2), clearance: +worst.toFixed(2), clearanceAt: worstAt, eyeJump: +eyeJump.toFixed(3), plan: s.plan };
 }
 $('gPrev').addEventListener('click', () => goStation(gymAt - 1));
 $('gNext').addEventListener('click', () => goStation(gymAt + 1));
@@ -1427,7 +1429,7 @@ function topOf(o, x, z) {
   if (o.r0 === undefined) return d < o.r ? lerp(o.ya0, o.ya1, t) + Math.sqrt(o.r * o.r - d * d) : -Infinity;
   const rx = lerp(o.r0, o.r1, t); if (d >= rx) return -Infinity; // tapered, slumped (elliptical) section
   const yc = lerp(o.ya0, o.ya1, t), dz = lerp(o.rz0, o.rz1, t) * Math.sqrt(1 - (d / rx) ** 2);
-  logUnder = yc - dz;
+  logUnder = yc - dz; logBottom = yc - lerp(o.rz0, o.rz1, t);
   return yc + dz;
 }
 const BRANCH_R = { twig: 0.012, stick: 0.022, limb: 0.032 }; // radius as a fraction of length (matches crookedGeo)
@@ -1451,7 +1453,7 @@ function rockSupport(x, z) { // ground and the static solids registered so far (
 // `supportRef` is the height of the feet the query is for (set once per movement step); a stem resting near the ground
 // always counts, so lookups a little uphill of the feet still see logs lying there.
 const DUCK_MIN = 1.1; // lowest head-top height (above the feet) a stooped, knee-bent walk reaches; below it, hands and knees
-let supportRef = Infinity, logUnder = 0;
+let supportRef = Infinity, logUnder = 0, logBottom = 0; // logUnder: a stem's underside at the point asked; logBottom: its lowest, under its axis
 let supKind = 'soil', footKind = 'soil'; // what the last supportAt / footSupport stood on: soil, rock or wood
 function supportAt(x, z) {
   let y = ground(x, z), kind = 'soil';
@@ -1478,7 +1480,7 @@ function ceilingAt(x, z, feet, along) {
     if (o.kind !== 'log' || o.r0 === undefined) continue;
     if (along) { const vx = o.x1 - o.x0, vz = o.z1 - o.z0, l = Math.hypot(vx, vz) || 1; if (Math.abs(vx * along[0] + vz * along[1]) / l > 0.85 && Math.abs(o.ya1 - o.ya0) / l > 0.3) continue; }
     logUnder = -Infinity; if (topOf(o, x, z) === -Infinity) continue;
-    if (logUnder > feet + CLEAR4 - 0.2 && logUnder < c) c = logUnder;
+    if (logBottom > feet + CLEAR4 - 0.05 && logUnder < c) c = logUnder; // a stem lower than crawling height is something to go over
   }
   return c;
 }
@@ -1527,7 +1529,7 @@ const body = {
 };
 const newQuad = () => ({ y: undefined, a: [0, 0, -1], R: [1, 0, 0], n: null, S0: [0, 0, 0], dir: 1, sway: 0, vsway: 0, last: -1, wait: 0, comU: 0.2, stats: { lifts: 0, forced: 0, minM: Infinity, short: 0, steps: 0 } });
 body.q = newQuad();
-const rig = { feet: 0, vy: 0, lift: null }; // lift: pulling up onto a ledge
+const rig = { feet: 0, vy: 0, lift: null, vault: null }; // lift: pulling up onto a ledge; vault: going over a hurdle
 body.veer = 1;
 function spring(x, v, target, k, dt, zeta = 1.1) {
   const c = 2 * zeta * Math.sqrt(k), n = Math.ceil(dt / 0.008), h = dt / n;
@@ -1536,7 +1538,7 @@ function spring(x, v, target, k, dt, zeta = 1.1) {
 }
 function resetRig(feetY) { // stand at the player's x, z: on the ground (not a stem hung overhead), or at a given support height
   supportRef = feetY ?? ground(player.x, player.z);
-  rig.feet = feetY ?? footSupport(player.x, player.z); rig.vy = 0; rig.lift = null; body.want = null;
+  rig.feet = feetY ?? footSupport(player.x, player.z); rig.vy = 0; rig.lift = null; rig.vault = null; body.want = null;
   Object.assign(body, { need: 0, needT: 0, four: false, mix: 0, yaw: player.yaw, head: 2, q: newQuad() }); body.q.n = [0, 1, 0];
   for (const h of body.hands) { h.hold = null; h.sw = null; }
   const rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
@@ -1697,6 +1699,55 @@ function assess(x, z, px, pz) {
   }
   return { sup, rise, need, g, head, hold };
 }
+// A hurdle: something too high to step over but thin, with footing beyond near your level. Its top is read along
+// several lines across the body's width; you go over where it is lowest, hands on the top and legs swung over that
+// side (a "lazy vault"). Deeper things are ledges (pulled up onto); taller ones are climbed or crawled under.
+const VAULT_MAX = 1.15, VAULT_DEPTH = 0.9;
+function hurdleAhead(px, pz, ux, uz) {
+  const rx = -uz, rz = ux, feet = rig.feet; let best = null;
+  for (const s of [0, -0.2, 0.2, -0.4, 0.4, -0.6, 0.6]) {
+    let d0 = -1, d1 = -1, top = 0, ok = true;
+    for (let d = 0.1; d <= 2.0; d += 0.06) {
+      const x = px + ux * d + rx * s, z = pz + uz * d + rz * s;
+      if (trunkHit(x, z)) { ok = false; break; }
+      const r = supportAt(x, z) - feet;
+      if (d0 < 0) { if (r > STEP) { d0 = d; top = r; } else if (d > 0.75) { ok = false; break; } continue; }
+      if (r > STEP) { top = Math.max(top, r); if (d - d0 > VAULT_DEPTH) { ok = false; break; } continue; }
+      d1 = d; break;
+    }
+    if (!ok || d1 < 0 || top > VAULT_MAX || stemAlong(px + ux * (d0 + d1) / 2 + rx * s, pz + uz * (d0 + d1) / 2 + rz * s, ux, uz)) continue;
+    const dl = d1 + 0.4, lx = px + ux * dl + rx * s, lz = pz + uz * dl + rz * s;
+    if (trunkHit(lx, lz)) continue;
+    const land = footSupport(lx, lz) - feet; if (land > STEP || land < -1.2) continue;
+    if (ceilingAt((px + lx) / 2, (pz + lz) / 2, feet + top - 0.3) < feet + top + 0.9) continue; // no room above the top
+    const score = top + 0.05 * Math.abs(s);
+    if (!best || score < best.score) {
+      const dm = (d0 + d1) / 2;
+      best = { s, top, score, lx, lz, ly: feet + land, cx: px + ux * dm + rx * s, cz: pz + uz * dm + rz * s, rx, rz };
+    }
+  }
+  return best;
+}
+function stemAlong(x, z, ux, uz) { // a stem under (x, z) running within ~50° of the way you go: climbed, not vaulted
+  const list = solids.get(ckey8(x, z)); if (!list) return false;
+  for (const o of list) {
+    if (o.kind !== 'log' || topOf(o, x, z) === -Infinity) continue;
+    const vx = o.x1 - o.x0, vz = o.z1 - o.z0, l = Math.hypot(vx, vz) || 1;
+    if (Math.abs(vx * ux + vz * uz) / l > 0.65) return true;
+  }
+  return false;
+}
+function startVault(px, pz, h) {
+  const side = h.s > 0 ? 1 : h.s < 0 ? -1 : (body.veer || 1), topY = rig.feet + h.top, dur = 0.55 + 0.45 * h.top;
+  rig.vault = { x0: px, z0: pz, y0: rig.feet, cx: h.cx, cz: h.cz, lx: h.lx, lz: h.lz, ly: h.ly, topY, side, rx: h.rx, rz: h.rz, arc: Math.max(0, h.top - 0.45) * 0.55, t: 0, dur };
+  body.q.stats.vaults = (body.q.stats.vaults || 0) + 1; body.lastVault = { side, s: h.s, top: h.top };
+  const n = V.nrm([h.rx * side * 0.8, 1, h.rz * side * 0.8]); // the legs swing over, out to that side
+  for (const ft of body.feet) {
+    const lead = ft.side === side;
+    startSwing(ft, h.lx + h.rx * ft.side * RIG.hipW, h.lz + h.rz * ft.side * RIG.hipW, dur * (lead ? 0.8 : 0.95));
+    ft.ln = n; ft.lift = Math.max(0.2, topY + 0.12 - Math.max(ft.sy, ft.ty));
+  }
+}
 // on hands: does a move leave every planted hand and foot within reach (not more than half a stride behind home)?
 function quadAllows(nx, nz, px, pz) {
   if (!body.four) return true;
@@ -1726,9 +1777,14 @@ function movePlayer(dt) {
   const speed = lerp((run ? 4.2 : 1.6) * (1 - 0.55 * body.duck), GAIT4.speed * (run ? 1.4 : 1), body.need); // a stooped duck-walk is slow; on hands slower
   const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
   const px = player.x, pz = player.z;
-  if (!rig.lift && rig.vy === 0) { const here = footSupport(px, pz); if (here - rig.feet > STEP) rig.feet = here; } // embedded (e.g. a rock streamed in around you): climb out
+  if (!rig.lift && !rig.vault && rig.vy === 0) { const here = footSupport(px, pz); if (here - rig.feet > STEP) rig.feet = here; } // embedded (e.g. a rock streamed in around you): climb out
   let needT = body.needT;
-  if (rig.lift) { // pulling up onto a ledge: rise in place with the hands on its lip, then step onto it
+  if (rig.vault) { // over a hurdle: the body follows an arc through the crossing point, low over the top
+    const H = rig.vault; H.t = Math.min(1, H.t + dt / H.dur); const t = H.t, e = t * t * (3 - 2 * t), a = (1 - e) * (1 - e), b = 2 * e * (1 - e), c = e * e;
+    player.x = a * H.x0 + b * H.cx + c * H.lx; player.z = a * H.z0 + b * H.cz + c * H.lz;
+    rig.feet = lerp(H.y0, H.ly, e) + H.arc * Math.sin(Math.PI * t); needT = 0;
+    if (t >= 1) { rig.vault = null; rig.feet = H.ly; }
+  } else if (rig.lift) { // pulling up onto a ledge: rise in place with the hands on its lip, then step onto it
     const L = rig.lift; rig.feet = Math.min(L.y, rig.feet + GAIT4.climb * dt); needT = 1;
     if (rig.feet >= L.y - STEP * 0.5) { player.x = L.x; player.z = L.z; rig.feet = Math.max(rig.feet, footSupport(L.x, L.z)); rig.lift = null; }
   } else {
@@ -1746,7 +1802,13 @@ function movePlayer(dt) {
       }
     }
     const step = Math.hypot(dx, dz); body.want = step > 0 ? [dx, dz] : null;
-    if (step > 0) {
+    let vault = null;
+    if (step > 0 && rig.vy === 0) { // blocked straight ahead by something low and thin: go over it
+      const ux = dx / step, uz = dz / step;
+      if (footSupport(px + ux * 0.3, pz + uz * 0.3) - rig.feet > STEP) vault = hurdleAhead(px, pz, ux, uz);
+      if (vault) { startVault(px, pz, vault); needT = 0; }
+    }
+    if (step > 0 && !vault) {
       [dx, dz] = steerAround(px, pz, dx, dz);
       const lim = (v) => clamp(v, -HALF + 6, HALF - 6);
       let ok = false;
@@ -1768,8 +1830,8 @@ function movePlayer(dt) {
         if (st.rise > STEP) rig.lift = { x: nx, z: nz, y: st.sup }; else { player.x = nx; player.z = nz; }
         ok = true; break;
       }
-    } else needT = needHere();
-    if (!rig.lift) {
+    } else if (!vault) needT = needHere();
+    if (!rig.lift && !rig.vault) {
       const sup = footSupport(player.x, player.z);
       if (sup >= rig.feet) { rig.feet = sup; rig.vy = 0; body.airborne = false; }
       else {
@@ -1969,22 +2031,32 @@ function startSwing(ft, tx0, tz0, dur) {
 // Below DUCK_MIN this can't fit, and the hands come down (the controller's `need`).
 function duckPosture(ux, uz, spd) {
   const feet = rig.feet, fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), ahead = 1.0 + Math.min(0.6, spd * 0.3); // a fixed lead: the duck-walk slows you, which must not shrink the warning
-  let c = Infinity, cx = 0, cz = 0;
-  const pts = [[0, 0, 0.18], [0, 0, -0.18]]; // stems are narrow: sample every 0.1 m where the head goes and reaches
-  for (let a = 0; a <= ahead + 1e-6; a += 0.1) pts.push([a, 0, 0]);
-  for (let b = 0.1; b <= 0.8; b += 0.1) pts.push([0, b, 0], [0.25, b, 0]);
-  for (const [a, b, s] of pts) {
-    const x = player.x + ux * a + fx * b - uz * s, z = player.z + uz * a + fz * b + ux * s, y = ceilingAt(x, z, feet, [ux, uz]); // a stem rising the way you go is climbed, not ducked
-    if (y < c) { c = y; cx = x; cz = z; }
-  }
+  // the head can lean sideways (torso roll, up to ~0.3 m): read the stem's underside across the body's width and
+  // put the head where it is highest. A level stem gives no reason to lean; a sloped one leans you to its high side.
+  const lowest = (lat) => {
+    let c = Infinity, cx = 0, cz = 0;
+    const pts = [[0, 0, lat + 0.18], [0, 0, lat - 0.18]]; // stems are narrow: sample every 0.1 m where the head goes and reaches
+    for (let a = 0; a <= ahead + 1e-6; a += 0.1) pts.push([a, 0, lat]);
+    for (let b = 0.1; b <= 0.8; b += 0.1) pts.push([0, b, lat], [0.25, b, lat]);
+    for (const [a, b, s] of pts) {
+      const x = player.x + ux * a + fx * b - uz * s, z = player.z + uz * a + fz * b + ux * s, y = ceilingAt(x, z, feet, [ux, uz]); // a stem rising the way you go is climbed, not ducked
+      if (y < c) { c = y; cx = x; cz = z; }
+    }
+    return { c, cx, cz };
+  };
+  let best = lowest(0), lat = 0;
+  if (best.c < Infinity) for (const l of [-0.3, -0.15, 0.15, 0.3]) { const o = lowest(l); if (o.c - 0.1 * Math.abs(l) > best.c - 0.1 * Math.abs(lat) + 0.02) { best = o; lat = l; } }
+  const { c, cx, cz } = best;
   if (c === Infinity) return null;
-  const sl = RIG.spine + RIG.neck, head0 = Math.max(body.base - feet, RIG.leg - 0.03) + sl + 0.17, D = head0 - (c - feet - 0.1);
+  const sl = RIG.spine + RIG.neck, head0 = Math.max(body.base - feet, RIG.leg - 0.03) + sl + 0.17, D = head0 - (c - feet - 0.18);
   if (D <= 0) return null;
   let crouch = -Math.min(0.38, D * 0.55);
   const D2 = D + crouch, lean = Math.acos(clamp(1 - D2 / sl, Math.cos(1.0), 1));
   const D3 = D2 - sl * (1 - Math.cos(lean)); if (D3 > 0) crouch = Math.max(-0.45, crouch - D3);
   const side = (cx - player.x) * Math.cos(player.yaw) - (cz - player.z) * Math.sin(player.yaw) >= 0 ? 1 : -1;
-  return { lean, crouch, amt: clamp(D / 0.6, 0, 1), x: cx, y: c, z: cz, side };
+  // lat is right of travel; the roll is about the facing direction (they agree walking forward)
+  const latR = lat * ((-uz) * Math.cos(player.yaw) + ux * -Math.sin(player.yaw) >= 0 ? 1 : -1);
+  return { lean, crouch, amt: clamp(D / 0.6, 0, 1), x: cx, y: c, z: cz, side, roll: clamp(Math.asin(clamp(latR / sl, -0.5, 0.5)), -0.45, 0.45) };
 }
 function updateBody(dt, moved, run, dx, dz, fwdInput) {
   const M = MOTION[settings.motion] ?? 1;
@@ -1995,7 +2067,7 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
   const rx = -uz, rz = ux; // right of travel
   const uphill = moved > 0 ? (sampleGrid(W.H, N, player.x + ux, player.z + uz) - sampleGrid(W.H, N, player.x - ux, player.z - uz)) / 2 : 0;
   const steep = smoothstep(0.1, 0.8, uphill);
-  const m = rig.lift, four = body.four;
+  const m = rig.lift || rig.vault, four = body.four, vlt = rig.vault;
   surfaceFrame(dt, ux, uz, moved > 0);
 
   // feet. Walking: a gait cycle driven by distance travelled. One cycle = two steps. Each foot swings for a fraction
@@ -2009,7 +2081,7 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
   if (four) { const w = body.want || [0, 0]; quadStep(dt, w[0], w[1]); body.moving = false; }
   else {
     for (const h of body.hands) { h.hold = null; h.sw = null; }
-    if (body.airborne) {
+    if (vlt) { /* the legs are already swinging over (startVault) */ } else if (body.airborne) {
       for (const ft of body.feet) { const [ix, iz] = ideal(ft); ft.x = ix; ft.z = iz; ft.y = rig.feet + 0.05; ft.t = 1; }
     } else if (spd > 0.05) {
       if (!body.moving) { // starting off: the foot furthest behind steps first, right away
@@ -2076,9 +2148,11 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
   const barrier = !four && sw && sw.rise > 0.3 ? sw : null;
   if (barrier) { const q = Math.sin(Math.PI * barrier.t); leanT += 0.3 * q; crouchT -= 0.08 * q; }
   if (dk) { leanT = Math.max(leanT, dk.lean); crouchT = Math.min(crouchT, dk.crouch); }
+  let rollT = dk ? dk.roll : 0;
+  if (vlt) { const q = Math.sin(Math.PI * vlt.t); leanT += 0.35 * q; rollT = -vlt.side * 0.3 * q; }
   [body.lean, body.vlean] = spring(body.lean, body.vlean, leanT, RIG.kLean, dt);
   body.crouch += (crouchT - body.crouch) * Math.min(1, dt * 12);
-  [body.roll, body.vroll] = spring(body.roll, body.vroll, 0, RIG.kLean, dt);
+  [body.roll, body.vroll] = spring(body.roll, body.vroll, rollT, RIG.kLean, dt);
 
   // arms: on hands, the hands are where quadStep put them; otherwise they swing, or reach for a shrub / barrier / stem
   const chestY = body.pelvis.y + body.crouch + RIG.spine * Math.cos(body.lean);
@@ -2096,7 +2170,10 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
     const other = body.feet[hnd.side < 0 ? 1 : 0], swingAmt = spd > 0.05 ? clamp((other.x - player.x) * ux + (other.z - player.z) * uz, -0.4, 0.4) * 0.6 : 0;
     let tx = shX + fwdX * (0.08 + swingAmt), tz = shZ + fwdZ * (0.08 + swingAmt), ty = shY - 0.58, k = RIG.kHand;
     const pl = body.plants.find((p) => p.contact && p.side === hnd.side);
-    if (barrier && barrier.side === hnd.side) {
+    if (vlt && vlt.t < 0.75) { // both hands on the top: the lead hand at the crossing, the other further back across it
+      const off = hnd.side === vlt.side ? -0.05 : -0.4;
+      tx = vlt.cx + vlt.rx * vlt.side * off; tz = vlt.cz + vlt.rz * vlt.side * off; ty = vlt.topY + 0.03; k = 400;
+    } else if (barrier && barrier.side === hnd.side) {
       tx = barrier.tx + cRx * hnd.side * 0.15; tz = barrier.tz + cRz * hnd.side * 0.15; ty = barrier.ty + 0.03; k = 300;
     } else if (body.duckHold && body.duckHold.side === hnd.side) { // a hand on the stem passing overhead
       const d = body.duckHold; tx = d.x; tz = d.z; ty = d.y - 0.03; k = 260;
@@ -2118,9 +2195,9 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
   const latEye = body.lat * RIG.gaitPass + body.react;
   const sl = RIG.spine + RIG.neck, lean = body.lean * M;
   let eye = {
-    x: player.x + fwdX * (sl * Math.sin(lean) + RIG.eyeFwd) + cRx * latEye * M,
+    x: player.x + fwdX * (sl * Math.sin(lean) + RIG.eyeFwd) + cRx * (latEye + sl * Math.sin(body.roll)) * M,
     y: (M ? pelvisEye : rig.feet + RIG.leg - 0.04) + sl * Math.cos(lean),
-    z: player.z + fwdZ * (sl * Math.sin(lean) + RIG.eyeFwd) + cRz * latEye * M,
+    z: player.z + fwdZ * (sl * Math.sin(lean) + RIG.eyeFwd) + cRz * (latEye + sl * Math.sin(body.roll)) * M,
   };
   if (!M) { eye.x = player.x; eye.z = player.z; } // motion off: steady eye at standing height above the controller
   if (!four) { // the head is solid: if the posture springs lag a sudden rise (a step up under a stem), the knees give at once
@@ -2211,7 +2288,7 @@ function applyCamera() {
     // on hands, the gaze tips up (or down) the surface by part of its slope, depending on which way you look along it
     const q = body.q, ah = Math.hypot(q.a[0], q.a[2]) || 1e-6, cpT = smoothstep(0, 1, body.mix || 0) * 0.55 * Math.atan(q.a[1] / ah) * (-Math.sin(player.yaw) * q.a[0] - Math.cos(player.yaw) * q.a[2]) / ah;
     body.crawlPitch = lerp(body.crawlPitch || 0, cpT, 0.08);
-    camera.rotation.set(clamp(player.pitch - (body.lean - 0.85 * body.duckLean) * RIG.gazeFollow * M + body.crawlPitch, -1.45, 1.45), player.yaw, body.roll * M);
+    camera.rotation.set(clamp(player.pitch - (body.lean - 0.85 * body.duckLean) * RIG.gazeFollow * M + body.crawlPitch, -1.45, 1.45), player.yaw, -body.roll * 0.5 * M);
   }
   updateSkeleton();
 }
@@ -2223,7 +2300,7 @@ function walkPose() {
   const yaw = body.yaw ?? player.yaw, fx = -Math.sin(yaw), fz = -Math.cos(yaw), rX = Math.cos(yaw), rZ = -Math.sin(yaw);
   return {
     pelvis: [player.x + rX * body.lat, body.pelvis.y + body.crouch, player.z + rZ * body.lat],
-    frame: { R: [rX, 0, rZ], U: [0, 1, 0], F: [fx, 0, fz] }, bend: [body.lean, 0, 0], neckPitch: -body.lean * 0.5,
+    frame: { R: [rX, 0, rZ], U: [0, 1, 0], F: [fx, 0, fz] }, bend: [body.lean, body.roll, 0], neckPitch: -body.lean * 0.5,
     feet: body.feet.map((ft) => [ft.x, ft.y + 0.06, ft.z]), toes: [[fx, 0, fz], [fx, 0, fz]],
     hands: body.hands.map((h) => [h.p.x, h.p.y, h.p.z]),
     kneePole: [[fx, 0, fz], [fx, 0, fz]],

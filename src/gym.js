@@ -20,6 +20,8 @@
 // expect (what a station scores):
 //   cross: reach the goal line          stop: never get past f = 1         height: the feet reach at least this high
 //   clean: no head, neck or chest in a stem       hands: true (must go on hands) / false (must not)
+//   lean:  'left' or 'right' (the torso leans that way, more than 0.15 rad, to get the head under)
+//   vault: true (goes over with a vault) / 'left' or 'right' (and its legs pass that side)
 //   plan:  the intended way through, in words (not scored yet)
 import { N, NF, WORLD, HALF, GEOLOGY, standStats, clamp } from './worldgen.js';
 
@@ -28,11 +30,12 @@ export const STATIONS = [
   { name: 'Hung stem, 1.4 m under', features: [{ log: [-3, 0, 1.4, 3, 0, 1.4], r: 0.2 }], expect: { cross: true, clean: true, hands: false }, plan: 'duck under, staying on your feet' },
   { name: 'Hung stem, 0.9 m under', features: [{ log: [-3, 0, 0.9, 3, 0, 0.9], r: 0.2 }], expect: { cross: true, clean: true, hands: true }, plan: 'drop to hands and knees and crawl under' },
   { name: 'Hung stem, 0.6 m under', features: [{ log: [-3, 0, 0.6, 3, 0, 0.6], r: 0.2 }], expect: { cross: true, clean: true, hands: true }, plan: 'crawl under, flat and low' },
-  { name: 'Sloped overhang', features: [{ log: [-3, 0, 0.6, 3, 0, 1.6], r: 0.2 }], expect: { cross: true, clean: true }, plan: 'lean toward the high (right) side and duck through' },
+  { name: 'Sloped overhang', features: [{ log: [-3, 0, 0.5, 3, 0, 2.3], r: 0.2 }], expect: { cross: true, clean: true, lean: 'right' }, plan: 'lean toward the high (right) side and duck through' },
   { name: 'Hurdle, 0.5 m', features: [hurdle(0.5)], expect: { cross: true, hands: false }, plan: 'step over' },
-  { name: 'Hurdle, 0.85 m', features: [hurdle(0.85)], expect: { cross: true }, plan: 'hands on the stem and swing the legs over (not a pull-up onto it)' },
-  { name: 'Tilted hurdle', features: [{ log: [-2.5, 0, 0, 2.5, 0, 0.6], r: 0.25 }], expect: { cross: true }, plan: 'swing the legs over the low (left) end' },
-  { name: 'Hurdle, 1.2 m', features: [hurdle(1.2, 0.3)], expect: { cross: true }, plan: 'climb over: pull up, then down the far side' },
+  { name: 'Hurdle, 0.85 m', features: [hurdle(0.85)], expect: { cross: true, vault: true }, plan: 'hands on the stem and swing the legs over (not a pull-up onto it)' },
+  { name: 'Tilted hurdle', features: [{ log: [-2.5, 0, 0, 2.5, 0, 0.6], r: 0.25 }], expect: { cross: true, vault: 'left' }, plan: 'swing the legs over the low (left) end' },
+  { name: 'Stone wall, 1.0 m', features: [{ block: [0, 0], size: [5, 1.0, 0.4] }], expect: { cross: true, vault: true }, plan: 'hands on top, legs over' },
+  { name: 'Hurdle, 1.2 m', features: [hurdle(1.2, 0.3)], expect: { cross: true }, plan: 'crawl under it (0.6 m below), or climb over' },
   { name: 'Stem at 30°', features: [{ stem: [0, -1], ang: 30, len: 9, r: 0.2, prop: true }], expect: { height: 3, hands: false }, plan: 'walk up it' },
   { name: 'Stem at 50°', features: [{ stem: [0, -1], ang: 50, len: 8, r: 0.2, prop: true }], expect: { height: 3, hands: true }, plan: 'climb it on hands and feet' },
   { name: 'Stem at 65°', features: [{ stem: [0, -1], ang: 65, len: 7, r: 0.2, prop: true }], expect: { height: 2.5, hands: true }, plan: 'climb it hand over hand' },
