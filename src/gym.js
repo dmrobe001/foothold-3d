@@ -62,6 +62,8 @@ export const STATIONS = [
   // physics: branches near the body are elastic rods that bend, push back and snap (src/physics.js)
   { name: 'Sapling in the way', features: [{ tree: [0.25, 0], sp: 0, d: 3, L: 1 }], expect: { cross: true }, plan: 'push past: it bends aside and springs back' },
   { name: 'Dead lower branches', features: [{ tree: [0.95, 0.4], sp: 0, d: 30, L: 0.1 }], expect: { cross: true }, plan: 'dead twigs snap as you pass; live ones bend' },
+  { name: 'Young fir, branches to the ground', features: [{ tree: [0.7, 0.6], sp: 0, d: 10, L: 1 }], expect: { cross: true }, plan: 'push through the skirt: limbs shove the arms and chest, step on the low ones' },
+  { name: 'Sapling thicket', features: [[-0.5, -0.6], [0.4, -0.2], [-0.2, 0.5], [0.6, 0.9], [-0.7, 1.3], [0.1, 1.7]].map(([x, f], k) => ({ tree: [x, f], sp: k % 3 === 2 ? 2 : 0, d: 4 + (k * 3) % 5, L: 1 })), expect: { cross: true }, plan: 'shoulder through: stems bend aside against the body' },
   // fallen trees keep their branches for a few years: crushed below, shed with time; thick ones are solid
   { name: 'Fallen fir, 2 years', features: [{ fallen: [-5, -8, 5, 8], sp: 0, d: 30, t: 2 }], expect: {}, plan: 'look: limbs hold the stem off the ground; climb through or round' },
   { name: 'Fallen maple, 12 years', features: [{ fallen: [-6, -6, 6, 6], sp: 2, d: 30, t: 12 }], expect: {}, plan: 'look: only thick limbs and stubs are left' },

@@ -79,6 +79,44 @@ Up to 12 pieces fall at once; beyond that a piece is placed directly on the grou
 Pieces do not collide with each other, and log sides are only a heightfield, so a piece cannot slip under a hung
 log.
 
+## The body pushed back
+
+The body is ten capsules for the branch solver: thigh, shin, upper arm and forearm on each side (from the last solved
+skeleton, so knees and elbows stick out where they are), torso and head. The solver reports the force each capsule
+takes, time-averaged over its substeps (contacts come and go between substeps, so a single pass misses most of them).
+`bodyFeedback` in game.js low-passes those forces (60 ms) and turns them into displacements, each against a stiffness
+of its own and capped:
+
+| part | moves | stiffness | cap |
+|---|---|---|---|
+| arm (forearm + half the upper arm) | hand target | 650 N/m | 0.35 m |
+| torso + head, sideways | head sway | 2600 N/m | 0.14 m |
+| torso and head, front/back | torso lean | 380 N·m/rad (lever 0.45 m torso, 0.75 m head) | 0.4 rad |
+| head and torso, downward | crouch | 3200 N/m | 0.22 m |
+| swinging leg (shin + half the thigh) | foot sideways, and up when pushed back | 1400 N/m; 500 N per metre of extra lift | 0.18 m; 0.35 m |
+
+The give lowers the overlap, which lowers the force, so branch and body settle where they push equally. The stiffnesses
+are guesses chosen so that the 250 N a walk can push gives a visible but bounded shove. Measured forces are small for
+most of what is near the ground: twigs on a sapling push back under 0.01 N, a 12 mm live fir limb about 5 N on the head
+before it snaps. So the effect shows mainly against thick limbs, which is the intent.
+
+## Stepping on branches
+
+A foot comes down on the highest branch segment under it, up to 0.45 m above where you stand, then weight goes on
+and everything under it that cannot hold you gives way in turn, top down (`crunchFoot`):
+- **snaps**: `PL.breakCheck` with 1.15 body weights at that point. The node that fails may be further in (a whole limb).
+  It breaks 50–100 ms after the foot lands, quicker the more overloaded it is.
+- **bends away**: it would hold, but its sag under your weight (moment-area method along the branch back to the stem:
+  each segment turns by M·len/(E·I)) exceeds 0.25 m, so it slides out from under the foot after 120 ms.
+- **holds**: the foot stays on it, sunk by its sag (up to 0.12 m); the shin capsule presses the rod down to match.
+
+Between them the foot drops under gravity, and the pelvis follows the stance feet, so the eye takes the crunch. Candidates
+are the rest-pose segments of standing and fallen trees within 3.2 m, at least 4 mm in radius and not upright.
+
+Crown length now depends on light for small trees (`crownFrac`): an open-grown tree under 25 cm keeps live limbs nearer
+the ground, by species shade tolerance (fir 1, maple 0.8, birch 0.4, pine 0.3). Before this, a 10 cm open-grown fir's
+live crown started 2.4 m up, so there was little in reach to push through or step on.
+
 ## Not yet
 
 - Shrubs, grass, leaves and roots. Shrubs need graphs; they still use the old spring. Grass still bends in the shader
@@ -87,5 +125,5 @@ log.
 - The base ring of a side branch follows its parent's end, not the exact attachment point, which shows as a slight kink
   under large bends.
 - The movement planner does not yet choose between pushing, ducking and going round from stiffness. The body walks its
-  path, and either bends what is in the way or is stopped by it.
-- Falling pieces as dynamic bodies. They are still placed on the ground.
+  path, and either bends what is in the way or is stopped by it. Feedback shoves the body but does not steer it.
+- Stepping uses rest-pose branch positions, not where the simulated rod currently is.
