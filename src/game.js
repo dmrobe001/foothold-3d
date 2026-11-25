@@ -1621,13 +1621,13 @@ function movePlayer(dt) {
         if (sd) body.veer = sd;
         const [nx, nz] = stemPushOut(lim(px + mx), lim(pz + mz));
         const st = assess(nx, nz, px, pz);
-        if (st === null) { body.why = 'blocked'; continue; }
-        if (!quadAllows(nx, nz, px, pz)) { body.why = 'limbs'; if (!st.need) needT = 0; continue; } // held back by the limbs where hands aren't needed: stand up
-        needT = st.need; body.why = 'move ' + st.need + ' g ' + st.g.toFixed(2);
+        if (st === null) continue;
+        if (!quadAllows(nx, nz, px, pz)) { if (!st.need) needT = 0; continue; } // held back by the limbs where hands aren't needed: stand up
+        needT = st.need;
         if (st.rise > STEP) rig.lift = { x: nx, z: nz, y: st.sup }; else { player.x = nx; player.z = nz; }
         ok = true; break;
       }
-    } else { needT = needHere(); body.why = 'here ' + needT; }
+    } else needT = needHere();
     if (!rig.lift) {
       const sup = footSupport(player.x, player.z);
       if (sup >= rig.feet) { rig.feet = sup; rig.vy = 0; body.airborne = false; }
@@ -1635,7 +1635,7 @@ function movePlayer(dt) {
         const drop = rig.feet - sup, snap = body.four ? 0.3 : 0.06 + speed * dt * MAX_GROUND_SLOPE; // holding on, a slip off a stem's crown is not a fall
         if (drop <= snap && rig.vy === 0) rig.feet = sup;
         else {
-          rig.vy -= 9.8 * dt; rig.feet += rig.vy * dt; body.airborne = true; needT = 0; body.why = 'fall';
+          rig.vy -= 9.8 * dt; rig.feet += rig.vy * dt; body.airborne = true; needT = 0;
           if (rig.feet <= sup) { const impact = -rig.vy; rig.feet = sup; rig.vy = 0; body.airborne = false; body.vcrouch -= impact * 0.3; plantBothFeet(); }
         }
       }
