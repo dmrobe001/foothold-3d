@@ -1,6 +1,6 @@
 // Foothold renderer, controls and UI. World data comes from ./worldgen.js.
 import * as THREE from 'three';
-import { generateWorld, sampleGrid, SPECIES, GEOLOGY, crownRadius, crownFraction, treeHeight, WORLD, N, NF, CELL, HALF, hash3, mulberry32, makeNoise2D, clamp, smoothstep } from './worldgen.js';
+import { generateWorld, sampleGrid, SPECIES, GEOLOGY, crownRadius, crownFraction, treeHeight, plateRadius, plateThickness, WORLD, N, NF, CELL, HALF, hash3, mulberry32, makeNoise2D, clamp, smoothstep } from './worldgen.js';
 import { settleDeadfall, trunkProfile } from './deadfall.js';
 import { buildGymWorld, gymToWorld, stationOrigin, STATIONS } from './gym.js';
 import * as SK from './skeleton.js';
@@ -236,6 +236,7 @@ const mats = {
   fern: foliageMaterial(tex.fern, { wind: 0.06, alphaTest: 0.4, footR: 0.45 }),
   grass: foliageMaterial(tex.grass, { wind: 0.09, alphaTest: 0.35, footR: 0.32 }),
   bark: new THREE.MeshLambertMaterial({ map: tex.bark }),
+  root: new THREE.MeshLambertMaterial({ map: tex.bark, vertexColors: true }),
   soil: new THREE.MeshLambertMaterial({ map: tex.soil }),
   wood: new THREE.MeshLambertMaterial({ map: tex.bark }),
   litter: new THREE.MeshLambertMaterial({ map: null, alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
@@ -492,6 +493,21 @@ function pieceGeo(butt, sides) {
   g.computeVertexNormals();
   return g;
 }
+// A broken stem standing: root flare at the foot, splintered top (local Y in [0, 1], radius 1 = the stem's).
+// Low stumps (under ~2.5 m) keep the flare over the bottom third; tall snapped stems compress it to the first metre.
+function stumpGeo(tall) {
+  const prof = tall ? [[0, 0], [1.55, 0], [1.3, 0.008], [1.12, 0.02], [1.04, 0.04], [1, 0.08], [0.9, 1], [0.5, 0.985], [0, 0.96]]
+    : [[0, 0], [1.55, 0], [1.3, 0.04], [1.12, 0.1], [1.04, 0.2], [1, 0.35], [0.96, 1], [0.5, 0.985], [0, 0.95]];
+  const g = new THREE.LatheGeometry(prof.map(([x, y]) => new THREE.Vector2(x, y)), 8), p = g.attributes.position, r = mulberry32(tall ? 41 : 43);
+  const bumps = Array.from({ length: 9 }, () => 0.92 + 0.16 * r()), spike = Array.from({ length: 9 }, () => (r() - 0.35) * (tall ? 0.12 : 0.16));
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i), y = p.getY(i), k = Math.round(((Math.atan2(z, x) + Math.PI) / (Math.PI * 2)) * 8) % 8;
+    p.setX(i, x * bumps[k]); p.setZ(i, z * bumps[k]);
+    if (y > 0.9) p.setY(i, y + spike[k] * (Math.hypot(x, z) > 0.7 ? 1 : 0.4)); // splinters round the rim, a lower broken core
+  }
+  g.computeVertexNormals();
+  return g;
+}
 function rootPlateGeo() {
   // A torn-up root wad: a lumpy lens of soil, thick in the middle and ragged at the rim (local Y is its thin axis).
   const g = mergeVerts(new THREE.IcosahedronGeometry(1, 2)), p = g.attributes.position, nz = makeNoise2D(mulberry32(9)), uv = [];
@@ -723,7 +739,7 @@ rockMat.onBeforeCompile = (sh) => {
 };
 
 const geos = {
-  trunk: trunkGeo(), plate: rootPlateGeo(), piece: pieceGeo(false, 7), butt: pieceGeo(true, 7), pieceLo: pieceGeo(false, 5), buttLo: pieceGeo(true, 5),
+  trunk: trunkGeo(), plate: rootPlateGeo(), stumpLo: stumpGeo(false), stumpHi: stumpGeo(true), piece: pieceGeo(false, 7), butt: pieceGeo(true, 7), pieceLo: pieceGeo(false, 5), buttLo: pieceGeo(true, 5),
   trunkLo: (() => { const g = new THREE.LatheGeometry([[0.62, 0], [0.45, 0.12], [0.4, 0.4], [0.35, 0.7], [0.3, 1], [0, 1]].map(([x, y]) => new THREE.Vector2(x, y)), 5); g.computeVertexNormals(); return g; })(),
   broad: broadCrownGeo(11), cone: coneCrownGeo(12),
   broadLo: broadCrownGeo(21, 13, 0.85), coneLo: coneCrownGeo(22, 7, 3),
@@ -811,7 +827,7 @@ class NearBatch { // fixed-capacity instanced mesh refilled as the player moves
 // Live trees and saplings within PLANT_R of the player are drawn from a library of grown plants (src/plants.js): per
 // species, size class and crown shape, two seeded skeletons (plus a forked one), normalised to unit height and instanced.
 // Beyond the ring, the tiles' card crowns draw them, and those hide the trees inside it (uNear), so each tree is drawn once.
-const PLANT_R = 45, PCLASS = [1.5, 4, 10, 20, 35, 60], PSHAPE = ['shaded', 'open', 'forked'];
+const PLANT_R = 32, PCLASS = [1.5, 4, 10, 20, 35, 60], PSHAPE = ['shaded', 'open', 'forked'];
 const uNear = { value: new THREE.Vector3(1e9, 1e9, 0) };
 function hidePatch(sh, origin, declare = false) {
   sh.uniforms.uNear = uNear;
@@ -849,7 +865,7 @@ function plantVariant(sp, ci, shape, si) {
   const cf = crownFraction(sp) * (shape === 0 ? 0.8 : 1) * (dRep < 6 ? 1.15 : 1), crownLen = Math.min(hRep * 0.95, hRep * cf);
   const seed = 1009 + sp * 7919 + ci * 613 + shape * 97 + si * 31;
   const P = PL.growPlant({ sp, d: dRep, h: hRep, crownLen, cr: crRep, seed, forked: shape === 2 });
-  const B = PL.barkMesh(P), barkGeo = new THREE.BufferGeometry();
+  const B = PL.barkMesh(P, { minR: Math.max(0.005, 0.012 * Math.min(1, dRep / 20)) }), barkGeo = new THREE.BufferGeometry();
   barkGeo.setAttribute('position', new THREE.Float32BufferAttribute(B.pos.map((q) => q / hRep), 3));
   barkGeo.setAttribute('normal', new THREE.Float32BufferAttribute(B.nor, 3)); barkGeo.setAttribute('uv', new THREE.Float32BufferAttribute(B.uv, 2)); barkGeo.setIndex(B.idx);
   const sc = (a) => a.map((q) => q / hRep);
@@ -889,6 +905,63 @@ function refreshPlants(px, pz, force) {
     if (v.n) { v.bark.instanceMatrix.needsUpdate = true; v.bark.instanceColor.needsUpdate = true; v.leaf.instanceColor.needsUpdate = true; v.bendA.needsUpdate = true; v.wobA.needsUpdate = true; }
   }
   uNear.value.set(px, pz, PLANT_R);
+  refreshRoots(px, pz);
+}
+
+// ---- roots: grown per tree from its own site (soil, slope, wetness, rock), so they follow the ground it stands on.
+// Generated the first time a tree comes within ROOT_R of the player and kept on its record; exposed roots become
+// low solids your feet step on. All roots near the player are merged into one mesh.
+const ROOT_R = 24;
+let rootCells = new Map(), rootMeshObj = null;
+const ROOT_TINT = [[0.56, 0.50, 0.44], [0.60, 0.50, 0.42], [0.58, 0.54, 0.48], [0.58, 0.50, 0.44]]; // weathered grey-brown, lighter than the soil
+function outcropTop(x, z) { let y = -Infinity; for (const o of solids.get(ckey8(x, z)) || []) if (o.kind === 'mesh' && o.big !== undefined) y = Math.max(y, topOf(o, x, z)); return y; }
+function rootSite(t) {
+  const g = (x, z) => ground(x, z), gx = (g(t.x + 1.5, t.z) - g(t.x - 1.5, t.z)) / 3, gz = (g(t.x, t.z + 1.5) - g(t.x, t.z - 1.5)) / 3;
+  return { soil: t.soil ?? 0.6, slope: [gx, gz], wet: sampleGrid(W.wet, N, t.x, t.z), rocky: sampleGrid(W.rock, N, t.x, t.z) };
+}
+function treeRoots(t) {
+  const R = PL.growRoots({ sp: t.sp, d: t.d, seed: hash3(Math.round(t.x * 10), Math.round(t.z * 10), 57), ...rootSite(t) });
+  const M = PL.rootMesh(R, (x, y, z, r) => {
+    const wx = t.x + x, wz = t.z + z, g = ground(wx, wz), rk = outcropTop(wx, wz);
+    return rk > g + 0.02 ? [wx, Math.max(g + y, rk + r * 0.45), wz, rk] : [wx, g + y, wz, g]; // over rock, roots run on the rock
+  });
+  for (const q of M.solids) addSolid({ kind: 'log', root: true, x: (q.x0 + q.x1) / 2, z: (q.z0 + q.z1) / 2, x0: q.x0, z0: q.z0, x1: q.x1, z1: q.z1, ya0: q.y0, ya1: q.y1, r: q.r }, Math.hypot(q.x1 - q.x0, q.z1 - q.z0) / 2 + q.r);
+  const tint = ROOT_TINT[t.sp]; for (let i = 0; i < M.col.length; i++) M.col[i] *= tint[i % 3] * 1.6;
+  return M;
+}
+function arraysGeo(A) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(A.pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(A.nor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(A.uv, 2)); g.setAttribute('color', new THREE.Float32BufferAttribute(A.col, 3)); g.setIndex(A.idx);
+  return g;
+}
+function refreshRoots(px, pz) {
+  const out = { pos: [], nor: [], uv: [], col: [], idx: [] }, R2 = ROOT_R * ROOT_R;
+  for (let ci = Math.floor((px - ROOT_R + HALF) / 16); ci <= Math.floor((px + ROOT_R + HALF) / 16); ci++)
+    for (let cj = Math.floor((pz - ROOT_R + HALF) / 16); cj <= Math.floor((pz + ROOT_R + HALF) / 16); cj++)
+      for (const r of rootCells.get(ci * 4096 + cj) || []) {
+        if ((r.x - px) ** 2 + (r.z - pz) ** 2 > R2) continue;
+        const M = r.m || (r.m = treeRoots(r.t)), base = out.pos.length / 3;
+        for (const k of ['pos', 'nor', 'uv', 'col']) for (const v of M[k]) out[k].push(v);
+        for (const i of M.idx) out.idx.push(i + base);
+      }
+  if (rootMeshObj) { plantGroup.remove(rootMeshObj); rootMeshObj.geometry.dispose(); rootMeshObj = null; }
+  if (!out.idx.length) return;
+  rootMeshObj = new THREE.Mesh(arraysGeo(out), mats.root); rootMeshObj.castShadow = true; rootMeshObj.receiveShadow = true; rootMeshObj.frustumCulled = false;
+  plantGroup.add(rootMeshObj);
+}
+// the roots that tore out with a fallen tree's plate: its root graph, turned up about the plate's hinge so the stem's
+// axis lies along the fall; laterals snap off at the plate rim; fine roots rot away first
+function wadRoots(out, t, cx, cy, cz, dx, dz, pr, pf) {
+  const R = PL.growRoots({ sp: t.sp, d: t.d, seed: hash3(Math.round(t.x * 10), Math.round(t.z * 10), 57), ...rootSite(t) });
+  const k = [dz, 0, -dx]; // rotation axis: horizontal, across the fall; turns up (0,1,0) onto (dx, 0, dz)
+  const rot = (x, y, z) => { const c = 0, s = 1, kv = [k[1] * z - k[2] * y, k[2] * x - k[0] * z, k[0] * y - k[1] * x], kd = (k[0] * x + k[1] * y + k[2] * z) * (1 - c); return [x * c + kv[0] * s + k[0] * kd, y * c + kv[1] * s + k[1] * kd, z * c + kv[2] * s + k[2] * kd]; };
+  const keep = (i) => Math.hypot(R.p0[i * 3], R.p0[i * 3 + 2]) < pr * (0.9 + 0.3 * pf) && (R.ord[i] !== -2 || pf > 0.5);
+  const M = PL.rootMesh(R, (x, y, z) => { const q = rot(x, y - 0.1, z); return [cx + q[0], cy + q[1], cz + q[2], -Infinity]; }, { keep, all: true, flat: 0.85 });
+  const base = out.pos.length / 3, tint = ROOT_TINT[t.sp];
+  for (const v of M.pos) out.pos.push(v); for (const v of M.nor) out.nor.push(v); for (const v of M.uv) out.uv.push(v);
+  for (let i = 0; i < M.col.length; i++) out.col.push(0.75 * tint[i % 3] * 1.6);
+  for (const i of M.idx) out.idx.push(i + base);
 }
 
 // ---------------------------------------------------------------- world build
@@ -974,9 +1047,9 @@ function buildWorld() {
 
   // trees, snags, logs, root plates, outcrops — batched into 64 m tiles so whole tiles can be culled
   const TILE = 64, NT = WORLD / TILE;
-  const B = Array.from({ length: NT * NT }, () => ({ live: new Batch(), trunk: new Batch(), piece: new Batch(), butt: new Batch(), broad: new Batch(), cone: new Batch(), pine: new Batch(), plate: new Batch(), rk: [new Batch(), new Batch(), new Batch(), new Batch()] }));
+  const B = Array.from({ length: NT * NT }, () => ({ live: new Batch(), trunk: new Batch(), piece: new Batch(), butt: new Batch(), broad: new Batch(), cone: new Batch(), pine: new Batch(), plate: new Batch(), stumpLo: new Batch(), stumpHi: new Batch(), wad: { pos: [], nor: [], uv: [], col: [], idx: [] }, rk: [new Batch(), new Batch(), new Batch(), new Batch()] }));
   const tileOf = (x, z) => clamp(Math.floor((z + HALF) / TILE), 0, NT - 1) * NT + clamp(Math.floor((x + HALF) / TILE), 0, NT - 1);
-  colTrunks = new Map(); colLogs = []; logCells = new Map(); solids = new Map(); saplingCells = new Map(); plantCells = new Map();
+  colTrunks = new Map(); colLogs = []; logCells = new Map(); solids = new Map(); saplingCells = new Map(); plantCells = new Map(); rootCells = new Map();
   if (!plantGroup) { plantGroup = new THREE.Group(); scene.add(plantGroup); }
   const ckey = (ci, cj) => ci * 4096 + cj;
   const pushCol = (map, x, z, item, cs = 8) => { const k = ckey(Math.floor((x + HALF) / cs), Math.floor((z + HALF) / cs)); let a = map.get(k); if (!a) map.set(k, (a = [])); a.push(item); };
@@ -1033,12 +1106,21 @@ function buildWorld() {
         const rec = { x: t.x, z: t.z, v, m: trs(t.x, gy - 0.15, t.z, yaw, sx, h, sx).elements.slice(), bc: [lin(bt[0] * vari), lin(bt[1] * vari), lin(bt[2] * vari)], lc: [lin(lt[0] * cv), lin(lt[1] * cv), lin(lt[2] * cv)], bend: bendAttr, wob: wobAttr };
         pushCol(plantCells, t.x, t.z, rec, 16);
       }
+      if (t.d >= 3) pushCol(rootCells, t.x, t.z, { t, x: t.x, z: t.z }, 16);
       if (t.d >= 8) pushCol(colTrunks, t.x, t.z, { x: t.x, z: t.z, r: t.d / 200 + 0.25 });
       else if (h > 1.3) pushCol(saplingCells, t.x, t.z, { sap: true, tx: t.x, tz: t.z, tol: Math.hypot(dx, dz) + 0.05, x: t.x + dx * 0.3, z: t.z + dz * 0.3, r: 0.04 + t.d / 200, h, R: cr * 0.9, base: h - crownLen });
     } else if (t.st === 1) {
       const grey = mix3(TINT.bark[t.sp], [0.62, 0.60, 0.56], clamp(t.t / 20, 0, 0.8));
-      b.trunk.add(trs(t.x, gy - 0.15, t.z, yaw, rad, t.sh, rad), grey[0] * vari, grey[1] * vari, grey[2] * vari, t.d * 0.7, [0, 0, f.bl[2], f.bl[3]], wobAttr);
-      if (t.d >= 8) pushCol(colTrunks, t.x, t.z, { x: t.x, z: t.z, r: t.d / 200 + 0.25 });
+      if (t.d >= 3) pushCol(rootCells, t.x, t.z, { t, x: t.x, z: t.z }, 16);
+      if (t.sh < (t.h || treeHeight(t.sp, t.d)) * 0.7) { // a broken stem: a stump with a splintered top
+        const low = t.sh < 2.5, m = trs(t.x, gy - 0.15, t.z, yaw, rad * 0.5, t.sh + 0.15, rad * 0.5);
+        (low ? b.stumpLo : b.stumpHi).add(m, grey[0] * vari, grey[1] * vari, grey[2] * vari, t.d * 0.7, [0, 0, f.bl[2], f.bl[3]], wobAttr);
+        if (t.sh + 0.15 < SCRAMBLE + 0.2) addSolid(meshSolid(geos.stumpLo, m.clone(), t.x, t.z), rad * 0.8); // low enough to step or climb onto
+        else if (t.d >= 8) pushCol(colTrunks, t.x, t.z, { x: t.x, z: t.z, r: t.d / 200 + 0.25 });
+      } else {
+        b.trunk.add(trs(t.x, gy - 0.15, t.z, yaw, rad, t.sh, rad), grey[0] * vari, grey[1] * vari, grey[2] * vari, t.d * 0.7, [0, 0, f.bl[2], f.bl[3]], wobAttr);
+        if (t.d >= 8) pushCol(colTrunks, t.x, t.z, { x: t.x, z: t.z, r: t.d / 200 + 0.25 });
+      }
     } else if (t.st === 2) {
       const T = (15 + 1.3 * t.d) * P.decay, fd = clamp(t.t / T, 0, 1), cls = 1 + Math.floor(fd * 4.999), R = t.rest;
       const dirx = Math.cos(R.a), dirz = Math.sin(R.a), rr = (t.d / 200) * (1 - 0.15 * fd);
@@ -1059,8 +1141,11 @@ function buildWorld() {
         }
       }
       if (t.up && t.t < 70) {
-        const pr = 0.7 + t.d * 0.028, pf = 1 - t.t / 70, cyP = ground(t.x, t.z) + pr * 0.55 * pf + 0.1, th = 0.35 + 0.25 * pf;
-        b.plate.add(along(t.x - dirx * 0.15, cyP, t.z - dirz * 0.15, dirx, 0, dirz, pr * (0.7 + 0.3 * pf), th, pr * (0.5 + 0.5 * pf)), 0.62 * vari, 0.52 * vari, 0.42 * vari);
+        // the plate is what the root graph had inside the plate radius (the same radius as the pit it left), turned up with
+        // the stem: a soil clump round the collar with the roots that tore out with it, broken off at its rim
+        const soilI = t.soil ?? 0.6, pr = plateRadius(t.d, soilI) * 1.1, pf = 1 - t.t / 70, cyP = ground(t.x, t.z) + pr * 0.55 * pf + 0.1, th = plateThickness(t.d, soilI) * (0.7 + 0.5 * pf);
+        b.plate.add(along(t.x - dirx * 0.15, cyP, t.z - dirz * 0.15, dirx, 0, dirz, pr * (0.55 + 0.25 * pf), th, pr * (0.4 + 0.4 * pf)), 0.62 * vari, 0.52 * vari, 0.42 * vari);
+        wadRoots(b.wad, t, t.x - dirx * 0.1, cyP, t.z - dirz * 0.1, dirx, dirz, pr, pf);
         // the wad is a near-vertical soil wall: ellipsoid thin along the fall direction
         addSolid(ellipsoid(t.x - dirx * 0.15, cyP, t.z - dirz * 0.15, pr * (0.7 + 0.3 * pf), pr * (0.5 + 0.5 * pf), th * 0.5, -dirz, dirx), pr);
       }
@@ -1070,6 +1155,8 @@ function buildWorld() {
     const g = new THREE.Group(), b = B[ti];
     { const m = b.plate.build(geos.plate, mats.soil); if (m) g.add(m); }
     g.userData.hi = []; g.userData.lo = [];
+    if (b.wad.idx.length) { const m = new THREE.Mesh(arraysGeo(b.wad), mats.root); m.castShadow = true; m.receiveShadow = true; g.add(m); g.userData.hi.push(m); }
+    for (const [batch, geo] of [[b.stumpLo, geos.stumpLo], [b.stumpHi, geos.stumpHi]]) { const m = batch.build(geo, mats.bark, { farMin: 12, form: true }); if (m) { g.add(m); g.userData.hi.push(m); } }
     b.rk.forEach((rb, i) => { const hi = rb.build(rocks.big[i], rockMat); if (!hi) return; const lo = lodTwin(hi, rocks.bigLo[i], true); g.add(hi, lo); g.userData.hi.push(hi); g.userData.lo.push(lo); });
     {
       for (const [batch, hiG, loG] of [[b.trunk, geos.trunk, geos.trunkLo], [b.piece, geos.piece, geos.pieceLo], [b.butt, geos.butt, geos.buttLo]]) {
@@ -2736,6 +2823,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
+  plants: { lib: plantLib, roots: () => rootMeshObj, rootCells: () => rootCells, PL },
   gym: { get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },
   loco: { stemAt, stemUnder, assess, grade, holdsNear, placeContact, stability, quadAllows, limbAt, GAIT4, TRACTION, get need() { return body.need; }, get q() { return body.q; } }, col: { topOf, supportAt, ceilingAt, duckPosture, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },

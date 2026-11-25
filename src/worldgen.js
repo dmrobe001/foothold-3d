@@ -103,6 +103,10 @@ export function crownRadius(sp, d) {
   const a = k === 'conifer' ? 0.12 : k === 'pine' ? 0.11 : k === 'birch' ? 0.12 : 0.16;
   return 0.35 + a * Math.pow(d, 0.85);
 }
+// root plate radius (m) for dbh d (cm) and soil depth index 0..1: what tears out when the tree tips over. Shared by the
+// pits written here, the root wads the game draws, and the root graphs in plants.js.
+export function plateRadius(d, soil = 0.6) { return 0.45 + 0.025 * d * (0.75 + 0.5 * soil); }
+export const plateThickness = (d, soil = 0.6) => Math.min(0.2 + 0.01 * d, 0.25 + 0.7 * soil);
 export function crownFraction(sp) {
   const k = SPECIES[sp].kind;
   return k === 'conifer' ? 0.7 : k === 'pine' ? 0.3 : k === 'birch' ? 0.45 : 0.48;
@@ -408,25 +412,13 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
         t.len -= stub.sh; t.snapBase = stub.sh;
       } else {
         t.up = true;
-        pits.push({ x: t.x, z: t.z, ang: t.ang, r: 0.8 + t.d * 0.02, year });
+        pits.push({ x: t.x, z: t.z, ang: t.ang, r: plateRadius(t.d, t.soil), th: plateThickness(t.d, t.soil), year });
       }
     } else { t.st = 1; t.t = 0; t.sh = t.h * (0.6 + 0.4 * rand()); }
   }
 
-  // 5. microtopography: pits where root plates tore out, mounds where they rotted down ----------------
-  for (const p of pits) {
-    const ageY = age - p.year, fade = Math.exp(-ageY / 400);
-    const bx = p.x - Math.cos(p.ang) * p.r * 0.4, bz = p.z - Math.sin(p.ang) * p.r * 0.4; // pit, upwind of base
-    const mx = p.x - Math.cos(p.ang) * p.r * 1.3, mz = p.z - Math.sin(p.ang) * p.r * 1.3; // mound, where plate slumps
-    const rr = Math.ceil((p.r * 2.2) / CELL);
-    const ci = Math.round((p.x + HALF) / CELL), cj = Math.round((p.z + HALF) / CELL);
-    for (let dj = -rr; dj <= rr; dj++) for (let di = -rr; di <= rr; di++) {
-      const i = ci + di, j = cj + dj; if (i < 0 || j < 0 || i >= N || j >= N) continue;
-      const x = i * CELL - HALF, z = j * CELL - HALF;
-      const dp = ((x - bx) ** 2 + (z - bz) ** 2) / (p.r * p.r), dm = ((x - mx) ** 2 + (z - mz) ** 2) / (p.r * p.r);
-      H[j * N + i] += fade * (-0.55 * Math.exp(-dp * 1.5) + 0.35 * Math.exp(-dm * 1.5) * (1 - Math.exp(-ageY / 25)));
-    }
-  }
+  // 5. microtopography: pits where root plates tore out and mounds where they rot down. Written into the 0.5 m
+  //    ground (step 8): on the 2 m grid a pit the size of a root plate barely shows.
 
   // 6. derived fields for rendering ------------------------------------------------------------------
   rebuild();
@@ -501,6 +493,19 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
         h -= st * 0.06;
         HF[J * NF + I] = h;
       }
+    }
+    // pit and mound: the plate tore out of a bowl at the stem base (slightly upwind: it hinges on the fall side);
+    // it stood up over the base and, as it rots, slumps into a mound there. Pits fill over centuries.
+    for (const p of pits) {
+      const ageY = age - p.year, fill = Math.exp(-ageY / 300), slump = 1 - Math.exp(-ageY / 25);
+      const ca = Math.cos(p.ang), sa = Math.sin(p.ang), R = p.r, Rr = R * 2.4;
+      for (let J = Math.max(0, Math.floor((p.z - Rr + HALF) / 0.5)); J <= Math.min(NF - 1, Math.ceil((p.z + Rr + HALF) / 0.5)); J++)
+        for (let I = Math.max(0, Math.floor((p.x - Rr + HALF) / 0.5)); I <= Math.min(NF - 1, Math.ceil((p.x + Rr + HALF) / 0.5)); I++) {
+          const dx = I * 0.5 - HALF - p.x, dz = J * 0.5 - HALF - p.z, a = dx * ca + dz * sa, b = -dx * sa + dz * ca; // a: along the fall
+          const qp = ((a + R * 0.25) / (R * 0.8)) ** 2 + (b / R) ** 2, qm = ((a - R * 0.45) / (R * 0.55)) ** 2 + (b / (R * 0.9)) ** 2;
+          const bowl = qp < 1.6 ? -p.th * fill * Math.pow(Math.max(0, 1 - qp / 1.6), 1.6) * 1.35 : 0;
+          HF[J * NF + I] += bowl + 0.6 * p.th * slump * fill * Math.exp(-qm * 2);
+        }
     }
   }
 

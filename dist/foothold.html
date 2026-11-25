@@ -267,6 +267,10 @@ function crownRadius(sp, d) {
   const a = k === 'conifer' ? 0.12 : k === 'pine' ? 0.11 : k === 'birch' ? 0.12 : 0.16;
   return 0.35 + a * Math.pow(d, 0.85);
 }
+// root plate radius (m) for dbh d (cm) and soil depth index 0..1: what tears out when the tree tips over. Shared by the
+// pits written here, the root wads the game draws, and the root graphs in plants.js.
+function plateRadius(d, soil = 0.6) { return 0.45 + 0.025 * d * (0.75 + 0.5 * soil); }
+const plateThickness = (d, soil = 0.6) => Math.min(0.2 + 0.01 * d, 0.25 + 0.7 * soil);
 function crownFraction(sp) {
   const k = SPECIES[sp].kind;
   return k === 'conifer' ? 0.7 : k === 'pine' ? 0.3 : k === 'birch' ? 0.45 : 0.48;
@@ -572,25 +576,13 @@ async function generateWorld(opt = {}, progress = async () => {}) {
         t.len -= stub.sh; t.snapBase = stub.sh;
       } else {
         t.up = true;
-        pits.push({ x: t.x, z: t.z, ang: t.ang, r: 0.8 + t.d * 0.02, year });
+        pits.push({ x: t.x, z: t.z, ang: t.ang, r: plateRadius(t.d, t.soil), th: plateThickness(t.d, t.soil), year });
       }
     } else { t.st = 1; t.t = 0; t.sh = t.h * (0.6 + 0.4 * rand()); }
   }
 
-  // 5. microtopography: pits where root plates tore out, mounds where they rotted down ----------------
-  for (const p of pits) {
-    const ageY = age - p.year, fade = Math.exp(-ageY / 400);
-    const bx = p.x - Math.cos(p.ang) * p.r * 0.4, bz = p.z - Math.sin(p.ang) * p.r * 0.4; // pit, upwind of base
-    const mx = p.x - Math.cos(p.ang) * p.r * 1.3, mz = p.z - Math.sin(p.ang) * p.r * 1.3; // mound, where plate slumps
-    const rr = Math.ceil((p.r * 2.2) / CELL);
-    const ci = Math.round((p.x + HALF) / CELL), cj = Math.round((p.z + HALF) / CELL);
-    for (let dj = -rr; dj <= rr; dj++) for (let di = -rr; di <= rr; di++) {
-      const i = ci + di, j = cj + dj; if (i < 0 || j < 0 || i >= N || j >= N) continue;
-      const x = i * CELL - HALF, z = j * CELL - HALF;
-      const dp = ((x - bx) ** 2 + (z - bz) ** 2) / (p.r * p.r), dm = ((x - mx) ** 2 + (z - mz) ** 2) / (p.r * p.r);
-      H[j * N + i] += fade * (-0.55 * Math.exp(-dp * 1.5) + 0.35 * Math.exp(-dm * 1.5) * (1 - Math.exp(-ageY / 25)));
-    }
-  }
+  // 5. microtopography: pits where root plates tore out and mounds where they rot down. Written into the 0.5 m
+  //    ground (step 8): on the 2 m grid a pit the size of a root plate barely shows.
 
   // 6. derived fields for rendering ------------------------------------------------------------------
   rebuild();
@@ -665,6 +657,19 @@ async function generateWorld(opt = {}, progress = async () => {}) {
         h -= st * 0.06;
         HF[J * NF + I] = h;
       }
+    }
+    // pit and mound: the plate tore out of a bowl at the stem base (slightly upwind: it hinges on the fall side);
+    // it stood up over the base and, as it rots, slumps into a mound there. Pits fill over centuries.
+    for (const p of pits) {
+      const ageY = age - p.year, fill = Math.exp(-ageY / 300), slump = 1 - Math.exp(-ageY / 25);
+      const ca = Math.cos(p.ang), sa = Math.sin(p.ang), R = p.r, Rr = R * 2.4;
+      for (let J = Math.max(0, Math.floor((p.z - Rr + HALF) / 0.5)); J <= Math.min(NF - 1, Math.ceil((p.z + Rr + HALF) / 0.5)); J++)
+        for (let I = Math.max(0, Math.floor((p.x - Rr + HALF) / 0.5)); I <= Math.min(NF - 1, Math.ceil((p.x + Rr + HALF) / 0.5)); I++) {
+          const dx = I * 0.5 - HALF - p.x, dz = J * 0.5 - HALF - p.z, a = dx * ca + dz * sa, b = -dx * sa + dz * ca; // a: along the fall
+          const qp = ((a + R * 0.25) / (R * 0.8)) ** 2 + (b / R) ** 2, qm = ((a - R * 0.45) / (R * 0.55)) ** 2 + (b / (R * 0.9)) ** 2;
+          const bowl = qp < 1.6 ? -p.th * fill * Math.pow(Math.max(0, 1 - qp / 1.6), 1.6) * 1.35 : 0;
+          HF[J * NF + I] += bowl + 0.6 * p.th * slump * fill * Math.exp(-qm * 2);
+        }
     }
   }
 
@@ -1394,19 +1399,30 @@ function growPlant(spec) {
   const ySplit = split ? Math.max(Math.min(hb * 0.95, h * 0.8), h * split.at * R(0.85, 1.15)) : h;
   const stemAxes = [growAxis(-1, [0, 0, 0], UP, split ? ySplit : h, 0, LIVE, { kink: A.stemKink, maxSeg: 40, segLen: stemSeg, upright: true })];
   if (split) {
-    const leaders = (base, top, n, spread, again, depth) => {
-      const az0 = rnd() * 6.283;
-      for (let k = 0; k < n; k++) {
-        const az = az0 + (k / n) * 6.283 + gauss() * 0.4, s = R(spread[0], spread[1]) * D2R;
-        const dir = [Math.sin(s) * Math.cos(az), Math.cos(s), Math.sin(s) * Math.sin(az)];
-        const L = Math.max(0.6, (h * (k === 0 ? 0.99 : R(0.86, 0.96)) - top[1]) / Math.cos(s * 0.55));
-        const ai = growAxis(base, top, dir, L, 0, LIVE, { curve: [0.15, 0.25], kink: A.kink * 0.45, maxSeg: 14, segLen: stemSeg });
+    // a decurrent crown: the trunk carries on as one dominant leader, and the others leave it one after another at
+    // staggered heights (sympodial forks), each at its own angle, curving up and kinking; one in a few forks again
+    const segL = Math.max(0.4, stemSeg * 0.55), horiz = (az) => [Math.cos(az), 0, Math.sin(az)];
+    const top = axes[stemAxes[0]], last = top.nodes[top.nodes.length - 1], p0 = nodes[last].p1;
+    const domDir = norm([gauss() * 0.12, 1, gauss() * 0.12]);
+    const dom = growAxis(last, p0, domDir, Math.max(0.6, (h * 0.99 - p0[1]) / domDir[1]), 0, LIVE, { curve: [R(-0.1, 0.25), R(0.1, 0.4)], kink: A.kink * 0.6, maxSeg: 24, segLen: segL });
+    stemAxes.push(dom);
+    const n = Math.round(R(split.n[0], split.n[1] + 0.99) - 0.49), axL = (ai) => axes[ai].sl * axes[ai].nodes.length;
+    let s = R(0, 0.3), az = rnd() * 6.283;
+    for (let k = 1; k < n; k++) {
+      const m = at(dom, Math.min(s, axL(dom) * 0.6)); az += 6.283 / n + gauss() * 0.7;
+      const sp = R(split.spread[0], split.spread[1]) * D2R, dir = norm(add(m.dir.map((q) => q * Math.cos(sp)), horiz(az), Math.sin(sp)));
+      const L = (h * R(0.8, 0.96) - m.p[1]) / Math.cos(sp * 0.6);
+      if (L > 0.6) {
+        const ai = growAxis(m.id, m.p, dir, L, 0, LIVE, { curve: [R(0, 0.35), R(0.1, 0.55)], kink: A.kink * 0.8, maxSeg: 22, segLen: segL });
         stemAxes.push(ai);
-        if (depth < 1 && rnd() < again) { const m = at(ai, L * R(0.45, 0.6)); leaders(m.id, m.p, 2, [14, 26], 0, depth + 1); }
+        if (rnd() < split.again) { // a second, smaller fork part way up this leader
+          const q = at(ai, L * R(0.3, 0.6)), sp2 = R(14, 28) * D2R, d2 = norm(add(q.dir.map((v) => v * Math.cos(sp2)), horiz(az + R(-1.6, 1.6)), Math.sin(sp2)));
+          const L2 = (h * R(0.78, 0.92) - q.p[1]) / Math.cos(sp2 * 0.6);
+          if (L2 > 0.6) stemAxes.push(growAxis(q.id, q.p, d2, L2, 0, LIVE, { curve: [R(0, 0.3), R(0.1, 0.5)], kink: A.kink * 0.8, maxSeg: 16, segLen: segL }));
+        }
       }
-    };
-    const top = axes[stemAxes[0]], last = top.nodes[top.nodes.length - 1];
-    leaders(last, nodes[last].p1, Math.round(R(split.n[0], split.n[1] + 0.99) - 0.49), split.spread, split.again, 0);
+      s += R(0.4, 1.8) * Math.sqrt(sz);
+    }
   }
 
   // 2. limbs on each stem axis: live in the crown, dead (or broken-off stubs) below it
@@ -1483,7 +1499,7 @@ function growPlant(spec) {
   for (let i = 0; i < n; i++) r0[i] = rTip * k * Math.pow(W[i], 1 / a);
   for (let i = 0; i < n; i++) {
     const nd = nodes[i], cont = nd.kids.find((c) => nodes[c].axis === nd.axis);
-    r1[i] = cont !== undefined ? r0[cont] : nd.st === STUB ? r0[i] * 0.9 : Math.max(0.0015, rTip * k * 0.6);
+    r1[i] = cont !== undefined ? r0[cont] : nd.kids.length ? r0[i] * 0.97 : nd.st === STUB ? r0[i] * 0.9 : Math.max(0.0015, rTip * k * 0.6); // a fork: the stem keeps its girth into the leaders
   }
 
   // 5. foliage units and organs, on live shoots
@@ -1539,13 +1555,13 @@ function barkMesh(P, { minR = 0 } = {}) {
   const pos = [], nor = [], uv = [], idx = [];
   for (const ax of P.axes) {
     const ids = ax.nodes, i0 = ids[0];
-    if (P.r0[i0] < minR) continue;
-    const rb = P.r0[i0], sides = rb > 0.12 ? 8 : rb > 0.045 ? 6 : rb > 0.014 ? 4 : 3;
+    if (ax.st === LIVE && ax.ord >= 2 && P.r0[i0] < minR) continue; // thin live twigs: hidden in the foliage
+    const rb = P.r0[i0], sides = rb > 0.12 ? 7 : rb > 0.04 ? 5 : 3;
     const pts = [], rad = [];
     const p = (i, e) => (e ? [P.p1[i * 3], P.p1[i * 3 + 1], P.p1[i * 3 + 2]] : [P.p0[i * 3], P.p0[i * 3 + 1], P.p0[i * 3 + 2]]);
     if (ax.ord === 0 && P.par[i0] < 0) { // the collar: extra rings for the root flare
       const a = p(i0, 0), b = p(i0, 1), L = len3([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
-      for (const y of [0, 0.08, 0.22, 0.45]) if (y < L * 0.8) { const t = y / L; pts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]); rad.push((P.r0[i0] + (P.r1[i0] - P.r0[i0]) * t) * (1 + 0.75 * Math.exp(-y / 0.18))); }
+      for (const y of [0, 0.08, 0.22, 0.45]) if (y < L * 0.8) { const t = y / L; pts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]); rad.push((P.r0[i0] + (P.r1[i0] - P.r0[i0]) * t) * (1 + 0.3 * Math.exp(-y / 0.25))); } // modest: the buttress roots make the rest of the flare
     } else { pts.push(p(i0, 0)); rad.push(P.r0[i0]); }
     for (const i of ids) { pts.push(p(i, 1)); rad.push(P.r1[i]); }
     const base = pos.length / 3;
@@ -1618,7 +1634,106 @@ function foliageCards(P, seed = 7) {
   return cards;
 }
 
-return { LIVE, DEAD, STUB, BURIED, ARCH, growPlant, plantStats, barkMesh, foliageCards };
+// ---- roots
+// Structural roots in surface-relative coordinates: x, z from the stem centre (world-aligned), y = height of the root's
+// axis above the local ground surface (negative: buried). The game drapes them over its own terrain and rock, so a
+// root follows the ground the way real lateral roots do. Shape rules [known in outline]: a few structural laterals
+// radiate from the collar, taper fast within the "zone of rapid taper" (about 1-2 m) and then run on as thin ropes;
+// sinker roots drop from them; pine adds a taproot. Exposure [model choice, numbers are guesses]: every root is out of
+// the ground at the collar (the flare), and how far it stays out depends on the site: shallow soil over rock, wet
+// ground (shallow rooting) and the downhill side of a slope (erosion) keep roots at the surface for longer.
+const ROOTS = [
+  { n: [5, 8], depthRate: 0.1, tap: 0, sinkers: 0.35, expose: 0.0 },  // fir: a shallow plate
+  { n: [4, 6], depthRate: 0.16, tap: 1, sinkers: 0.5, expose: -0.1 }, // pine: deeper, with a taproot
+  { n: [6, 9], depthRate: 0.14, tap: 0, sinkers: 0.6, expose: 0.0 },  // maple: a heart-shaped mass
+  { n: [5, 8], depthRate: 0.08, tap: 0, sinkers: 0.2, expose: 0.1 },  // birch: shallow, spreading
+];
+// spec: { sp, d, seed, soil 0..1, slope [dh/dx, dh/dz], wet 0..1, rocky 0..1 }
+function growRoots(spec) {
+  const { sp, d, seed = 1, soil = 0.6, slope = [0, 0], wet = 0.3, rocky = 0 } = spec;
+  const T = ROOTS[sp], rnd = mulberry32((seed ^ 0x5bd1e995) >>> 0 || 1), R = (a, b) => a + (b - a) * rnd(), gauss = () => (rnd() + rnd() + rnd() - 1.5) * 1.15;
+  const rStem = d / 200, rp = plateRadius(d, soil), zrt = 0.5 + 0.015 * d;
+  const site = clamp(0.3 + 0.5 * (1 - soil) + 0.3 * wet + 0.4 * rocky + T.expose, 0, 1), buttress = 0.6 + 0.03 * d;
+  const Lexp = 0.5 + 2.0 * (1 - soil) + 1.5 * rocky + 0.8 * wet;
+  const nodes = [], axes = [];
+  const seg = (par, p0, p1, r0, r1, ord, axis) => { nodes.push({ par, p0, p1, r0, r1, ord, axis }); return nodes.length - 1; };
+  // one root: a wandering path; y follows the exposure law; returns its axis id
+  function root(par, start, az, L, r0, ord, e0, depth0) {
+    const ax = { nodes: [], ord }; axes.push(ax); const ai = axes.length - 1;
+    let s = 0, p = start, prev = par, i = 0;
+    const yAt = (s, r) => { const e = Math.max(e0 * Math.exp(-s / Lexp), ord === -1 ? Math.sqrt(Math.max(0, 1 - s / buttress)) : 0); return r * e - (1 - e) * (r + Math.min(0.3, depth0 + s * T.depthRate * (0.5 + soil))); };
+    const rAt = (s) => r0 * (0.18 + 0.82 * Math.exp(-s / zrt)) * (1 - 0.6 * s / L);
+    while (s < L - 1e-3) {
+      const sl = Math.min(L - s, Math.min(0.8, 0.2 * Math.pow(1.3, i))); az += gauss() * 0.16;
+      const s1 = s + sl, ra = rAt(s), rb = rAt(s1);
+      const q = [p[0] + Math.cos(az) * sl, 0, p[2] + Math.sin(az) * sl]; q[1] = yAt(s1, rb);
+      const p0 = [p[0], i === 0 && ord === -1 ? Math.max(p[1], rStem * 0.35) : yAt(s, ra), p[2]]; // laterals leave the stem above the ground: the buttress
+      prev = seg(prev, p0, q, ra, rb, ord, ai); ax.nodes.push(prev);
+      if (ord === -1 && s > 0.4 && rnd() < 0.3) branches.push([prev, q, az + (rnd() < 0.5 ? -1 : 1) * R(0.5, 1.2), Math.min(L - s1, R(0.4, 1.4)), rb * R(0.4, 0.6), e0 * 0.5, Math.max(0, -q[1] - rb)]);
+      if (ord === -1 && Math.abs(s - rp * 0.7) < sl / 2 + 0.01 && rnd() < T.sinkers) sinkers.push([prev, q, rb * 0.6]);
+      p = q; s = s1; i++;
+    }
+    return ai;
+  }
+  const branches = [], sinkers = [];
+  const n = Math.round(R(T.n[0], T.n[1] + 0.99) - 0.49), az0 = rnd() * 6.283;
+  for (let k = 0; k < n; k++) {
+    const az = az0 + (k / n) * 6.283 + gauss() * 0.3, dir = [Math.cos(az), Math.sin(az)];
+    const downhill = -(slope[0] * dir[0] + slope[1] * dir[1]); // > 0 when the ground falls away along this root
+    const e0 = clamp(site + 1.1 * downhill - 0.5 * Math.max(0, -downhill) + gauss() * 0.15, 0, 1);
+    root(-1, [dir[0] * rStem * 0.55, 0, dir[1] * rStem * 0.55], az, rp * R(1.2, 2.3) + 0.3, rStem * R(0.55, 0.8) * Math.sqrt(6 / n), -1, e0, 0.02);
+  }
+  for (const [par, q, az, L, r0, e0, dep] of branches) if (L > 0.25) root(par, q, az, L, r0, -2, e0, dep);
+  const down = (par, top, r, depth) => { const ax = { nodes: [], ord: -3 }; axes.push(ax); ax.nodes.push(seg(par, top, [top[0] + gauss() * 0.1, top[1] - depth, top[2] + gauss() * 0.1], r, r * 0.4, -3, axes.length - 1)); };
+  for (const [par, q, r] of sinkers) down(par, q, r, R(0.3, 0.9) * (0.4 + soil));
+  if (T.tap) down(-1, [0, -0.1, 0], rStem * 0.45, (0.6 + 0.9 * soil) * R(0.8, 1.2));
+  const N = nodes.length, P = { sp, d, rp, n: N, par: new Int32Array(N), p0: new Float32Array(N * 3), p1: new Float32Array(N * 3), r0: new Float32Array(N), r1: new Float32Array(N), ord: new Int8Array(N), axis: new Int32Array(N), st: new Uint8Array(N), axes: axes.map((a) => ({ nodes: Int32Array.from(a.nodes), ord: a.ord })) };
+  nodes.forEach((s, i) => { P.par[i] = s.par; P.p0.set(s.p0, i * 3); P.p1.set(s.p1, i * 3); P.r0[i] = s.r0; P.r1[i] = s.r1; P.ord[i] = s.ord; P.axis[i] = s.axis; P.st[i] = s.p0[1] + s.r0 > 0 || s.p1[1] + s.r1 > 0 ? LIVE : BURIED; });
+  return P;
+}
+
+// Tubes for roots. place(x, y, z, r) -> [wx, wy, wz, gy]: where a root point ends up in the world and the ground height
+// there (the game drapes roots over terrain and rock). Only runs that break the surface are built, plus one buried
+// segment at each end so they dive into the soil. keep(i) can drop segments (a root wad keeps what tore out with it).
+// Root sections are flattened (wider than tall), as surface roots are. col: soil staining, darker near the ground.
+function rootMesh(P, place, { keep = null, all = false, flat = 0.72 } = {}) {
+  const pos = [], nor = [], uv = [], col = [], idx = [], solids = [];
+  for (const ax of P.axes) {
+    const ids = Array.from(ax.nodes).filter((i) => !keep || keep(i)); if (!ids.length) continue;
+    const W = ids.map((i) => [place(P.p0[i * 3], P.p0[i * 3 + 1], P.p0[i * 3 + 2], P.r0[i]), place(P.p1[i * 3], P.p1[i * 3 + 1], P.p1[i * 3 + 2], P.r1[i])]);
+    const out = ids.map((i, k) => all || W[k][0][1] + P.r0[i] > W[k][0][3] + 0.005 || W[k][1][1] + P.r1[i] > W[k][1][3] + 0.005);
+    for (let k = 0; k < ids.length; k++) {
+      const i = ids[k], [a, b] = W[k], prot = Math.max(a[1] + P.r0[i] - a[3], b[1] + P.r1[i] - b[3]);
+      if (out[k] && !all && prot > 0.035 && P.r0[i] > 0.02) solids.push({ x0: a[0], y0: a[1], z0: a[2], x1: b[0], y1: b[1], z1: b[2], r: (P.r0[i] + P.r1[i]) / 2 });
+    }
+    let k = 0;
+    while (k < ids.length) {
+      if (!out[k]) { k++; continue; }
+      let e = k; while (e + 1 < ids.length && out[e + 1]) e++;
+      const s0 = Math.max(0, k - 1), s1 = Math.min(ids.length - 1, e + 1); // one buried segment either side
+      const pts = [W[s0][0]], rad = [P.r0[ids[s0]]];
+      for (let j = s0; j <= s1; j++) { pts.push(W[j][1]); rad.push(P.r1[ids[j]]); }
+      const sides = rad[0] > 0.06 ? 6 : rad[0] > 0.025 ? 4 : 3, base = pos.length / 3;
+      for (let j = 0; j < pts.length; j++) {
+        const A = pts[Math.max(0, j - 1)], B = pts[Math.min(pts.length - 1, j + 1)];
+        const t = norm([B[0] - A[0], B[1] - A[1], B[2] - A[2]]), hz = norm(cross(t, UP)), vt = cross(hz, t);
+        for (let s = 0; s <= sides; s++) {
+          const an = (s / sides) * 6.283, c = Math.cos(an), sn = Math.sin(an);
+          const dn = [hz[0] * c + vt[0] * sn * flat, hz[1] * c + vt[1] * sn * flat, hz[2] * c + vt[2] * sn * flat];
+          const nn = norm([hz[0] * c + vt[0] * sn / flat, hz[1] * c + vt[1] * sn / flat, hz[2] * c + vt[2] * sn / flat]);
+          const y = pts[j][1] + dn[1] * rad[j];
+          pos.push(pts[j][0] + dn[0] * rad[j], y, pts[j][2] + dn[2] * rad[j]); nor.push(...nn); uv.push(s / sides, j * 0.35);
+          const stain = clamp((y - pts[j][3]) / 0.12, 0, 1); col.push(0.62 + 0.38 * stain, 0.6 + 0.4 * stain, 0.58 + 0.42 * stain);
+        }
+      }
+      for (let j = 0; j < pts.length - 1; j++) for (let s = 0; s < sides; s++) { const a = base + j * (sides + 1) + s, b = a + sides + 1; idx.push(a, a + 1, b, a + 1, b + 1, b); }
+      k = e + 1;
+    }
+  }
+  return { pos, nor, uv, col, idx, solids };
+}
+
+return { LIVE, DEAD, STUB, BURIED, ARCH, growPlant, plantStats, barkMesh, foliageCards, ROOTS, growRoots, rootMesh };
 })();
 // ---- game ----
 // Foothold renderer, controls and UI. World data comes from ./worldgen.js.
@@ -1854,6 +1969,7 @@ const mats = {
   fern: foliageMaterial(tex.fern, { wind: 0.06, alphaTest: 0.4, footR: 0.45 }),
   grass: foliageMaterial(tex.grass, { wind: 0.09, alphaTest: 0.35, footR: 0.32 }),
   bark: new THREE.MeshLambertMaterial({ map: tex.bark }),
+  root: new THREE.MeshLambertMaterial({ map: tex.bark, vertexColors: true }),
   soil: new THREE.MeshLambertMaterial({ map: tex.soil }),
   wood: new THREE.MeshLambertMaterial({ map: tex.bark }),
   litter: new THREE.MeshLambertMaterial({ map: null, alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
@@ -2110,6 +2226,21 @@ function pieceGeo(butt, sides) {
   g.computeVertexNormals();
   return g;
 }
+// A broken stem standing: root flare at the foot, splintered top (local Y in [0, 1], radius 1 = the stem's).
+// Low stumps (under ~2.5 m) keep the flare over the bottom third; tall snapped stems compress it to the first metre.
+function stumpGeo(tall) {
+  const prof = tall ? [[0, 0], [1.55, 0], [1.3, 0.008], [1.12, 0.02], [1.04, 0.04], [1, 0.08], [0.9, 1], [0.5, 0.985], [0, 0.96]]
+    : [[0, 0], [1.55, 0], [1.3, 0.04], [1.12, 0.1], [1.04, 0.2], [1, 0.35], [0.96, 1], [0.5, 0.985], [0, 0.95]];
+  const g = new THREE.LatheGeometry(prof.map(([x, y]) => new THREE.Vector2(x, y)), 8), p = g.attributes.position, r = mulberry32(tall ? 41 : 43);
+  const bumps = Array.from({ length: 9 }, () => 0.92 + 0.16 * r()), spike = Array.from({ length: 9 }, () => (r() - 0.35) * (tall ? 0.12 : 0.16));
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i), y = p.getY(i), k = Math.round(((Math.atan2(z, x) + Math.PI) / (Math.PI * 2)) * 8) % 8;
+    p.setX(i, x * bumps[k]); p.setZ(i, z * bumps[k]);
+    if (y > 0.9) p.setY(i, y + spike[k] * (Math.hypot(x, z) > 0.7 ? 1 : 0.4)); // splinters round the rim, a lower broken core
+  }
+  g.computeVertexNormals();
+  return g;
+}
 function rootPlateGeo() {
   // A torn-up root wad: a lumpy lens of soil, thick in the middle and ragged at the rim (local Y is its thin axis).
   const g = mergeVerts(new THREE.IcosahedronGeometry(1, 2)), p = g.attributes.position, nz = makeNoise2D(mulberry32(9)), uv = [];
@@ -2341,7 +2472,7 @@ rockMat.onBeforeCompile = (sh) => {
 };
 
 const geos = {
-  trunk: trunkGeo(), plate: rootPlateGeo(), piece: pieceGeo(false, 7), butt: pieceGeo(true, 7), pieceLo: pieceGeo(false, 5), buttLo: pieceGeo(true, 5),
+  trunk: trunkGeo(), plate: rootPlateGeo(), stumpLo: stumpGeo(false), stumpHi: stumpGeo(true), piece: pieceGeo(false, 7), butt: pieceGeo(true, 7), pieceLo: pieceGeo(false, 5), buttLo: pieceGeo(true, 5),
   trunkLo: (() => { const g = new THREE.LatheGeometry([[0.62, 0], [0.45, 0.12], [0.4, 0.4], [0.35, 0.7], [0.3, 1], [0, 1]].map(([x, y]) => new THREE.Vector2(x, y)), 5); g.computeVertexNormals(); return g; })(),
   broad: broadCrownGeo(11), cone: coneCrownGeo(12),
   broadLo: broadCrownGeo(21, 13, 0.85), coneLo: coneCrownGeo(22, 7, 3),
@@ -2429,7 +2560,7 @@ class NearBatch { // fixed-capacity instanced mesh refilled as the player moves
 // Live trees and saplings within PLANT_R of the player are drawn from a library of grown plants (src/plants.js): per
 // species, size class and crown shape, two seeded skeletons (plus a forked one), normalised to unit height and instanced.
 // Beyond the ring, the tiles' card crowns draw them, and those hide the trees inside it (uNear), so each tree is drawn once.
-const PLANT_R = 45, PCLASS = [1.5, 4, 10, 20, 35, 60], PSHAPE = ['shaded', 'open', 'forked'];
+const PLANT_R = 32, PCLASS = [1.5, 4, 10, 20, 35, 60], PSHAPE = ['shaded', 'open', 'forked'];
 const uNear = { value: new THREE.Vector3(1e9, 1e9, 0) };
 function hidePatch(sh, origin, declare = false) {
   sh.uniforms.uNear = uNear;
@@ -2467,7 +2598,7 @@ function plantVariant(sp, ci, shape, si) {
   const cf = crownFraction(sp) * (shape === 0 ? 0.8 : 1) * (dRep < 6 ? 1.15 : 1), crownLen = Math.min(hRep * 0.95, hRep * cf);
   const seed = 1009 + sp * 7919 + ci * 613 + shape * 97 + si * 31;
   const P = PL.growPlant({ sp, d: dRep, h: hRep, crownLen, cr: crRep, seed, forked: shape === 2 });
-  const B = PL.barkMesh(P), barkGeo = new THREE.BufferGeometry();
+  const B = PL.barkMesh(P, { minR: Math.max(0.005, 0.012 * Math.min(1, dRep / 20)) }), barkGeo = new THREE.BufferGeometry();
   barkGeo.setAttribute('position', new THREE.Float32BufferAttribute(B.pos.map((q) => q / hRep), 3));
   barkGeo.setAttribute('normal', new THREE.Float32BufferAttribute(B.nor, 3)); barkGeo.setAttribute('uv', new THREE.Float32BufferAttribute(B.uv, 2)); barkGeo.setIndex(B.idx);
   const sc = (a) => a.map((q) => q / hRep);
@@ -2507,6 +2638,63 @@ function refreshPlants(px, pz, force) {
     if (v.n) { v.bark.instanceMatrix.needsUpdate = true; v.bark.instanceColor.needsUpdate = true; v.leaf.instanceColor.needsUpdate = true; v.bendA.needsUpdate = true; v.wobA.needsUpdate = true; }
   }
   uNear.value.set(px, pz, PLANT_R);
+  refreshRoots(px, pz);
+}
+
+// ---- roots: grown per tree from its own site (soil, slope, wetness, rock), so they follow the ground it stands on.
+// Generated the first time a tree comes within ROOT_R of the player and kept on its record; exposed roots become
+// low solids your feet step on. All roots near the player are merged into one mesh.
+const ROOT_R = 24;
+let rootCells = new Map(), rootMeshObj = null;
+const ROOT_TINT = [[0.56, 0.50, 0.44], [0.60, 0.50, 0.42], [0.58, 0.54, 0.48], [0.58, 0.50, 0.44]]; // weathered grey-brown, lighter than the soil
+function outcropTop(x, z) { let y = -Infinity; for (const o of solids.get(ckey8(x, z)) || []) if (o.kind === 'mesh' && o.big !== undefined) y = Math.max(y, topOf(o, x, z)); return y; }
+function rootSite(t) {
+  const g = (x, z) => ground(x, z), gx = (g(t.x + 1.5, t.z) - g(t.x - 1.5, t.z)) / 3, gz = (g(t.x, t.z + 1.5) - g(t.x, t.z - 1.5)) / 3;
+  return { soil: t.soil ?? 0.6, slope: [gx, gz], wet: sampleGrid(W.wet, N, t.x, t.z), rocky: sampleGrid(W.rock, N, t.x, t.z) };
+}
+function treeRoots(t) {
+  const R = PL.growRoots({ sp: t.sp, d: t.d, seed: hash3(Math.round(t.x * 10), Math.round(t.z * 10), 57), ...rootSite(t) });
+  const M = PL.rootMesh(R, (x, y, z, r) => {
+    const wx = t.x + x, wz = t.z + z, g = ground(wx, wz), rk = outcropTop(wx, wz);
+    return rk > g + 0.02 ? [wx, Math.max(g + y, rk + r * 0.45), wz, rk] : [wx, g + y, wz, g]; // over rock, roots run on the rock
+  });
+  for (const q of M.solids) addSolid({ kind: 'log', root: true, x: (q.x0 + q.x1) / 2, z: (q.z0 + q.z1) / 2, x0: q.x0, z0: q.z0, x1: q.x1, z1: q.z1, ya0: q.y0, ya1: q.y1, r: q.r }, Math.hypot(q.x1 - q.x0, q.z1 - q.z0) / 2 + q.r);
+  const tint = ROOT_TINT[t.sp]; for (let i = 0; i < M.col.length; i++) M.col[i] *= tint[i % 3] * 1.6;
+  return M;
+}
+function arraysGeo(A) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(A.pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(A.nor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(A.uv, 2)); g.setAttribute('color', new THREE.Float32BufferAttribute(A.col, 3)); g.setIndex(A.idx);
+  return g;
+}
+function refreshRoots(px, pz) {
+  const out = { pos: [], nor: [], uv: [], col: [], idx: [] }, R2 = ROOT_R * ROOT_R;
+  for (let ci = Math.floor((px - ROOT_R + HALF) / 16); ci <= Math.floor((px + ROOT_R + HALF) / 16); ci++)
+    for (let cj = Math.floor((pz - ROOT_R + HALF) / 16); cj <= Math.floor((pz + ROOT_R + HALF) / 16); cj++)
+      for (const r of rootCells.get(ci * 4096 + cj) || []) {
+        if ((r.x - px) ** 2 + (r.z - pz) ** 2 > R2) continue;
+        const M = r.m || (r.m = treeRoots(r.t)), base = out.pos.length / 3;
+        for (const k of ['pos', 'nor', 'uv', 'col']) for (const v of M[k]) out[k].push(v);
+        for (const i of M.idx) out.idx.push(i + base);
+      }
+  if (rootMeshObj) { plantGroup.remove(rootMeshObj); rootMeshObj.geometry.dispose(); rootMeshObj = null; }
+  if (!out.idx.length) return;
+  rootMeshObj = new THREE.Mesh(arraysGeo(out), mats.root); rootMeshObj.castShadow = true; rootMeshObj.receiveShadow = true; rootMeshObj.frustumCulled = false;
+  plantGroup.add(rootMeshObj);
+}
+// the roots that tore out with a fallen tree's plate: its root graph, turned up about the plate's hinge so the stem's
+// axis lies along the fall; laterals snap off at the plate rim; fine roots rot away first
+function wadRoots(out, t, cx, cy, cz, dx, dz, pr, pf) {
+  const R = PL.growRoots({ sp: t.sp, d: t.d, seed: hash3(Math.round(t.x * 10), Math.round(t.z * 10), 57), ...rootSite(t) });
+  const k = [dz, 0, -dx]; // rotation axis: horizontal, across the fall; turns up (0,1,0) onto (dx, 0, dz)
+  const rot = (x, y, z) => { const c = 0, s = 1, kv = [k[1] * z - k[2] * y, k[2] * x - k[0] * z, k[0] * y - k[1] * x], kd = (k[0] * x + k[1] * y + k[2] * z) * (1 - c); return [x * c + kv[0] * s + k[0] * kd, y * c + kv[1] * s + k[1] * kd, z * c + kv[2] * s + k[2] * kd]; };
+  const keep = (i) => Math.hypot(R.p0[i * 3], R.p0[i * 3 + 2]) < pr * (0.9 + 0.3 * pf) && (R.ord[i] !== -2 || pf > 0.5);
+  const M = PL.rootMesh(R, (x, y, z) => { const q = rot(x, y - 0.1, z); return [cx + q[0], cy + q[1], cz + q[2], -Infinity]; }, { keep, all: true, flat: 0.85 });
+  const base = out.pos.length / 3, tint = ROOT_TINT[t.sp];
+  for (const v of M.pos) out.pos.push(v); for (const v of M.nor) out.nor.push(v); for (const v of M.uv) out.uv.push(v);
+  for (let i = 0; i < M.col.length; i++) out.col.push(0.75 * tint[i % 3] * 1.6);
+  for (const i of M.idx) out.idx.push(i + base);
 }
 
 // ---------------------------------------------------------------- world build
@@ -2592,9 +2780,9 @@ function buildWorld() {
 
   // trees, snags, logs, root plates, outcrops — batched into 64 m tiles so whole tiles can be culled
   const TILE = 64, NT = WORLD / TILE;
-  const B = Array.from({ length: NT * NT }, () => ({ live: new Batch(), trunk: new Batch(), piece: new Batch(), butt: new Batch(), broad: new Batch(), cone: new Batch(), pine: new Batch(), plate: new Batch(), rk: [new Batch(), new Batch(), new Batch(), new Batch()] }));
+  const B = Array.from({ length: NT * NT }, () => ({ live: new Batch(), trunk: new Batch(), piece: new Batch(), butt: new Batch(), broad: new Batch(), cone: new Batch(), pine: new Batch(), plate: new Batch(), stumpLo: new Batch(), stumpHi: new Batch(), wad: { pos: [], nor: [], uv: [], col: [], idx: [] }, rk: [new Batch(), new Batch(), new Batch(), new Batch()] }));
   const tileOf = (x, z) => clamp(Math.floor((z + HALF) / TILE), 0, NT - 1) * NT + clamp(Math.floor((x + HALF) / TILE), 0, NT - 1);
-  colTrunks = new Map(); colLogs = []; logCells = new Map(); solids = new Map(); saplingCells = new Map(); plantCells = new Map();
+  colTrunks = new Map(); colLogs = []; logCells = new Map(); solids = new Map(); saplingCells = new Map(); plantCells = new Map(); rootCells = new Map();
   if (!plantGroup) { plantGroup = new THREE.Group(); scene.add(plantGroup); }
   const ckey = (ci, cj) => ci * 4096 + cj;
   const pushCol = (map, x, z, item, cs = 8) => { const k = ckey(Math.floor((x + HALF) / cs), Math.floor((z + HALF) / cs)); let a = map.get(k); if (!a) map.set(k, (a = [])); a.push(item); };
@@ -2651,12 +2839,21 @@ function buildWorld() {
         const rec = { x: t.x, z: t.z, v, m: trs(t.x, gy - 0.15, t.z, yaw, sx, h, sx).elements.slice(), bc: [lin(bt[0] * vari), lin(bt[1] * vari), lin(bt[2] * vari)], lc: [lin(lt[0] * cv), lin(lt[1] * cv), lin(lt[2] * cv)], bend: bendAttr, wob: wobAttr };
         pushCol(plantCells, t.x, t.z, rec, 16);
       }
+      if (t.d >= 3) pushCol(rootCells, t.x, t.z, { t, x: t.x, z: t.z }, 16);
       if (t.d >= 8) pushCol(colTrunks, t.x, t.z, { x: t.x, z: t.z, r: t.d / 200 + 0.25 });
       else if (h > 1.3) pushCol(saplingCells, t.x, t.z, { sap: true, tx: t.x, tz: t.z, tol: Math.hypot(dx, dz) + 0.05, x: t.x + dx * 0.3, z: t.z + dz * 0.3, r: 0.04 + t.d / 200, h, R: cr * 0.9, base: h - crownLen });
     } else if (t.st === 1) {
       const grey = mix3(TINT.bark[t.sp], [0.62, 0.60, 0.56], clamp(t.t / 20, 0, 0.8));
-      b.trunk.add(trs(t.x, gy - 0.15, t.z, yaw, rad, t.sh, rad), grey[0] * vari, grey[1] * vari, grey[2] * vari, t.d * 0.7, [0, 0, f.bl[2], f.bl[3]], wobAttr);
-      if (t.d >= 8) pushCol(colTrunks, t.x, t.z, { x: t.x, z: t.z, r: t.d / 200 + 0.25 });
+      if (t.d >= 3) pushCol(rootCells, t.x, t.z, { t, x: t.x, z: t.z }, 16);
+      if (t.sh < (t.h || treeHeight(t.sp, t.d)) * 0.7) { // a broken stem: a stump with a splintered top
+        const low = t.sh < 2.5, m = trs(t.x, gy - 0.15, t.z, yaw, rad * 0.5, t.sh + 0.15, rad * 0.5);
+        (low ? b.stumpLo : b.stumpHi).add(m, grey[0] * vari, grey[1] * vari, grey[2] * vari, t.d * 0.7, [0, 0, f.bl[2], f.bl[3]], wobAttr);
+        if (t.sh + 0.15 < SCRAMBLE + 0.2) addSolid(meshSolid(geos.stumpLo, m.clone(), t.x, t.z), rad * 0.8); // low enough to step or climb onto
+        else if (t.d >= 8) pushCol(colTrunks, t.x, t.z, { x: t.x, z: t.z, r: t.d / 200 + 0.25 });
+      } else {
+        b.trunk.add(trs(t.x, gy - 0.15, t.z, yaw, rad, t.sh, rad), grey[0] * vari, grey[1] * vari, grey[2] * vari, t.d * 0.7, [0, 0, f.bl[2], f.bl[3]], wobAttr);
+        if (t.d >= 8) pushCol(colTrunks, t.x, t.z, { x: t.x, z: t.z, r: t.d / 200 + 0.25 });
+      }
     } else if (t.st === 2) {
       const T = (15 + 1.3 * t.d) * P.decay, fd = clamp(t.t / T, 0, 1), cls = 1 + Math.floor(fd * 4.999), R = t.rest;
       const dirx = Math.cos(R.a), dirz = Math.sin(R.a), rr = (t.d / 200) * (1 - 0.15 * fd);
@@ -2677,8 +2874,11 @@ function buildWorld() {
         }
       }
       if (t.up && t.t < 70) {
-        const pr = 0.7 + t.d * 0.028, pf = 1 - t.t / 70, cyP = ground(t.x, t.z) + pr * 0.55 * pf + 0.1, th = 0.35 + 0.25 * pf;
-        b.plate.add(along(t.x - dirx * 0.15, cyP, t.z - dirz * 0.15, dirx, 0, dirz, pr * (0.7 + 0.3 * pf), th, pr * (0.5 + 0.5 * pf)), 0.62 * vari, 0.52 * vari, 0.42 * vari);
+        // the plate is what the root graph had inside the plate radius (the same radius as the pit it left), turned up with
+        // the stem: a soil clump round the collar with the roots that tore out with it, broken off at its rim
+        const soilI = t.soil ?? 0.6, pr = plateRadius(t.d, soilI) * 1.1, pf = 1 - t.t / 70, cyP = ground(t.x, t.z) + pr * 0.55 * pf + 0.1, th = plateThickness(t.d, soilI) * (0.7 + 0.5 * pf);
+        b.plate.add(along(t.x - dirx * 0.15, cyP, t.z - dirz * 0.15, dirx, 0, dirz, pr * (0.55 + 0.25 * pf), th, pr * (0.4 + 0.4 * pf)), 0.62 * vari, 0.52 * vari, 0.42 * vari);
+        wadRoots(b.wad, t, t.x - dirx * 0.1, cyP, t.z - dirz * 0.1, dirx, dirz, pr, pf);
         // the wad is a near-vertical soil wall: ellipsoid thin along the fall direction
         addSolid(ellipsoid(t.x - dirx * 0.15, cyP, t.z - dirz * 0.15, pr * (0.7 + 0.3 * pf), pr * (0.5 + 0.5 * pf), th * 0.5, -dirz, dirx), pr);
       }
@@ -2688,6 +2888,8 @@ function buildWorld() {
     const g = new THREE.Group(), b = B[ti];
     { const m = b.plate.build(geos.plate, mats.soil); if (m) g.add(m); }
     g.userData.hi = []; g.userData.lo = [];
+    if (b.wad.idx.length) { const m = new THREE.Mesh(arraysGeo(b.wad), mats.root); m.castShadow = true; m.receiveShadow = true; g.add(m); g.userData.hi.push(m); }
+    for (const [batch, geo] of [[b.stumpLo, geos.stumpLo], [b.stumpHi, geos.stumpHi]]) { const m = batch.build(geo, mats.bark, { farMin: 12, form: true }); if (m) { g.add(m); g.userData.hi.push(m); } }
     b.rk.forEach((rb, i) => { const hi = rb.build(rocks.big[i], rockMat); if (!hi) return; const lo = lodTwin(hi, rocks.bigLo[i], true); g.add(hi, lo); g.userData.hi.push(hi); g.userData.lo.push(lo); });
     {
       for (const [batch, hiG, loG] of [[b.trunk, geos.trunk, geos.trunkLo], [b.piece, geos.piece, geos.pieceLo], [b.butt, geos.butt, geos.buttLo]]) {
@@ -4354,6 +4556,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
+  plants: { lib: plantLib, roots: () => rootMeshObj, rootCells: () => rootCells, PL },
   gym: { get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },
   loco: { stemAt, stemUnder, assess, grade, holdsNear, placeContact, stability, quadAllows, limbAt, GAIT4, TRACTION, get need() { return body.need; }, get q() { return body.q; } }, col: { topOf, supportAt, ceilingAt, duckPosture, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },

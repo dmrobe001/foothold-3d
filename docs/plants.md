@@ -1,6 +1,6 @@
 # Plants: design for a branched, rooted, breakable plant model
 
-Status: **step 1 built** (skeletons, leaves, edible organs as data, near rendering, specimen stations); steps 2–4 are design. This replaces the "Trees: forks, branch hierarchy, stubs" sketch in
+Status: **steps 1 and 2 built** (skeletons, leaves, edible organs as data, near rendering, specimen stations; roots, wads, pits, stumps); steps 3–4 are design. This replaces the "Trees: forks, branch hierarchy, stubs" sketch in
 `extensibility.md` and folds in five requirements:
 
 1. leaf placement differs by plant;
@@ -249,8 +249,43 @@ What is not built yet:
   grow trees near the player individually from their own seed and history.
 - Light-driven growth. Crown length stands in for it.
 
-**Cost:** in the default forest, about 2.75 million triangles and about 500 draw calls near the player, against
-1.5 million and about 360 before.
+**Cost:** in the default forest, about 1.9 million triangles and about 400 draw calls near the player (roots included),
+against 1.5 million and about 360 before the rebuild. What brought it down from the first build's 3 million:
+- grown trees within 32 m instead of 45 m;
+- no bark on live twigs thinner than 1.2 cm, which are hidden in the foliage;
+- fewer tube sides.
+
+**Forks** (revised after play): a decurrent trunk carries on as one dominant leader, and the other leaders leave it one
+after another at staggered heights, each curving and kinking. The trunk keeps its girth into the fork; the pipe model
+had tapered it to a point there.
+
+## 8c. What step 2 actually does
+
+- **Roots** (`growRoots`). Each tree's root graph is grown from its own site: soil depth, slope, wetness and rock. Roots
+  are stored relative to the local ground surface, so the game drapes them over its terrain and over outcrop rock.
+  - The structure has 4–9 structural laterals, depending on species, with a zone of rapid taper, side roots and
+    sinkers; pine also has a taproot.
+  - Exposure follows two rules [model choice; numbers are guesses]:
+    - The buttress: every lateral leaves the stem above ground and sinks over 0.6 + 0.03·dbh metres. It forms the
+      trunk flare.
+    - A site term: shallow soil, wet ground, rock and the downhill side of a slope keep a root at the surface for longer.
+  - Roots are generated the first time a tree comes within 24 m of you, and kept.
+  - Exposed segments that stand more than 3.5 cm proud and are thicker than 2 cm become low solids your feet step on.
+- **Root wads.** The plate is the root graph within the plate radius, turned up with the stem. Laterals snap off at the
+  rim, and fine roots rot away first. A smaller soil clump sits round the collar.
+- **Pits** are carved into the 0.5 m ground. The bowl is the size and depth of the root plate (`plateRadius`,
+  `plateThickness`, shared with the wad), slightly upwind of the base. A mound forms where the plate stood and slumps
+  as it rots. Pits fill over centuries.
+  - Measured in the default world, 75-year-old pits are 0.4–0.6 m deep relative to the ground around them.
+- **Stumps.** A snag broken below 70 % of its live height gets a splintered top over a root flare. Those under about
+  1.5 m are solid you can step or climb onto, and they keep their roots.
+
+What is not built yet:
+- Stumps from snags that fell whole. The deadfall step drops the whole stem from its base, so a stump there would
+  overlap the log's butt. It needs the fall to start from the break height.
+- Hollow, rotted stumps and nurse seedlings.
+- Roots on logs that weren't uprooted.
+
 
 ## 9. How we check it (the plant gym)
 

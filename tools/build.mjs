@@ -14,6 +14,7 @@ const skeleton = `const SK = (() => {\n${skelSrc.replace(/^export (const|functio
 const plSrc = read('src/plants.js').replace(/^import \{[^}]*\} from '\.\/worldgen\.js';\n/m, ''), plNames = [...plSrc.matchAll(/^export (?:const|function) (\w+)/gm)].map((m) => m[1]);
 const plants = `const PL = (() => {\n${plSrc.replace(/^export (const|function) /gm, '$1 ')}\nreturn { ${plNames.join(', ')} };\n})();`;
 const game = read('src/game.js').replace(/^import \{[^}]*\} from '\.\/(worldgen|deadfall|gym)\.js';\n/gm, '').replace(/^import \* as SK from '\.\/skeleton\.js';\n/m, '').replace(/^import \* as PL from '\.\/plants\.js';\n/m, '');
+if (/^export /m.test(worldgen + game + deadfall + gym + plants + skeleton)) throw new Error('an export line was not stripped');
 if (/from '\.\/(worldgen|deadfall|skeleton|gym|plants)\.js'/.test(game + deadfall + gym + plants)) throw new Error('module import not stripped');
 let html = read('index.html')
   .replace(/<!doctype html>\n?/i, '').replace(/<\/?html[^>]*>\n?/g, '').replace(/<\/?head>\n?/g, '').replace(/<\/?body>\n?/g, '')
