@@ -160,10 +160,12 @@ const PUSH = {
 function pushPatch(sh, footR) {
   Object.assign(sh.uniforms, PUSH, { uFootR: { value: footR } });
   sh.vertexShader = `uniform vec4 uPA[4]; uniform vec4 uPB[4]; uniform vec4 uFeet[2]; uniform float uFootR;
-    vec3 pushDisp(vec3 wp){
+    // io: this instance's origin (world), up: how upright its local Y axis is. Only the pushed plant's own upright
+    // instances follow the push; logs, fallen branches and neighbouring plants inside its radius stay put.
+    vec3 pushDisp(vec3 wp, vec3 io, float up){
       vec3 d = vec3(0.0);
       for (int i = 0; i < 4; i++) {           // a pushed shrub bends from its base; tips move most
-        vec4 a = uPA[i], b = uPB[i]; if (b.w <= 0.0) continue;
+        vec4 a = uPA[i], b = uPB[i]; if (b.w <= 0.0 || up < 0.8 || length(io.xz - a.xz) > 0.8) continue;
         float hw = clamp((wp.y - a.y) / a.w, 0.0, 1.2); hw = hw * hw;
         float w = (1.0 - smoothstep(b.z * 0.55, b.z, length(wp.xz - a.xz))) * (1.0 - smoothstep(1.1, 1.4, (wp.y - a.y) / a.w));
         d.xz += b.xy * w * hw; d.y -= length(b.xy) * w * hw * 0.3;
@@ -178,11 +180,14 @@ function pushPatch(sh, footR) {
     }
   ` + sh.vertexShader.replace('#include <project_vertex>', `
     vec4 mvPosition = vec4(transformed, 1.0);
+    vec3 pushIO = vec3(1e6); float pushUp = 0.0;
     #ifdef USE_INSTANCING
       mvPosition = instanceMatrix * mvPosition;
+      pushIO = (modelMatrix * vec4(instanceMatrix[3].xyz, 1.0)).xyz;
+      pushUp = normalize(instanceMatrix[1].xyz).y;
     #endif
     mvPosition = modelMatrix * mvPosition;
-    mvPosition.xyz += pushDisp(mvPosition.xyz);
+    mvPosition.xyz += pushDisp(mvPosition.xyz, pushIO, pushUp);
     mvPosition = viewMatrix * mvPosition;
     gl_Position = projectionMatrix * mvPosition;`);
 }
