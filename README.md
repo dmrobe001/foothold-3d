@@ -37,7 +37,11 @@ A stem, a sapling or a slim trunk is something a hand can close round; any other
 - Rises up to 0.55 m are steps. A ledge up to 1.35 m is pulled up onto, hands on its lip, if there is something to hold.
 - A **hurdle** (too high to step, at most 1.15 m high and 0.9 m deep, with footing beyond) is vaulted: its top is
   read along seven lines across the body's width, and you go over where it is lowest, hands on the top and legs swung
-  out over that side.
+  out over that side. Reading for going over, a stem overhead counts as part of the obstacle, and a lower stem or rock
+  inside it can take a step on the way (a stem resting across another is gone over from the lower one).
+- **Over or under**: when a stem could be either, you go over while looking ahead or up and under while looking
+  clearly down (more than about 17° below level). If there is no way under (less than crawling height between the floor
+  and the stem anywhere along the way, or a floor rise too big to step), you go over regardless.
 - Trunks and woody stems taller than a leg are walked around; low plants are waded through.
 - The hands are needed when the path stays steeper than the footing's traction (one bump is a step, not a slope),
   when there is a ledge, or when the headroom is under 1.1 m (down to 0.55 m, crawling low). Then the best hold
