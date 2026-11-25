@@ -84,8 +84,10 @@ Switches let you change, live:
 - whether roots and ground cover are shown;
 - the pixel ratio.
 
-**Run benchmark** (about a minute; stand still) settles for 1.5 s and then measures 3 s in each of 11 configurations,
-and writes a report you can copy and paste back. On a 60 Hz screen frame intervals come in 16.7 ms steps, so the CPU
+**Run benchmark** (about a minute) settles for 1.5 s, then measures each of 11 configurations from the same start. By
+default it walks a wide arc for 4.5 s in each, which catches the stalls that come from refreshing the scene as you
+move. The report counts dropped frames and lists the slowest ones with their CPU time by stage. Copy it and paste it
+back. On a 60 Hz screen frame intervals come in 16.7 ms steps, so the CPU
 and GPU columns are the sharper measure.
 
 ## Testing gym

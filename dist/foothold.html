@@ -164,7 +164,8 @@
     <label for="qGround">Ground cover<select id="qGround"><option value="1">Shown</option><option value="0">Hidden</option></select></label>
     <label for="qPR">Resolution<select id="qPR"><option value="auto">Default</option><option value="1">1× pixels</option><option value="0.75">0.75× pixels</option><option value="0.5">0.5× pixels</option></select></label>
   </div>
-  <div class="actions"><button class="btn primary" id="bBench" type="button">Run benchmark (~40 s)</button><button class="btn" id="bPerfCopy" type="button">Copy report</button></div>
+  <label class="check"><input type="checkbox" id="qWalk" checked> Walk during the benchmark (catches the stalls you feel when moving)</label>
+  <div class="actions"><button class="btn primary" id="bBench" type="button">Run benchmark (~1 min)</button><button class="btn" id="bPerfCopy" type="button">Copy report</button></div>
   <textarea id="perfOut" readonly></textarea>
 </section>
 
@@ -2621,7 +2622,7 @@ function plantVariant(sp, ci, shape, si) {
   barkGeo.setAttribute('normal', new THREE.Float32BufferAttribute(B.nor, 3)); barkGeo.setAttribute('uv', new THREE.Float32BufferAttribute(B.uv, 2)); barkGeo.setIndex(B.idx);
   const sc = (a) => a.map((q) => q / hRep);
   const leafGeo = cardGeometry(PL.foliageCards(P, seed + 1).map((k) => ({ ...k, c: sc(k.c), u: sc(k.u), v: sc(k.v) })));
-  v = { key, sp, P, hRep, crRep, barkGeo, leafGeo, bark: null, leaf: null, cap: 0, n: 0 };
+  v = { key, sp, P, hRep, crRep, barkGeo, leafGeo, bark: null, leaf: null, cap: 0, n: 0, cast: ci >= 2 }; // saplings cast no shadow: small, and each caster is a draw call in the shadow pass
   plantLib.set(key, v); return v;
 }
 function plantMeshes(v, need) { // (re)allocate a variant's instanced meshes to hold `need` trees
@@ -2635,7 +2636,7 @@ function plantMeshes(v, need) { // (re)allocate a variant's instanced meshes to 
   v.leaf.instanceMatrix = v.bark.instanceMatrix;
   v.bark.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3); v.leaf.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
   v.bark.customDepthMaterial = bendDepthMat; v.leaf.customDepthMaterial = treeMats.nearFolDepth;
-  for (const m of [v.bark, v.leaf]) { m.frustumCulled = false; m.castShadow = true; m.receiveShadow = true; m.count = 0; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); }
+  for (const m of [v.bark, v.leaf]) { m.frustumCulled = false; m.castShadow = v.cast; m.receiveShadow = true; m.count = 0; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); }
   v.cap = cap; v.bendA = bend; v.wobA = wob; plantGroup.add(v.bark, v.leaf);
 }
 function refreshPlants(px, pz, force) {
@@ -2687,20 +2688,44 @@ function arraysGeo(A) {
   g.setAttribute('uv', new THREE.Float32BufferAttribute(A.uv, 2)); g.setAttribute('color', new THREE.Float32BufferAttribute(A.col, 3)); g.setIndex(A.idx);
   return g;
 }
+// Root graphs are grown a few at a time (nearest first, within a time budget per frame) so walking into new ground
+// never stalls a frame; the merged mesh lives in one reusable buffer that only grows.
+let rootPick = [], rootQueue = [], rootDirty = false, rootBuf = null;
 function refreshRoots(px, pz) {
-  const out = { pos: [], nor: [], uv: [], col: [], idx: [] }, R2 = ROOT_R * ROOT_R;
+  const R2 = ROOT_R * ROOT_R; rootPick = [];
   for (let ci = Math.floor((px - ROOT_R + HALF) / 16); ci <= Math.floor((px + ROOT_R + HALF) / 16); ci++)
     for (let cj = Math.floor((pz - ROOT_R + HALF) / 16); cj <= Math.floor((pz + ROOT_R + HALF) / 16); cj++)
-      for (const r of rootCells.get(ci * 4096 + cj) || []) {
-        if ((r.x - px) ** 2 + (r.z - pz) ** 2 > R2) continue;
-        const M = r.m || (r.m = treeRoots(r.t)), base = out.pos.length / 3;
-        for (const k of ['pos', 'nor', 'uv', 'col']) for (const v of M[k]) out[k].push(v);
-        for (const i of M.idx) out.idx.push(i + base);
-      }
-  if (rootMeshObj) { plantGroup.remove(rootMeshObj); rootMeshObj.geometry.dispose(); rootMeshObj = null; }
-  if (!out.idx.length) return;
-  rootMeshObj = new THREE.Mesh(arraysGeo(out), mats.root); rootMeshObj.visible = perfOpt.roots; rootMeshObj.castShadow = true; rootMeshObj.receiveShadow = true; rootMeshObj.frustumCulled = false;
-  plantGroup.add(rootMeshObj);
+      for (const r of rootCells.get(ci * 4096 + cj) || []) { const d2 = (r.x - px) ** 2 + (r.z - pz) ** 2; if (d2 <= R2) { rootPick.push(r); r.d2 = d2; } }
+  rootQueue = rootPick.filter((r) => !r.m).sort((a, b) => a.d2 - b.d2);
+  rootDirty = true;
+}
+function rootWork(budget) {
+  const t0 = performance.now();
+  while (rootQueue.length && performance.now() - t0 < budget) { const r = rootQueue.shift(); if (!r.m) { r.m = treeRoots(r.t); rootDirty = true; } }
+  if (rootDirty && (!rootQueue.length || budget === Infinity)) { rootDirty = false; assembleRoots(); }
+}
+function assembleRoots() {
+  let nv = 0, ni = 0; for (const r of rootPick) if (r.m) { nv += r.m.pos.length / 3; ni += r.m.idx.length; }
+  if (!rootBuf || rootBuf.capV < nv || rootBuf.capI < ni) {
+    const capV = Math.max(4096, 1 << Math.ceil(Math.log2(nv + 1))), capI = Math.max(8192, 1 << Math.ceil(Math.log2(ni + 1)));
+    if (rootBuf) { plantGroup.remove(rootBuf.mesh); rootBuf.mesh.geometry.dispose(); }
+    const g = new THREE.BufferGeometry(), A = (n, k) => new THREE.BufferAttribute(new Float32Array(n * k), k).setUsage(THREE.DynamicDrawUsage);
+    g.setAttribute('position', A(capV, 3)); g.setAttribute('normal', A(capV, 3)); g.setAttribute('uv', A(capV, 2)); g.setAttribute('color', A(capV, 3));
+    g.setIndex(new THREE.BufferAttribute(new Uint32Array(capI), 1).setUsage(THREE.DynamicDrawUsage));
+    const mesh = new THREE.Mesh(g, mats.root); mesh.castShadow = false; mesh.receiveShadow = true; mesh.frustumCulled = false;
+    rootBuf = { capV, capI, mesh }; rootMeshObj = mesh; plantGroup.add(mesh);
+  }
+  const g = rootBuf.mesh.geometry, P = g.attributes.position.array, Nn = g.attributes.normal.array, U = g.attributes.uv.array, C = g.attributes.color.array, I = g.index.array;
+  let v = 0, k = 0;
+  for (const r of rootPick) {
+    const M = r.m; if (!M) continue;
+    P.set(M.pos, v * 3); Nn.set(M.nor, v * 3); U.set(M.uv, v * 2); C.set(M.col, v * 3);
+    for (let q = 0; q < M.idx.length; q++) I[k + q] = M.idx[q] + v;
+    v += M.pos.length / 3; k += M.idx.length;
+  }
+  for (const at of [g.attributes.position, g.attributes.normal, g.attributes.uv, g.attributes.color]) { at.clearUpdateRanges(); at.addUpdateRange(0, v * at.itemSize); at.needsUpdate = true; }
+  g.index.clearUpdateRanges(); g.index.addUpdateRange(0, k); g.index.needsUpdate = true;
+  g.setDrawRange(0, k); rootBuf.mesh.visible = perfOpt.roots && k > 0;
 }
 // the roots that tore out with a fallen tree's plate: its root graph, turned up about the plate's hinge so the stem's
 // axis lies along the fall; laterals snap off at the plate rim; fine roots rot away first
@@ -2941,12 +2966,12 @@ function buildWorld() {
       shrub: new NearBatch(geos.shrub, mats.shrub, 9000), fern: new NearBatch(geos.fern, mats.fern, 9000),
       grass: new NearBatch(geos.grass, mats.grass, Q ? 18000 : 11000), sedge: new NearBatch(geos.grass, mats.grass, 7000),
       herb: new NearBatch(geos.herb, mats.shrub, 7000), litter: new NearBatch(geos.litter, mats.litter, 7000),
-      tleaf: new NearBatch(geos.tleaf, mats.shrub, 3000), tstem: new NearBatch(geos.tstem, mats.wood, 3000, { cast: true }),
+      tleaf: new NearBatch(geos.tleaf, mats.shrub, 3000), tstem: new NearBatch(geos.tstem, mats.wood, 3000),
       seedB: new NearBatch(geos.broadLo, mats.leaf, 4000), seedC: new NearBatch(geos.coneLo, mats.needle, 4000),
-      twig: new NearBatch(geos.twig, mats.wood, 5000), stick: new NearBatch(geos.stick, mats.wood, 4000, { cast: true }), limb: new NearBatch(geos.limb, mats.wood, 2000, { cast: true }),
-      ...Object.fromEntries(rocks.small.map((gm, i) => [`rockS${i}`, new NearBatch(gm, rockMat, 2000, { cast: true })])),
+      twig: new NearBatch(geos.twig, mats.wood, 5000), stick: new NearBatch(geos.stick, mats.wood, 4000), limb: new NearBatch(geos.limb, mats.wood, 2000, { cast: true }),
+      ...Object.fromEntries(rocks.small.map((gm, i) => [`rockS${i}`, new NearBatch(gm, rockMat, 2000)])),
       ...Object.fromEntries(rocks.big.map((gm, i) => [`rockB${i}`, new NearBatch(gm, rockMat, 300, { cast: true })])),
-      roundS: new NearBatch(rocks.roundS, rockMat, 3000, { cast: true }), roundB: new NearBatch(rocks.roundB, rockMat, 500, { cast: true }),
+      roundS: new NearBatch(rocks.roundS, rockMat, 3000), roundB: new NearBatch(rocks.roundB, rockMat, 500, { cast: true }),
     },
   };
   for (const nb of Object.values(near.b)) worldGroup.add(nb.mesh);
@@ -3053,8 +3078,10 @@ function onGround(x, y, z, yaw, s) { // a flat item lying on the local slope
   _m.makeBasis(_t.multiplyScalar(s), _n.multiplyScalar(s), _b.multiplyScalar(s)); _m.setPosition(x, y, z); return _m;
 }
 function refreshNear(px, pz, force = false) {
-  refreshPlants(px, pz, force);
-  if (!force && Math.hypot(px - near.cx, pz - near.cz) < 6) return;
+  const due = force || Math.hypot(px - near.cx, pz - near.cz) >= 6;
+  if (force || !due) refreshPlants(px, pz, force); // never both refreshes in one frame: the trees catch up next frame
+  rootWork(force ? Infinity : 1.5);
+  if (!due) return;
   near.cx = px; near.cz = pz;
   for (const nb of Object.values(near.b)) nb.reset();
   const Q = settings.quality === 'high', lith = LITH[W.opt.geology] || LITH.granite;
@@ -4510,6 +4537,7 @@ function loop(now) {
   if (!running) return;
   const dt = Math.min(0.1, (now - last) / 1000), interval = now - last; last = now;
   uTime.value = now / 1000;
+  if (bench.walk) { input.f = 1; input.run = true; player.yaw += dt * 0.12; player.pitch = bench.pitch; } // the benchmark walks a wide arc
   const c0 = performance.now();
   movePlayer(dt);
   const c1 = performance.now();
@@ -4546,7 +4574,7 @@ function loop(now) {
 // are kept apart, since shadows update every other frame by default and an uneven pair of frames reads as judder.
 // Note: a 60 Hz display rounds frame intervals to 16.7 ms steps, so the CPU and GPU times say more than fps does.
 const perfOpt = { shadow: 2, roots: true, ground: true, pr: 'auto' };
-const perf = { n: 600, i: 0, count: 0, rows: new Float32Array(600 * 10), gpuQ: [], gpuPool: [], gpu: null };
+const perf = { n: 600, i: 0, count: 0, spikes: [], label: 'live', rows: new Float32Array(600 * 10), gpuQ: [], gpuPool: [], gpu: null };
 {
   const gl = renderer.getContext();
   const ext = gl.getExtension && gl.getExtension('EXT_disjoint_timer_query_webgl2');
@@ -4574,6 +4602,11 @@ function perfFrame(interval, move, nearT, setup, submit, shadow) {
   r[k] = interval; r[k + 1] = move; r[k + 2] = nearT; r[k + 3] = setup; r[k + 4] = submit; r[k + 5] = shadow ? 1 : 0;
   r[k + 6] = info.calls; r[k + 7] = info.triangles; r[k + 8] = lastGpu; r[k + 9] = lastGpuShadow; lastGpu = NaN; // GPU results arrive late: col 9 says whether that frame drew shadows
   perf.i = (perf.i + 1) % perf.n; perf.count++;
+  if (interval > 24 && perf.count > 30) { // a dropped frame: keep what the CPU was doing in it and the frame before
+    const pk = ((perf.i - 2 + perf.n) % perf.n) * 10;
+    perf.spikes.push({ at: perf.label, interval, move, near: nearT, setup, submit, shadow, prevSubmit: r[pk + 4], prevNear: r[pk + 2], prevShadow: r[pk + 5] });
+    if (perf.spikes.length > 200) perf.spikes.shift();
+  }
 }
 function perfStats(frames) { // over the last `frames` frames
   const m = Math.min(frames, perf.count, perf.n), r = perf.rows, cols = Array.from({ length: 10 }, () => []);
@@ -4634,29 +4667,36 @@ const BENCH = [
   ['0.5× pixels', { qPR: '0.5' }],
 ];
 let benching = false;
+const bench = { walk: false, pitch: 0 };
 $('bBench').addEventListener('click', async () => {
   if (benching) return; benching = true; $('bBench').disabled = true;
   const keep = Object.fromEntries(['qShadow', 'qRing', 'qRoots', 'qGround', 'qPR'].map((id) => [id, $(id).value]));
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  const rows = [];
-  input.keys.clear?.();
+  const rows = [], start = { x: player.x, z: player.z, yaw: player.yaw, pitch: player.pitch }, walk = $('qWalk').checked;
+  input.keys.clear?.(); perf.spikes = [];
+  const home = () => { player.x = start.x; player.z = start.z; player.yaw = start.yaw; player.pitch = start.pitch; resetRig(); refreshNear(player.x, player.z, true); };
   for (const [name, set] of BENCH) {
     for (const [id, v] of Object.entries(keep)) $(id).value = set[id] ?? v;
-    applyPerfOpt();
+    applyPerfOpt(); home(); bench.pitch = start.pitch;
     $('perfLive').textContent = `measuring: ${name} …`;
-    await wait(1500); const c0 = perf.count; await wait(3000);
-    const s = perfStats(perf.count - c0); rows.push([name, s]);
+    perf.label = 'settle'; await wait(1500);
+    bench.walk = walk; perf.label = name; const c0 = perf.count; await wait(walk ? 4500 : 3000); bench.walk = false; input.f = 0; input.run = false;
+    const s = perfStats(perf.count - c0); s.drops = perf.spikes.filter((k) => k.at === name).length; rows.push([name, s]);
   }
   for (const [id, v] of Object.entries(keep)) $(id).value = v;
-  applyPerfOpt();
+  applyPerfOpt(); home(); perf.label = 'live';
   const b = rows[0][1];
   const pad = (t, n) => (t + ' '.repeat(n)).slice(0, n);
-  const table = rows.map(([n, s]) => `${pad(n, 30)} ${pad(f1(s.med), 6)} ${pad(f1(s.p95), 6)} ${pad(f1(s.submit), 7)} ${pad(f1(s.gpu), 7)} ${pad(String(Math.round(s.calls)), 6)} ${(s.tris / 1e6).toFixed(2)}M${s === b ? '' : `   gpu ${Number.isNaN(s.gpu) ? '—' : (s.gpu - b.gpu >= 0 ? '+' : '') + f1(s.gpu - b.gpu)} · frame ${(s.med - b.med >= 0 ? '+' : '') + f1(s.med - b.med)}`}`).join('\n');
+  const table = rows.map(([n, s]) => `${pad(n, 30)} ${pad(f1(s.med), 6)} ${pad(f1(s.p95), 6)} ${pad(String(s.drops) + '/' + s.m, 8)} ${pad(f1(s.submit), 7)} ${pad(f1(s.near), 5)} ${pad(f1(s.gpu), 7)} ${pad(String(Math.round(s.calls)), 6)} ${(s.tris / 1e6).toFixed(2)}M${s === b ? '' : `   gpu ${Number.isNaN(s.gpu) ? '—' : (s.gpu - b.gpu >= 0 ? '+' : '') + f1(s.gpu - b.gpu)} · frame ${(s.med - b.med >= 0 ? '+' : '') + f1(s.med - b.med)}`}`).join('\n');
   $('perfOut').value = `${perfHeader()}
 
-benchmark (ms; frame = time between frames, median and 95th percentile; submit = CPU to issue the render; gpu = GPU time)
-${pad('configuration', 30)} ${pad('frame', 6)} ${pad('p95', 6)} ${pad('submit', 7)} ${pad('gpu', 7)} ${pad('calls', 6)} tris
+benchmark, ${walk ? 'walking an arc' : 'standing still'} (ms; frame = time between frames, median and 95th percentile; drops = frames over 24 ms / frames;
+submit = CPU to issue the render; near = CPU for near-field, tree and root refresh; gpu = GPU time)
+${pad('configuration', 30)} ${pad('frame', 6)} ${pad('p95', 6)} ${pad('drops', 8)} ${pad('submit', 7)} ${pad('near', 5)} ${pad('gpu', 7)} ${pad('calls', 6)} tris
 ${table}
+
+slowest frames (ms: interval · body · near · set-up · submit, shadow map redrawn?; then the frame before)
+${perf.spikes.filter((k) => k.at !== 'settle').sort((a, b) => b.interval - a.interval).slice(0, 8).map((k) => `${pad(k.at, 30)} ${f1(k.interval)} · ${f1(k.move)} · ${f1(k.near)} · ${f1(k.setup)} · ${f1(k.submit)}${k.shadow ? ' shadow' : ''}   before: near ${f1(k.prevNear)} submit ${f1(k.prevSubmit)}${k.prevShadow ? ' shadow' : ''}`).join('\n') || 'none'}
 
 live before the benchmark
 ${perfSummary(240)}`;
@@ -4709,7 +4749,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
-  plants: { lib: plantLib, roots: () => rootMeshObj, rootCells: () => rootCells, PL },
+  plants: { lib: plantLib, roots: () => rootMeshObj, rootQueue: () => rootQueue, rootCells: () => rootCells, PL },
   gym: { get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },
   loco: { stemAt, stemUnder, assess, grade, holdsNear, placeContact, stability, quadAllows, limbAt, GAIT4, TRACTION, get need() { return body.need; }, get q() { return body.q; } }, col: { topOf, supportAt, ceilingAt, duckPosture, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },

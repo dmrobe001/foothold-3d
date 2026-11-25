@@ -171,7 +171,8 @@
     <label for="qGround">Ground cover<select id="qGround"><option value="1">Shown</option><option value="0">Hidden</option></select></label>
     <label for="qPR">Resolution<select id="qPR"><option value="auto">Default</option><option value="1">1× pixels</option><option value="0.75">0.75× pixels</option><option value="0.5">0.5× pixels</option></select></label>
   </div>
-  <div class="actions"><button class="btn primary" id="bBench" type="button">Run benchmark (~40 s)</button><button class="btn" id="bPerfCopy" type="button">Copy report</button></div>
+  <label class="check"><input type="checkbox" id="qWalk" checked> Walk during the benchmark (catches the stalls you feel when moving)</label>
+  <div class="actions"><button class="btn primary" id="bBench" type="button">Run benchmark (~1 min)</button><button class="btn" id="bPerfCopy" type="button">Copy report</button></div>
   <textarea id="perfOut" readonly></textarea>
 </section>
 
