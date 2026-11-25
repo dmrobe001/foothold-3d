@@ -117,13 +117,57 @@ Crown length now depends on light for small trees (`crownFrac`): an open-grown t
 the ground, by species shade tolerance (fir 1, maple 0.8, birch 0.4, pine 0.3). Before this, a 10 cm open-grown fir's
 live crown started 2.4 m up, so there was little in reach to push through or step on.
 
+## Everything near the body
+
+**What is simulated.** Every plant segment within 0.4 m of a body capsule, plus its path back to whatever rigid thing
+carries it (a trunk or fallen stem; for a sapling, the ground) and, for a twig cluster of 12 segments or fewer, the rest
+of it (`wakeNodes`). One group per plant. When the set grows, the group is rebuilt with the state of the nodes it keeps
+(the solver's `carry`), so nothing pops back to rest. An awake group lets go of nodes that are back at rest (under
+1.5 cm displaced); a sleeping one shrinks to what is near. A break rebuilds the group without the lost subtree, keeping
+the rest's state (`physRegroup`); before, the whole plant was dropped and went rigid for a few frames. Segments not
+simulated that hang off simulated ones move with their parent (`inheritDisp`).
+
+**Small plants.** Shrubs, tall shrubs, herbs, ferns and seedlings had no graph. Each geometry now gets a proxy skeleton
+fitted once (`proxyTemplate`): k-means clusters of its vertices, a three-segment stem from the base out to each cluster
+and on to its farthest vertex (seedlings: a central stem with side shoots). Each vertex is bound to its nearest proxy
+segment and moves with that segment's displacement, interpolated along it. Near the body a plant is drawn as its own mesh
+and its instance is hidden. Stem stiffness: shrubs E 6 GPa, ferns 0.8 GPa, herbs 1 GPa, with stem radii from plant
+height [rough]. Their stems kink (the joint frees) rather than break off.
+
+**Grass, sedges and leaves** are too soft to push back. Every foliage material pushes any vertex inside a body capsule
+out to its surface, less near the plant's rooted base (`bodyGuard` in the shader, the ten capsules as uniforms).
+
+**Rigid things.** Standing stems (their own leaning, tapering segments), fallen stems and roots are capsules for the
+limbs (`staticPush`). An overlapping limb is moved out by the whole overlap: a hand onto the surface, a swinging foot
+over or round, the chest and head bodily. The push relaxes over 0.25 s, so a hand put on a trunk stays there. Feet are
+never placed inside a trunk.
+
+**No tunnelling.** The solver sweeps the body capsules from where they were last step to where they are now across its
+four substeps. A final contact-only pass ends each substep with nothing inside the body.
+
+**Contacts.** `body.contacts` holds, for each hand and foot, the point, normal, what it touches (branch, trunk, log,
+root, ground, rock) and the force in newtons (from the solver for branches; body weight shared between planted feet).
+With the body shown, a dot marks each contact, coloured by what it touches.
+
+**Measured** (`physics.clipScan()`: body capsule vs plant segment overlaps deeper than 1 cm, sampled every third frame,
+main-thread solver, the development container):
+
+| walk | before | after |
+|---|---|---|
+| forest, 60 s | 704 (702 shrubs, ferns, seedlings) | 8 |
+| fallen fir, 2 years | 61 | 0 |
+| sapling in the way | 35 | 4 |
+| sapling thicket | 101 | 19 |
+
+What remains is 3 mm twigs touching the body near their base, where the contact can only move the far end, and (on the
+worker) a frame of latency. Cost: about 50 simulated nodes in ordinary forest (under 2 ms per step); the thicket wakes
+about 800 and costs 4 ms on the main thread here, 10–20 ms on the worker with the renderer competing for the same CPU.
+
 ## Not yet
 
-- Shrubs, grass, leaves and roots. Shrubs need graphs; they still use the old spring. Grass still bends in the shader
-  around the feet only.
+- Twigs touching near their base can stay a few centimetres inside the body (see above).
+- Rocks do not push the limbs.
 - Shadows of a bending branch stay at its rest pose.
-- The base ring of a side branch follows its parent's end, not the exact attachment point, which shows as a slight kink
-  under large bends.
-- The movement planner does not yet choose between pushing, ducking and going round from stiffness. The body walks its
-  path, and either bends what is in the way or is stopped by it. Feedback shoves the body but does not steer it.
+- The movement planner does not yet choose between pushing, ducking and going round from stiffness. Feedback shoves
+  the body but does not steer it.
 - Stepping uses rest-pose branch positions, not where the simulated rod currently is.
