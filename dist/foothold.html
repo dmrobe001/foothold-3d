@@ -2444,10 +2444,13 @@ function supportAt(x, z) {
   supKind = kind;
   return y;
 }
-function ceilingAt(x, z, feet) { // lowest underside of a stem passing overhead that a duck could get under
+// lowest underside of a stem passing overhead that a duck could get under. With `along` (a heading), a stem rising
+// along that heading is the one being climbed, not something overhead, and is skipped.
+function ceilingAt(x, z, feet, along) {
   let c = Infinity; const list = solids.get(ckey8(x, z)); if (!list) return c;
   for (const o of list) {
     if (o.kind !== 'log' || o.r0 === undefined) continue;
+    if (along) { const vx = o.x1 - o.x0, vz = o.z1 - o.z0, l = Math.hypot(vx, vz) || 1; if (Math.abs(vx * along[0] + vz * along[1]) / l > 0.85 && Math.abs(o.ya1 - o.ya0) / l > 0.3) continue; }
     logUnder = -Infinity; if (topOf(o, x, z) === -Infinity) continue;
     if (logUnder > feet + CLEAR4 - 0.2 && logUnder < c) c = logUnder;
   }
@@ -2652,10 +2655,10 @@ function assess(x, z, px, pz) {
   const sup = footSupport(x, z), kind = footKind, rise = sup - rig.feet;
   if (rise > SCRAMBLE || trunkHit(x, z)) return null;
   const mx = x - px, mz = z - pz, ml = Math.hypot(mx, mz) || 1, ux = mx / ml, uz = mz / ml;
-  const head = Math.min(ceilingAt(x, z, sup), ceilingAt(x + ux * 0.45, z + uz * 0.45, sup)) - sup;
-  if (head < CLEAR4) return null;
+  const U = [ux, uz], head = Math.min(ceilingAt(x, z, sup, U), ceilingAt(x + ux * 0.45, z + uz * 0.45, sup, U), body.four ? ceilingAt(x + ux * 0.9, z + uz * 0.9, sup, U) : Infinity) - sup;
+  if (head < CLEAR4) return null; // on hands, the head and chest are well ahead of the hips
   let headAhead = head; // the hands come down before the head gets there
-  for (const d of [0.7, 0.95, 1.2]) headAhead = Math.min(headAhead, ceilingAt(x + ux * d, z + uz * d, sup) - sup);
+  for (const d of [0.7, 0.95, 1.2]) headAhead = Math.min(headAhead, ceilingAt(x + ux * d, z + uz * d, sup, U) - sup);
   if (body.four && rise < -1.0) return null; // holding on, you don't let go over a drop
   supportRef = sup; const g = grade(x, z, sup, ux, uz); supportRef = rig.feet;
   const tf = TRACTION[kind] ?? MAX_SLOPE;
@@ -2759,7 +2762,7 @@ function movePlayer(dt) {
   body.mix = clamp((body.mix || 0) + (body.four ? dt * 3 : -dt * 3), 0, 1); // the posture eases between walking and on hands
   { // headroom over the body's length (on hands the head and chest are well ahead of the hips)
     const fx = body.four ? body.q.a[0] : -Math.sin(player.yaw), fz = body.four ? body.q.a[2] : -Math.cos(player.yaw), fl = Math.hypot(fx, fz) || 1;
-    let c = Infinity; for (const d of [-0.2, 0, 0.3, 0.6, 0.9]) c = Math.min(c, ceilingAt(player.x + fx / fl * d, player.z + fz / fl * d, rig.feet));
+    let c = Infinity; for (const d of [-0.2, 0, 0.3, 0.6, 0.9]) c = Math.min(c, ceilingAt(player.x + fx / fl * d, player.z + fz / fl * d, rig.feet, [fx / fl, fz / fl]));
     body.head = c === Infinity ? 2 : c - rig.feet;
   }
   const moved = Math.hypot(player.x - px, player.z - pz);
