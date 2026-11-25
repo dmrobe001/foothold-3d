@@ -26,14 +26,22 @@ Panels: **Map** (tap to teleport), **Stand** (inventory, diameter distribution, 
 
 ## Movement and collision
 
-- **Body:** you stand on the highest solid surface under your feet, which is the ground or the top of a rock, log or root wad.
-  Rock tops are sampled from each rock's actual geometry, so ledges hold you.
-- **Steps:** rises up to 0.55 m are taken in stride.
-- **Scramble:** pushing forward into something up to 1.35 m high with a standable top climbs onto it in a short animation.
-- **Blocks:** trunks, taller steep-sided things, and natural ground steeper than about 49°.
-- **No slowdowns.** Instead the camera shows effort with damped springs: it dips and catches up on step-ups, compresses on
-  landings, pitches and rolls during scrambles, shifts side to side in stride on steep climbs, and dodges sideways past
-  shrubs. Sway and dodge are pure translation, so the horizon stays level; only scrambles tilt it. Flat ground has no head bob. **World → Camera motion** sets Full, Reduced or Off.
+**Where you can go** (the collision body): you stand on the highest solid surface under your feet. Rock tops are
+sampled from each rock's geometry. Rises up to 0.55 m are steps. Pushing into something up to 1.35 m high with a
+standable top scrambles onto it. Trunks and woody stems taller than a leg (tall shrubs, saplings) are walked around.
+Low plants are waded through.
+
+**How you move there** (a procedural body, mostly unrendered):
+- **Feet** plant one at a time on the real surface, in a gait cycle driven by distance (walk: always one foot down; run: brief flight).
+- **Pelvis** sits as high as the planted legs can reach.
+- **Torso** leans into slopes, heaves forward on each uphill push-off, and folds over ledges when scrambling.
+- **Arms** swing; one reaches out to push a tall shrub aside or plant on a ledge or low barrier.
+- **Shrubs** are springs: they bend from the base under the hand and sway back after you pass. Low plants part around your legs.
+- **Camera** is the eye. Like your vestibulo-ocular reflex, it passes about 20% of the rhythmic gait bounce but all
+  of the terrain-driven and posture-driven motion.
+
+World panel: **Camera motion** (Full, Reduced, Off), **View** (first person, or third person for debugging; V toggles),
+**Body** (show the skeleton in first person). Tuning knobs are in `RIG` in `src/game.js`.
 
 ## Reproduce stand statistics without a browser
 

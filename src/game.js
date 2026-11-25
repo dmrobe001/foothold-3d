@@ -6,7 +6,7 @@ const $ = (id) => document.getElementById(id);
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 
 // ---------------------------------------------------------------- settings
-const settings = { seed: 1, age: 160, moisture: 'mesic', storms: 'occasional', geology: 'granite', quality: isTouch ? 'low' : 'high', motion: 'full' };
+const settings = { seed: 1, age: 160, moisture: 'mesic', storms: 'occasional', geology: 'granite', quality: isTouch ? 'low' : 'high', motion: 'full', view: 'first', body: 'hidden' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('foothold.settings') || '{}')); } catch (e) { /* storage unavailable */ }
 const saveSettings = () => { try { localStorage.setItem('foothold.settings', JSON.stringify(settings)); } catch (e) { /* ignore */ } };
 
@@ -151,7 +151,41 @@ tex.bark.repeat.set(1, 6);
 
 // ---------------------------------------------------------------- materials
 const uTime = { value: 0 };
-function foliageMaterial(map, { wind = 0.012, alphaTest = 0.42 } = {}) {
+// Vegetation the body touches: up to 4 shrubs being pushed (base position + height, displacement + radius) and two feet.
+const PUSH = {
+  uPA: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) }, uPB: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) },
+  uFeet: { value: Array.from({ length: 2 }, () => new THREE.Vector4()) },
+};
+function pushPatch(sh, footR) {
+  Object.assign(sh.uniforms, PUSH, { uFootR: { value: footR } });
+  sh.vertexShader = `uniform vec4 uPA[4]; uniform vec4 uPB[4]; uniform vec4 uFeet[2]; uniform float uFootR;
+    vec3 pushDisp(vec3 wp){
+      vec3 d = vec3(0.0);
+      for (int i = 0; i < 4; i++) {           // a pushed shrub bends from its base; tips move most
+        vec4 a = uPA[i], b = uPB[i]; if (b.w <= 0.0) continue;
+        float hw = clamp((wp.y - a.y) / a.w, 0.0, 1.2); hw = hw * hw;
+        float w = 1.0 - smoothstep(b.z * 0.55, b.z, length(wp.xz - a.xz));
+        d.xz += b.xy * w * hw; d.y -= length(b.xy) * w * hw * 0.3;
+      }
+      for (int i = 0; i < 2; i++) {           // legs part low plants radially
+        vec4 f = uFeet[i]; if (f.w <= 0.0 || uFootR <= 0.0) continue;
+        vec2 o = wp.xz - f.xz; float r = length(o), h = wp.y - f.y;
+        float w = (1.0 - smoothstep(0.0, uFootR, r)) * clamp(h / 0.2, 0.0, 1.0) * (1.0 - smoothstep(0.8, 1.2, h));
+        d.xz += (o / max(r, 1e-3)) * w * uFootR * 0.6; d.y -= w * 0.06;
+      }
+      return d;
+    }
+  ` + sh.vertexShader.replace('#include <project_vertex>', `
+    vec4 mvPosition = vec4(transformed, 1.0);
+    #ifdef USE_INSTANCING
+      mvPosition = instanceMatrix * mvPosition;
+    #endif
+    mvPosition = modelMatrix * mvPosition;
+    mvPosition.xyz += pushDisp(mvPosition.xyz);
+    mvPosition = viewMatrix * mvPosition;
+    gl_Position = projectionMatrix * mvPosition;`);
+}
+function foliageMaterial(map, { wind = 0.012, alphaTest = 0.42, footR = null } = {}) {
   const m = new THREE.MeshLambertMaterial({ map, alphaTest, side: THREE.DoubleSide, vertexColors: true });
   const uWind = { value: wind };
   m.onBeforeCompile = (sh) => {
@@ -168,15 +202,17 @@ function foliageMaterial(map, { wind = 0.012, alphaTest = 0.42 } = {}) {
       transformed += normal * sin(uTime * 4.0 + dot(position, vec3(17.0, 11.0, 13.0))) * uWind * 0.25;`);
     // Keep the shared "crown" normals on both faces of each card, so foliage shades as a volume, not as flat planes.
     sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replaceAll('normal *= faceDirection;', ''));
+    if (footR !== null) pushPatch(sh, footR);
   };
+  if (footR !== null) m.customProgramCacheKey = () => `push${footR}`;
   return m;
 }
 const mats = {
   leaf: foliageMaterial(tex.leaf),
   needle: foliageMaterial(tex.needle, { alphaTest: 0.38 }),
-  shrub: foliageMaterial(tex.shrub, { wind: 0.04 }),
-  fern: foliageMaterial(tex.fern, { wind: 0.06, alphaTest: 0.4 }),
-  grass: foliageMaterial(tex.grass, { wind: 0.09, alphaTest: 0.35 }),
+  shrub: foliageMaterial(tex.shrub, { wind: 0.04, footR: 0.5 }),
+  fern: foliageMaterial(tex.fern, { wind: 0.06, alphaTest: 0.4, footR: 0.45 }),
+  grass: foliageMaterial(tex.grass, { wind: 0.09, alphaTest: 0.35, footR: 0.32 }),
   bark: new THREE.MeshLambertMaterial({ map: tex.bark }),
   soil: new THREE.MeshLambertMaterial({ map: tex.soil }),
   wood: new THREE.MeshLambertMaterial({ map: tex.bark }),
@@ -293,6 +329,7 @@ function nearPatchGeo(half = 48, step = 0.5) {
 }
 
 mats.bark.onBeforeCompile = bendPatch;
+mats.wood.onBeforeCompile = (sh) => pushPatch(sh, 0); // tall-shrub stems bend with their foliage
 mats.litter.map = tex.litter;
 
 // ---------------------------------------------------------------- geometry builders
@@ -1229,49 +1266,93 @@ function nearbyTrunks(x, z) {
   return out;
 }
 
-// ---------------------------------------------------------------- body and camera rig
-// The body moves smoothly and never slows for slopes or shrubs. Effort is shown by the camera instead, through damped
-// springs: a dip-and-catch on step-ups, knee compression on landing, a pitch-and-roll "vault" when scrambling, a
-// stride-locked side-to-side sway that grows with uphill steepness, and a sideways dodge around shrubs. Flat-ground walking
-// has no bob. Motion strength: settings.motion = full | reduced | off.
-const rig = { dodgeDir: 0, vSway: 0, lx: 0, lz: 0, climb: 0, feet: 0, vy: 0, oy: 0, voy: 0, lat: 0, vlat: 0, roll: 0, vroll: 0, pit: 0, vpit: 0, phase: 0, mantle: null, swayAmp: 0 };
+// ---------------------------------------------------------------- body
+// A procedural, mostly unrendered skeleton (after the "drive a few physical variables" approach of David Rosen's
+// Overgrowth talk). The collision body above decides where you are; this decides how you are standing there.
+//   feet:   plant one at a time on the real support surface; swing on an arc that clears what is underfoot
+//   pelvis: as high as both planted legs can reach (leg-length constraint), plus a crouch spring (landings, scrambles)
+//   torso:  leans with slope, acceleration, each uphill push-off, reaches and scrambles
+//   arms:   swing opposite the legs; reach to push tall shrubs aside, plant on ledges and low barriers
+//   head:   rides the torso. The camera is the eye. Like the vestibulo-ocular reflex, it passes only a fraction of the
+//           rhythmic gait bounce but all of the terrain-driven motion.
+// Everything is in metres and radians. Tuning lives in RIG.
 const MOTION = { full: 1, reduced: 0.4, off: 0 };
-// Tuning knobs. k values are spring stiffness (1/s²); damping ratio 1.1, settle time ≈ 5/√k seconds.
 const RIG = {
-  kLat: 220, kRoll: 200, kPitch: 150, kUp: 260, kDown: 420, // shrub dodge return / roll / scramble pitch / step catch-up / step-down
-  dipStep: 5,                         // extra downward head velocity per metre of step-up
-  swayFrom: 0.12, swayFull: 0.7,      // uphill gradient (rise/run) where stride sway starts and reaches full strength
-  swayLat: 0.2, swayBob: 0.07,     // full-strength sway: metres sideways, metres of bob (no roll: translation only)
+  leg: 0.88, hipW: 0.11, spine: 0.5, neck: 0.22, eyeFwd: 0.08, shoulderW: 0.19, upperArm: 0.3, foreArm: 0.32,
+  stepWalk: 0.68, stepRun: 1.2, lift: 0.1,
+  gaitPass: 0.2,          // share of the rhythmic pelvis bounce and weight shift that reaches the eye
+  leanSlope: 0.32, leanPush: 0.55, leanAccel: 0.05, gazeFollow: 0.3, // torso lean per unit uphill gradient, per push-off; camera follows 30% of lean in pitch
+  kPelvis: 320, kBase: 160, kLean: 140, kCrouch: 260, kLat: 260, kHand: 160,
+  plantK: 55, plantZeta: 0.5, pushReact: 0.08, // shrub stiffness (1/s²) and damping; head shift per metre of unyielded push
 };
-function resetRig() { Object.assign(rig, { lx: player.x, lz: player.z, feet: footSupport(player.x, player.z), vy: 0, oy: 0, voy: 0, lat: 0, vlat: 0, roll: 0, vroll: 0, pit: 0, vpit: 0, mantle: null, swayAmp: 0, vSway: 0, dodgeDir: 0 }); player.eye = rig.feet + 1.65; }
-function spring(x, v, target, k, dt) { // slightly overdamped, sub-stepped for stability
-  const c = 2.2 * Math.sqrt(k), n = Math.ceil(dt / 0.008), h = dt / n; // damping ratio 1.1: no overshoot
+const body = {
+  feet: [{ side: -1 }, { side: 1 }], next: 0, pelvis: new THREE.Vector3(), pvy: 0, base: 0, vbase: 0,
+  lean: 0, vlean: 0, crouch: 0, vcrouch: 0, lat: 0, vlat: 0, react: 0, vreact: 0, roll: 0, vroll: 0,
+  hands: [{ side: -1, p: new THREE.Vector3(), v: new THREE.Vector3(), target: null }, { side: 1, p: new THREE.Vector3(), v: new THREE.Vector3(), target: null }],
+  plants: [], fwd: [0, -1], speed: 0, phase: 0, stems: new Map(), lastVx: 0, lastVz: 0, airborne: false,
+};
+const rig = { climb: 0, feet: 0, vy: 0, mantle: null };
+function spring(x, v, target, k, dt, zeta = 1.1) {
+  const c = 2 * zeta * Math.sqrt(k), n = Math.ceil(dt / 0.008), h = dt / n;
   for (let i = 0; i < n; i++) { v += (-k * (x - target) - c * v) * h; x += v * h; }
   return [x, v];
 }
-// Sideways nudge past shrubs. The dodge side is chosen once, when the first shrub comes within reach (away from the
-// nearest stem), and held until every shrub is behind you, so walking through the middle of a bush or between two
-// bushes never flips the target back and forth. Strength is the strongest single shrub, easing in quadratically.
-function shrubPush(x, z, rx, rz) {
-  let w = 0, nearest = Infinity, nearestSide = 0;
-  const ci = Math.floor((x + HALF) / NC), cj = Math.floor((z + HALF) / NC);
+function resetRig() {
+  rig.feet = footSupport(player.x, player.z); rig.vy = 0; rig.mantle = null; rig.climb = 0;
+  const rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+  for (const f of body.feet) {
+    f.x = player.x + rx * f.side * RIG.hipW; f.z = player.z + rz * f.side * RIG.hipW; f.y = supportAt(f.x, f.z);
+    Object.assign(f, { sx: f.x, sz: f.z, sy: f.y, tx: f.x, tz: f.z, ty: f.y, t: 1, dur: 0.3, lift: 0 });
+  }
+  body.pelvis.set(player.x, rig.feet + RIG.leg - 0.03, player.z); body.pvy = 0;
+  body.base = body.pelvis.y; Object.assign(body, { vbase: 0, lean: 0, vlean: 0, crouch: 0, vcrouch: 0, lat: 0, vlat: 0, react: 0, vreact: 0, roll: 0, vroll: 0, plants: [], airborne: false });
+  body.stems.clear();
+  for (const h of body.hands) { h.p.set(player.x, rig.feet + 0.9, player.z); h.v.set(0, 0, 0); h.target = null; }
+  player.eye = rig.feet + 1.65;
+  body.eye = { x: player.x, y: player.eye, z: player.z };
+}
+
+// ---- woody stems: anything rooted taller than a leg is something your feet walk around, not through
+function stemObstacles(x, z) {
+  const out = [], ci = Math.floor((x + HALF) / NC), cj = Math.floor((z + HALF) / NC);
   for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
     const items = near?.cells.get((ci + di) * 4096 + cj + dj); if (!items) continue;
     for (const it of items) {
-      const t = it[0]; if (t !== 'tall' && t !== 'shrub' && t !== 'seedB' && t !== 'seedC') continue;
-      const r = t === 'tall' ? it[4] * 0.9 + 0.3 : it[4] * 0.8 + 0.2, d = Math.hypot(it[1] - x, it[2] - z);
-      if (d >= r) continue;
-      const u = 1 - d / r;
-      w = Math.max(w, u * u * (t === 'tall' ? 0.5 : t === 'shrub' ? 0.26 : 0.14));
-      if (d < nearest) { nearest = d; nearestSide = (x - it[1]) * rx + (z - it[2]) * rz; }
+      if (it[0] === 'tall' && it[5] >= 1.2) out.push({ it, x: it[1], z: it[2], r: 0.16 + 0.1 * it[4], h: it[5], R: it[4] * 0.75 });
+      else if ((it[0] === 'seedB' || it[0] === 'seedC') && it[5] >= 0.95) out.push({ it, x: it[1], z: it[2], r: 0.07, h: it[5], R: it[4] });
     }
   }
-  if (w === 0) { rig.dodgeDir = 0; return 0; }
-  if (!rig.dodgeDir) rig.dodgeDir = nearestSide >= 0 ? 1 : -1;
-  return rig.dodgeDir * Math.min(w, 0.5);
+  return out;
 }
+function steerAround(px, pz, dx, dz) { // bend the step around stems ahead; the side is chosen once per stem
+  const step = Math.hypot(dx, dz); if (!step) return [dx, dz];
+  const ux = dx / step, uz = dz / step, rx = -uz, rz = ux;
+  let lat = 0;
+  for (const o of stemObstacles(px, pz)) {
+    const ox = o.x - px, oz = o.z - pz, f = ox * ux + oz * uz, s = ox * rx + oz * rz, clear = o.r + 0.28;
+    if (f < -0.1 || f > 1.8 || Math.abs(s) > clear + 0.25) { body.stems.delete(o.it); continue; }
+    let side = body.stems.get(o.it); if (!side) { side = s >= 0 ? -1 : 1; body.stems.set(o.it, side); }
+    const need = clear - side * -s; // how far we still have to get past it on the chosen side
+    if (need > 0) lat += side * Math.min(1, need / clear) * (1 - Math.max(0, f) / 1.8) * 1.4;
+  }
+  lat = clamp(lat, -1.2, 1.2);
+  const nx = ux + rx * lat, nz = uz + rz * lat, nl = Math.hypot(nx, nz);
+  return [(nx / nl) * step, (nz / nl) * step];
+}
+function stemPushOut(x, z) { // trunks and woody stems: slide around them rather than stopping dead
+  for (const t of nearbyTrunks(x, z)) {
+    const ex = x - t.x, ez = z - t.z, d = Math.hypot(ex, ez);
+    if (d < t.r) { x = t.x + (ex / (d || 1)) * t.r; z = t.z + (ez / (d || 1)) * t.r; }
+  }
+  for (const o of stemObstacles(x, z)) {
+    const ex = x - o.x, ez = z - o.z, d = Math.hypot(ex, ez), r = o.r + 0.2;
+    if (d < r) { x = o.x + (ex / (d || 1)) * r; z = o.z + (ez / (d || 1)) * r; }
+  }
+  return [x, z];
+}
+
+// ---- controller: where the body goes (collision, steps, scrambles, falls)
 function movePlayer(dt) {
-  const M = MOTION[settings.motion] ?? 1;
   let f = input.f, s = input.s, run = input.run;
   if (input.keys.has('KeyW') || input.keys.has('ArrowUp')) f += 1;
   if (input.keys.has('KeyS') || input.keys.has('ArrowDown')) f -= 1;
@@ -1282,84 +1363,308 @@ function movePlayer(dt) {
   if (input.keys.has('ShiftLeft') || input.keys.has('ShiftRight')) run = true;
   const mag = Math.hypot(f, s); if (mag > 1) { f /= mag; s /= mag; }
   const speed = run ? 4.2 : 1.6;
-  const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw), rx = cy, rz = -sy; // camera right vector
-  let moved = 0, uphill = 0;
-
-  if (rig.mantle) { // scripted scramble: up first, then over the lip
+  const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
+  const px = player.x, pz = player.z;
+  if (!rig.mantle && rig.vy === 0) { const here = footSupport(px, pz); if (here - rig.feet > STEP) rig.feet = here; } // embedded (e.g. a rock streamed in around you): climb out
+  if (rig.mantle) {
     const m = rig.mantle; m.t += dt / m.dur;
     const u = Math.min(1, m.t), up = 1 - (1 - Math.min(1, u * 1.6)) ** 2, over = u < 0.35 ? 0 : (u - 0.35) / 0.65;
     player.x = lerp(m.x0, m.x1, over * over * (3 - 2 * over)); player.z = lerp(m.z0, m.z1, over * over * (3 - 2 * over));
     rig.feet = lerp(m.y0, m.y1, up);
-    if (u >= 1) rig.mantle = null;
+    if (u >= 1) { rig.mantle = null; plantBothFeet(); }
   } else {
     let dx = (-sy * f + cy * s) * speed * dt, dz = (-cy * f - sy * s) * speed * dt;
     const step = Math.hypot(dx, dz);
     if (step > 0) {
-      const px = player.x, pz = player.z, lim = (v) => clamp(v, -HALF + 6, HALF - 6);
+      [dx, dz] = steerAround(px, pz, dx, dz);
+      const lim = (v) => clamp(v, -HALF + 6, HALF - 6);
       let ok = false;
       for (const [mx, mz] of [[dx, dz], [dx, 0], [0, dz]]) {
         if (!mx && !mz) continue;
-        const nx = lim(px + mx), nz = lim(pz + mz), st = standable(nx, nz, rig.feet, px, pz, rig.climb);
+        let [nx, nz] = stemPushOut(lim(px + mx), lim(pz + mz));
+        const st = standable(nx, nz, rig.feet, px, pz, rig.climb);
         if (st !== null) { player.x = nx; player.z = nz; rig.climb = st.steep > 0 ? rig.climb + st.steep : 0; ok = true; break; }
       }
-      if (!ok && f > 0.3) { // blocked while pushing forward: look for something to scramble onto
+      if (!ok && f > 0.3) {
         const tgt = scrambleTarget(px, pz, rig.feet, dx / step, dz / step);
         if (tgt) {
           const h = tgt.y - rig.feet;
-          rig.climb = 0; rig.mantle = { t: 0, dur: 0.35 + 0.3 * (h / SCRAMBLE), x0: px, z0: pz, y0: rig.feet, x1: tgt.x, z1: tgt.z, y1: tgt.y };
-          rig.voy -= (0.8 + h) * 1.6 * M;                         // crouch into it
-          rig.vpit -= (0.6 + h * 0.6) * M;                        // eyes drop to the ledge
-          rig.vroll += (Math.random() < 0.5 ? -1 : 1) * (0.25 + 0.25 * h) * M; // shoulder leads
+          rig.climb = 0; rig.mantle = { t: 0, dur: 0.45 + 0.35 * (h / SCRAMBLE), x0: px, z0: pz, y0: rig.feet, x1: tgt.x, z1: tgt.z, y1: tgt.y, h, side: Math.random() < 0.5 ? -1 : 1 };
         }
       }
-      moved = Math.hypot(player.x - px, player.z - pz);
-      if (moved > 0) uphill = (ground(player.x, player.z) - ground(px, pz)) / moved;
     }
-    // vertical: step up instantly (camera compensates), snap down gentle descents, fall off ledges
     const sup = footSupport(player.x, player.z);
-    if (sup >= rig.feet) {
-      const d = sup - rig.feet;
-      if (d > 0.08) { rig.oy -= d; rig.voy -= d * RIG.dipStep * M; }     // the head lags, dips, then catches up
-      else rig.oy -= d;
-      rig.feet = sup; rig.vy = 0;
-    } else {
+    if (sup >= rig.feet) { rig.feet = sup; rig.vy = 0; body.airborne = false; }
+    else {
       const drop = rig.feet - sup, snap = 0.06 + speed * dt * MAX_GROUND_SLOPE;
-      if (drop <= snap && rig.vy === 0) { rig.oy += drop; rig.feet = sup; } // stay glued to the ground going downhill
+      if (drop <= snap && rig.vy === 0) rig.feet = sup;
       else {
-        rig.vy -= 9.8 * dt; rig.feet += rig.vy * dt;
-        if (rig.feet <= sup) { const impact = -rig.vy; rig.feet = sup; rig.vy = 0; rig.voy -= impact * 0.55 * M; rig.vpit -= impact * 0.08 * M; }
+        rig.vy -= 9.8 * dt; rig.feet += rig.vy * dt; body.airborne = true;
+        if (rig.feet <= sup) { const impact = -rig.vy; rig.feet = sup; rig.vy = 0; body.airborne = false; body.vcrouch -= impact * 0.3; plantBothFeet(); }
       }
     }
   }
-
-  // stride-locked sway on steep climbs; amplitude follows steepness through a spring so it swells and fades
-  // uphill steepness along the direction of travel, from the smooth 2 m terrain (not frame-to-frame jitter)
-  if (moved > 0) {
-    const ux = (player.x - rig.lx) / moved, uz = (player.z - rig.lz) / moved;
-    uphill = (sampleGrid(W.H, N, player.x + ux, player.z + uz) - sampleGrid(W.H, N, player.x - ux, player.z - uz)) / 2;
-  }
-  rig.lx = player.x; rig.lz = player.z;
-  rig.phase += (moved / (run ? 1.3 : 0.75)) * Math.PI;
-  const steep = smoothstep(RIG.swayFrom, RIG.swayFull, uphill) * (moved > 0 ? 1 : 0);
-  [rig.swayAmp, rig.vSway] = spring(rig.swayAmp, rig.vSway, steep, 8, dt);
-  const sway = Math.sin(rig.phase) * rig.swayAmp, bob = -Math.abs(Math.sin(rig.phase)) * rig.swayAmp;
-  const dodge = shrubPush(player.x, player.z, rx, rz);
-  [rig.lat, rig.vlat] = spring(rig.lat, rig.vlat, (sway * RIG.swayLat + dodge) * M, RIG.kLat, dt);
-  [rig.roll, rig.vroll] = spring(rig.roll, rig.vroll, 0, RIG.kRoll, dt); // roll only from scramble impulses
-  [rig.pit, rig.vpit] = spring(rig.pit, rig.vpit, 0, RIG.kPitch, dt);
-  // vertical: stiffer when the head is above where it should be, so stepping down off a log doesn't float
-  [rig.oy, rig.voy] = spring(rig.oy, rig.voy, bob * RIG.swayBob * M, rig.oy > 0 ? RIG.kDown : RIG.kUp, dt);
-  player.eye = rig.feet + 1.65 + rig.oy;
+  const moved = Math.hypot(player.x - px, player.z - pz);
+  updateBody(dt, moved, run, player.x - px, player.z - pz, f);
 }
+
+// ---- gait and posture: how the body stands on what the controller chose
+function plantBothFeet() {
+  const rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+  for (const ft of body.feet) { ft.x = ft.tx = player.x + rx * ft.side * RIG.hipW; ft.z = ft.tz = player.z + rz * ft.side * RIG.hipW; ft.y = ft.ty = supportAt(ft.x, ft.z); ft.t = 1; }
+}
+function startSwing(ft, tx, tz, dur) {
+  Object.assign(ft, { sx: ft.x, sz: ft.z, sy: ft.y, tx, tz, ty: supportAt(tx, tz), t: 0, dur });
+  // lift enough to clear what lies between the old and new footholds
+  let top = Math.max(ft.sy, ft.ty);
+  for (const q of [0.33, 0.66]) top = Math.max(top, supportAt(lerp(ft.sx, tx, q), lerp(ft.sz, tz, q)));
+  ft.lift = RIG.lift + (top - Math.max(ft.sy, ft.ty));
+  ft.rise = ft.ty - ft.sy;
+}
+function updateBody(dt, moved, run, dx, dz, fwdInput) {
+  const M = MOTION[settings.motion] ?? 1;
+  const vx = dx / Math.max(dt, 1e-4), vz = dz / Math.max(dt, 1e-4), spd = Math.hypot(vx, vz);
+  const accel = (spd - body.speed) / Math.max(dt, 1e-4); body.speed = lerp(body.speed, spd, 0.3);
+  if (spd > 0.05) body.fwd = [vx / spd, vz / spd];
+  const [ux, uz] = moved > 0 ? [dx / moved, dz / moved] : [-Math.sin(player.yaw), -Math.cos(player.yaw)];
+  const rx = -uz, rz = ux; // right of travel
+  const uphill = moved > 0 ? (sampleGrid(W.H, N, player.x + ux, player.z + uz) - sampleGrid(W.H, N, player.x - ux, player.z - uz)) / 2 : 0;
+  const steep = smoothstep(0.1, 0.8, uphill);
+  const m = rig.mantle;
+
+  // feet: a gait cycle driven by distance travelled. One cycle = two steps. Each foot swings for a fraction `duty` of
+  // the cycle (walk 0.4: always one foot down; run 0.62: brief flight). A swing aims the foot so its stance is centred
+  // under the hip: it lands (1 - duty) * stepLen ahead of the hip.
+  const runK = clamp((spd - 1.6) / 2.6, 0, 1);
+  const stepLen = lerp(RIG.stepWalk, RIG.stepRun, runK) * (1 - 0.5 * steep), duty = lerp(0.4, 0.62, runK);
+  const ideal = (ft) => [player.x + rx * ft.side * RIG.hipW, player.z + rz * ft.side * RIG.hipW];
+  const landAhead = (1 - duty) * stepLen;
+  const aim = (ft, tLeft) => { const [ix, iz] = ideal(ft), a = landAhead * 0.8 + spd * tLeft; return [ix + ux * a, iz + uz * a]; };
+  if (m) {
+    const u = Math.min(1, m.t);
+    for (const ft of body.feet) { const tx = m.x1 + rx * ft.side * RIG.hipW, tz = m.z1 + rz * ft.side * RIG.hipW; if (u > 0.55 && ft.t >= 1 && Math.hypot(ft.tx - tx, ft.tz - tz) > 0.01) startSwing(ft, tx, tz, m.dur * 0.4); }
+  } else if (body.airborne) {
+    for (const ft of body.feet) { const [ix, iz] = ideal(ft); ft.x = ix; ft.z = iz; ft.y = rig.feet + 0.05; ft.t = 1; }
+  } else if (spd > 0.05) {
+    if (!body.moving) { // starting off: the foot furthest behind steps first, right away
+      const [i0x, i0z] = ideal(body.feet[0]), [i1x, i1z] = ideal(body.feet[1]);
+      const b0 = (body.feet[0].x - i0x) * ux + (body.feet[0].z - i0z) * uz, b1 = (body.feet[1].x - i1x) * ux + (body.feet[1].z - i1z) * uz;
+      body.phase = (b0 <= b1 ? 1 : 1.5) - 1e-4; body.moving = true;
+    }
+    const c0 = body.phase, c1 = c0 + moved / (2 * stepLen); body.phase = c1;
+    const cycleTime = (2 * stepLen) / spd;
+    body.feet.forEach((ft, i) => {
+      const start = i * 0.5; // window start within the cycle
+      if (Math.floor(c1 - start) > Math.floor(c0 - start) && ft.t >= 1) {
+        const dur = clamp(duty * cycleTime, 0.14, 0.5), [tx, tz] = aim(ft, dur);
+        startSwing(ft, tx, tz, dur);
+        if (steep > 0.2) body.vlean += RIG.leanPush * steep * (run ? 1.3 : 1); // push off into the slope
+      }
+    });
+  } else if ((body.moving = false) || !body.feet.some((ft) => ft.t < 1)) { // standing: tidy up feet that ended up out of place
+    let worst = null, worstD = 0.12;
+    for (const ft of body.feet) { const [ix, iz] = ideal(ft), d = Math.hypot(ft.x - ix, ft.z - iz); if (d > worstD) { worstD = d; worst = ft; } }
+    if (worst) { const [ix, iz] = ideal(worst); startSwing(worst, ix, iz, 0.3); }
+  }
+  for (const ft of body.feet) if (ft.t < 1) {
+    if (!m && ft.t < 0.7 && spd > 0.05) { [ft.tx, ft.tz] = aim(ft, ft.dur * (1 - ft.t)); ft.ty = supportAt(ft.tx, ft.tz); }
+    ft.t = Math.min(1, ft.t + dt / ft.dur);
+    const e = ft.t * ft.t * (3 - 2 * ft.t);
+    ft.x = lerp(ft.sx, ft.tx, e); ft.z = lerp(ft.sz, ft.tz, e); ft.y = lerp(ft.sy, ft.ty, e) + Math.sin(Math.PI * ft.t) * ft.lift;
+    if (ft.t >= 1 && ft.ty < ft.sy - 0.15) body.vcrouch -= (ft.sy - ft.ty) * 0.6; // big step down: knees take it
+  }
+
+  // pelvis: highest point both planted legs can reach; a swinging leg doesn't hold you up
+  const stance = body.feet.filter((ft) => ft.t >= 1);
+  let pTarget;
+  if (m || body.airborne || !stance.length) pTarget = rig.feet + RIG.leg - 0.04;
+  else {
+    pTarget = Infinity;
+    for (const ft of stance) {
+      // a foot behind the hip rises onto its toes at push-off, so it reaches a little further
+      const behind = (ft.x - player.x) * ux + (ft.z - player.z) * uz < 0, L = RIG.leg + (behind ? 0.1 : 0);
+      const hd = Math.min(L * 0.98, Math.hypot(ft.x - player.x, ft.z - player.z));
+      pTarget = Math.min(pTarget, ft.y + Math.sqrt(L * L - hd * hd) - 0.03);
+    }
+    pTarget = Math.max(pTarget, rig.feet + 0.68); // walking never folds into a squat; landings and scrambles use the crouch spring
+  }
+  [body.crouch, body.vcrouch] = spring(body.crouch, body.vcrouch, 0, RIG.kCrouch, dt);
+  [body.pelvis.y, body.pvy] = spring(body.pelvis.y, body.pvy, pTarget, RIG.kPelvis, dt);
+  // the slowly varying part of pelvis height (terrain) vs the rhythmic part (gait), split by a low-pass "baseline"
+  // terrain baseline: nominal standing height over the planted feet (or the controller when nothing is planted)
+  const baseT = stance.length && !m && !body.airborne ? stance.reduce((a, ft) => a + ft.y, 0) / stance.length + RIG.leg - 0.03 : pTarget;
+  [body.base, body.vbase] = spring(body.base, body.vbase, baseT, RIG.kBase, dt);
+  // weight shifts over the stance foot
+  const sf = stance.length === 1 ? stance[0].side : 0;
+  [body.lat, body.vlat] = spring(body.lat, body.vlat, sf * 0.03, RIG.kLat, dt);
+
+  // torso lean: slope, acceleration, scramble
+  let leanT = RIG.leanSlope * clamp(uphill, 0, 1.2) * (spd > 0.05 ? 1 : 0.3) + RIG.leanAccel * clamp(accel, -2, 4) * 0.25;
+  let crouchT = 0, rollT = 0;
+  if (m) {
+    const u = Math.min(1, m.t), arc = Math.sin(Math.PI * Math.min(1, u * 1.15));
+    leanT = 0.35 + 0.45 * arc * (0.6 + 0.4 * m.h / SCRAMBLE);   // fold over the ledge
+    crouchT = -0.22 * Math.sin(Math.PI * Math.min(1, u * 1.4)); // load the legs, then drive up
+    rollT = m.side * 0.07 * arc;                                 // one shoulder leads
+  }
+  // low barrier: when the swinging foot is stepping up onto something, lean in and put a hand on it
+  const sw = body.feet.find((ft) => ft.t < 1);
+  const barrier = !m && sw && sw.rise > 0.3 ? sw : null;
+  if (barrier) { const q = Math.sin(Math.PI * barrier.t); leanT += 0.3 * q; crouchT -= 0.08 * q; }
+  [body.lean, body.vlean] = spring(body.lean, body.vlean, leanT, RIG.kLean, dt);
+  body.crouch += (crouchT - body.crouch) * Math.min(1, dt * 12);
+  [body.roll, body.vroll] = spring(body.roll, body.vroll, rollT, RIG.kLean, dt);
+
+  // arms: swing, or reach for a shrub / ledge / barrier
+  const chestY = body.pelvis.y + body.crouch + RIG.spine * Math.cos(body.lean);
+  const fwdX = -Math.sin(player.yaw), fwdZ = -Math.cos(player.yaw), cRx = Math.cos(player.yaw), cRz = -Math.sin(player.yaw);
+  const chestX = player.x + fwdX * RIG.spine * Math.sin(body.lean), chestZ = player.z + fwdZ * RIG.spine * Math.sin(body.lean);
+  updatePlants(dt, ux, uz, rx, rz, spd);
+  let react = 0;
+  for (const hnd of body.hands) {
+    const shX = chestX + cRx * hnd.side * RIG.shoulderW, shZ = chestZ + cRz * hnd.side * RIG.shoulderW, shY = chestY - 0.05;
+    const other = body.feet[hnd.side < 0 ? 1 : 0], swingAmt = spd > 0.05 ? clamp((other.x - player.x) * ux + (other.z - player.z) * uz, -0.4, 0.4) * 0.6 : 0;
+    let tx = shX + fwdX * (0.08 + swingAmt), tz = shZ + fwdZ * (0.08 + swingAmt), ty = shY - 0.58, k = RIG.kHand;
+    const pl = body.plants.find((p) => p.contact && p.side === hnd.side);
+    if (m) { // both hands on the ledge lip
+      tx = m.x1 + cRx * hnd.side * 0.25 - fwdX * 0.25; tz = m.z1 + cRz * hnd.side * 0.25 - fwdZ * 0.25; ty = m.y1 + 0.02; k = 400;
+    } else if (barrier && barrier.side === hnd.side) {
+      tx = barrier.tx + cRx * hnd.side * 0.15; tz = barrier.tz + cRz * hnd.side * 0.15; ty = barrier.ty + 0.03; k = 300;
+    } else if (pl) { // palm on the near face of the shrub, which moves away as it yields
+      const dl = Math.hypot(pl.dx, pl.dz), sgn = pl.side;
+      tx = pl.x - rx * sgn * Math.max(0.05, pl.R - dl) + ux * 0.1; tz = pl.z - rz * sgn * Math.max(0.05, pl.R - dl) + uz * 0.1; ty = Math.min(chestY, groundAt(pl.x, pl.z) + pl.h * 0.6);
+      k = 220; react += -sgn * pl.force;
+    }
+    // keep the hand within arm's reach of the shoulder
+    const ax = tx - shX, ay = ty - shY, az = tz - shZ, al = Math.hypot(ax, ay, az), reach = RIG.upperArm + RIG.foreArm - 0.02;
+    if (al > reach) { tx = shX + (ax / al) * reach; ty = shY + (ay / al) * reach; tz = shZ + (az / al) * reach; }
+    for (const [c, t] of [['x', tx], ['y', ty], ['z', tz]]) [hnd.p[c], hnd.v[c]] = spring(hnd.p[c], hnd.v[c], t, k, dt);
+  }
+  // reaction from pushing: the head gives a little, then recovers as the plant yields
+  [body.react, body.vreact] = spring(body.react, body.vreact, clamp(react * RIG.pushReact, -0.12, 0.12), RIG.kLat, dt);
+
+  // eye: rhythmic gait passes through at gaitPass; terrain and posture pass fully
+  const gait = (body.pelvis.y - body.base) * RIG.gaitPass;
+  const pelvisEye = body.base + gait + body.crouch;
+  const latEye = body.lat * RIG.gaitPass + body.react;
+  const sl = RIG.spine + RIG.neck;
+  const lean = body.lean * M + 0 * (1 - M);
+  body.eye = {
+    x: player.x + fwdX * (sl * Math.sin(lean) + RIG.eyeFwd) + cRx * latEye * M,
+    y: (M ? pelvisEye : rig.feet + RIG.leg - 0.04) + sl * Math.cos(lean),
+    z: player.z + fwdZ * (sl * Math.sin(lean) + RIG.eyeFwd) + cRz * latEye * M,
+  };
+  if (!M) { // motion off: steady eye at standing height above the controller, smoothed
+    body.eye.x = player.x; body.eye.z = player.z;
+  }
+  player.eye = body.eye.y;
+}
+const groundAt = (x, z) => ground(x, z);
+
+// ---- shrubs as springs the hands push against
+function updatePlants(dt, ux, uz, rx, rz, spd) {
+  const pelX = player.x, pelZ = player.z;
+  // find tall shrubs whose crown is in the upper-body corridor ahead
+  const seen = new Set();
+  if (!rig.mantle && near) {
+    const ci = Math.floor((pelX + HALF) / NC), cj = Math.floor((pelZ + HALF) / NC);
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      const items = near.cells.get((ci + di) * 4096 + cj + dj); if (!items) continue;
+      for (const it of items) {
+        if (it[0] !== 'tall' || it[5] < 1.1) continue;
+        const R = it[4] * 0.78, ox = it[1] - pelX, oz = it[2] - pelZ, f = ox * ux + oz * uz, s = ox * rx + oz * rz;
+        const pen = R + 0.32 - Math.abs(s);
+        if (f < -0.5 || f > 1.1 || pen <= 0) continue;
+        seen.add(it);
+        let p = body.plants.find((q) => q.it === it);
+        if (!p) { if (body.plants.length >= 4) continue; p = { it, x: it[1], z: it[2], h: it[5], R, dx: 0, dz: 0, vx: 0, vz: 0, side: s >= 0 ? 1 : -1, force: 0 }; body.plants.push(p); }
+        p.contact = f > -0.35 && spd > 0.05;
+        p.pen = Math.min(pen, 0.5);
+        p.ax = rx * p.side; p.az = rz * p.side; // push direction: away from your path
+      }
+    }
+  }
+  for (const p of body.plants) {
+    if (!seen.has(p.it)) p.contact = false;
+    const tgt = p.contact ? p.pen : 0;
+    const cur = p.dx * (p.ax ?? 0) + p.dz * (p.az ?? 0);
+    p.force = p.contact ? Math.max(0, p.pen - cur) : 0;
+    let tx = p.contact ? p.ax * tgt : 0, tz = p.contact ? p.az * tgt : 0;
+    [p.dx, p.vx] = spring(p.dx, p.vx, tx, RIG.plantK, dt, RIG.plantZeta);
+    [p.dz, p.vz] = spring(p.dz, p.vz, tz, RIG.plantK, dt, RIG.plantZeta);
+  }
+  body.plants = body.plants.filter((p) => p.contact || Math.hypot(p.dx, p.dz) > 0.003 || Math.hypot(p.vx, p.vz) > 0.01);
+  // hand the plant displacements and footfalls to the vegetation shaders
+  for (let i = 0; i < 4; i++) {
+    const p = body.plants[i];
+    if (p) { PUSH.uPA.value[i].set(p.x, groundAt(p.x, p.z), p.z, p.h); PUSH.uPB.value[i].set(p.dx, p.dz, p.R * 1.5 + 0.3, 1); }
+    else PUSH.uPB.value[i].set(0, 0, 0, 0);
+  }
+  body.feet.forEach((ft, i) => PUSH.uFeet.value[i].set(ft.x, ft.y, ft.z, rig.mantle ? 0 : 1));
+}
+
+// ---- camera
 function applyCamera() {
-  const cy = Math.cos(player.yaw), sy = Math.sin(player.yaw);
-  camera.position.set(player.x + cy * rig.lat, player.eye, player.z - sy * rig.lat);
-  camera.rotation.set(clamp(player.pitch + rig.pit, -1.45, 1.45), player.yaw, rig.roll);
+  const e = body.eye || { x: player.x, y: player.eye, z: player.z };
+  const M = MOTION[settings.motion] ?? 1;
+  if (settings.view === 'third') {
+    const cyaw = player.yaw + (body.orbit || 0), fx = -Math.sin(cyaw), fz = -Math.cos(cyaw);
+    camera.position.set(player.x - fx * 3.2, body.pelvis.y + 1.4, player.z - fz * 3.2);
+    camera.rotation.set(-0.28 + player.pitch * 0.3, cyaw, 0);
+  } else {
+    camera.position.set(e.x, e.y, e.z);
+    camera.rotation.set(clamp(player.pitch - body.lean * RIG.gazeFollow * M, -1.45, 1.45), player.yaw, body.roll * M);
+  }
+  updateSkeleton();
+}
+
+// ---- debug skeleton (Settings → Body: shown, or the third-person debug view)
+let skel = null;
+function updateSkeleton() {
+  const show = settings.view === 'third' || settings.body === 'shown';
+  if (!skel) {
+    const mat = new THREE.MeshLambertMaterial({ color: 0xc9b79a }), g = new THREE.CylinderGeometry(1, 1, 1, 6); g.translate(0, 0.5, 0);
+    skel = { group: new THREE.Group(), bones: Array.from({ length: 13 }, () => new THREE.Mesh(g, mat)), head: new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 8), mat) };
+    skel.bones.forEach((b) => skel.group.add(b)); skel.group.add(skel.head); scene.add(skel.group);
+  }
+  skel.group.visible = show; if (!show || !body.eye) return;
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), rX = Math.cos(player.yaw), rZ = -Math.sin(player.yaw);
+  const pel = new THREE.Vector3(player.x + rX * body.lat, body.pelvis.y + body.crouch, player.z + rZ * body.lat);
+  const chest = new THREE.Vector3(pel.x + fx * RIG.spine * Math.sin(body.lean), pel.y + RIG.spine * Math.cos(body.lean), pel.z + fz * RIG.spine * Math.sin(body.lean));
+  const head = new THREE.Vector3(chest.x + fx * RIG.neck * Math.sin(body.lean), chest.y + RIG.neck * Math.cos(body.lean), chest.z + fz * RIG.neck * Math.sin(body.lean));
+  const joints = [], V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const ik = (a, c, l1, l2, bend) => { // two-bone inverse kinematics: law of cosines, bend toward `bend`
+    const d = c.clone().sub(a), L = Math.min(d.length(), l1 + l2 - 1e-3), dir = d.normalize();
+    const x = (l1 * l1 - l2 * l2 + L * L) / (2 * L), y = Math.sqrt(Math.max(0, l1 * l1 - x * x));
+    const perp = bend.clone().sub(dir.clone().multiplyScalar(bend.dot(dir))).normalize();
+    return a.clone().addScaledVector(dir, x).addScaledVector(perp, y);
+  };
+  const seg = [];
+  seg.push([pel, chest, 0.07], [chest, head, 0.045]);
+  for (const ft of body.feet) {
+    const hip = V(pel.x + rX * ft.side * RIG.hipW, pel.y, pel.z + rZ * ft.side * RIG.hipW), foot = V(ft.x, ft.y + 0.06, ft.z);
+    const knee = ik(hip, foot, 0.45, 0.45, V(fx, 0, fz));
+    seg.push([hip, knee, 0.06], [knee, foot, 0.05]);
+  }
+  for (const hnd of body.hands) {
+    const sh = V(chest.x + rX * hnd.side * RIG.shoulderW, chest.y - 0.05, chest.z + rZ * hnd.side * RIG.shoulderW);
+    const elbow = ik(sh, hnd.p.clone(), RIG.upperArm, RIG.foreArm, V(-fx + rX * hnd.side * 0.5, -0.6, -fz + rZ * hnd.side * 0.5));
+    seg.push([sh, elbow, 0.045], [elbow, hnd.p.clone(), 0.04]);
+  }
+  seg.push([V(pel.x - rX * RIG.hipW, pel.y, pel.z - rZ * RIG.hipW), V(pel.x + rX * RIG.hipW, pel.y, pel.z + rZ * RIG.hipW), 0.06]);
+  seg.push([V(chest.x - rX * RIG.shoulderW, chest.y - 0.05, chest.z - rZ * RIG.shoulderW), V(chest.x + rX * RIG.shoulderW, chest.y - 0.05, chest.z + rZ * RIG.shoulderW), 0.05]);
+  skel.bones.forEach((b, i) => {
+    const s = seg[i]; if (!s) { b.visible = false; return; }
+    b.visible = true; const [a, c, r] = s, d = c.clone().sub(a);
+    b.matrixAutoUpdate = false; b.matrix.copy(along(a.x, a.y, a.z, d.x, d.y, d.z, r, d.length(), r));
+  });
+  skel.head.position.copy(head).add(V(0, 0.06, 0));
+  skel.head.visible = settings.view === 'third';
 }
 
 // ---------------------------------------------------------------- input
 const keyTarget = (e) => e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName);
-addEventListener('keydown', (e) => { if (keyTarget(e)) return; input.keys.add(e.code); if (e.code === 'KeyM') toggle('pMap'); });
+addEventListener('keydown', (e) => { if (keyTarget(e)) return; input.keys.add(e.code); if (e.code === 'KeyM') toggle('pMap'); if (e.code === 'KeyV') { settings.view = settings.view === 'third' ? 'first' : 'third'; fView.value = settings.view; } });
 addEventListener('keyup', (e) => input.keys.delete(e.code));
 addEventListener('blur', () => input.keys.clear());
 const stickEl = $('stick'), knob = $('knob');
@@ -1531,9 +1836,12 @@ function drawFigures() {
 function roundTop(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x, y + h); g.lineTo(x, y + r); g.quadraticCurveTo(x, y, x + r, y); g.lineTo(x + w - r, y); g.quadraticCurveTo(x + w, y, x + w, y + r); g.lineTo(x + w, y + h); g.closePath(); g.fill(); }
 
 // world panel
-const fSeed = $('fSeed'), fAge = $('fAge'), fMoist = $('fMoist'), fStorm = $('fStorm'), fQual = $('fQual'), fGeo = $('fGeo'), fMotion = $('fMotion');
+const fSeed = $('fSeed'), fAge = $('fAge'), fMoist = $('fMoist'), fStorm = $('fStorm'), fQual = $('fQual'), fGeo = $('fGeo'), fMotion = $('fMotion'), fView = $('fView'), fBody = $('fBody');
 function syncForm() { fSeed.value = settings.seed; fAge.value = String(settings.age); fMoist.value = settings.moisture; fStorm.value = settings.storms; fQual.value = settings.quality; fGeo.value = settings.geology; fMotion.value = settings.motion || 'full'; }
 fMotion.addEventListener('change', () => { settings.motion = fMotion.value; saveSettings(); });
+fView.value = settings.view || 'first'; fBody.value = settings.body || 'hidden';
+fView.addEventListener('change', () => { settings.view = fView.value; saveSettings(); });
+fBody.addEventListener('change', () => { settings.body = fBody.value; saveSettings(); });
 syncForm();
 $('bDice').addEventListener('click', () => { fSeed.value = 1 + Math.floor(Math.random() * 99999); });
 $('bRegen').addEventListener('click', () => {
@@ -1625,8 +1933,8 @@ start();
 
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
-  get world() { return W; }, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, nearCells: () => near.cells, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
-  col: { footSupport, standable, scrambleTarget, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
+  get world() { return W; }, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
+  col: { steerAround, stemPushOut, stemObstacles, footSupport, standable, scrambleTarget, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },
   info() { return { near: Object.fromEntries(Object.entries(near.b).map(([k, v]) => [k, v.n])), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries }; },
   renderOnce() { refreshNear(player.x, player.z, true); applyCamera(); sky.position.copy(camera.position); renderer.shadowMap.needsUpdate = true; uTime.value = 0; updateTiles(); terrainU.uCenter.value.set(Math.round(player.x / 8) * 8, Math.round(player.z / 8) * 8); renderer.render(scene, camera); },
