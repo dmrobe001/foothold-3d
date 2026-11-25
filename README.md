@@ -37,10 +37,10 @@ A stem, a sapling or a slim trunk is something a hand can close round; any other
 - Rises up to 0.55 m are steps. A ledge up to 1.35 m is pulled up onto, hands on its lip, if there is something to hold.
 - Trunks and woody stems taller than a leg are walked around; low plants are waded through.
 - The hands are needed when the path stays steeper than the footing's traction (one bump is a step, not a slope),
-  when there is a ledge, or when the headroom is under 1.1 m (down to 0.65 m on hands and knees). Then the best hold
+  when there is a ledge, or when the headroom is under 1.1 m (down to 0.55 m, crawling low). Then the best hold
   in reach sets how steep you can go: up to 68° with a hand closed round something, 56° pressing on a surface.
   On hands you move slowly, and only as fast as the hands and feet can keep hold.
-- A stem hung overhead with at least 1.1 m under it is ducked under; with 0.65 to 1.1 m, crawled under.
+- A stem hung overhead with at least 1.1 m under it is ducked under; with 0.55 to 1.1 m, crawled under.
 
 **How the body is placed**:
 - **Feet**, walking, plant one at a time on the real surface, in a gait cycle driven by distance (walk: always one foot

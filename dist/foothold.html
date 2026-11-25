@@ -2645,7 +2645,7 @@ function holdsNear(x, z, sup, ux, uz) {
 //   the path stays steeper than the footing's traction (TRACTION).
 // Then the best hold within reach sets how steep you may go: a hand closed round something (GRIP_SLOPE) or pressed
 // flat (PRESS_SLOPE). With the hands needed you move slowly, and only as fast as the limbs can keep hold (quadAllows).
-const CLEAR4 = 0.65; // lowest headroom (above the feet) on hands and knees
+const CLEAR4 = 0.55; // lowest headroom (above the feet) crawling, hips and head low
 const GAIT4 = { stride: 0.4, swing: 0.26, speed: 0.5, climb: 0.9, homes: [0.72, 0.72, -0.3, -0.3] }; // limbs LH RH LF RF
 const LIMB = [{ hand: true, side: -1 }, { hand: true, side: 1 }, { hand: false, side: -1 }, { hand: false, side: 1 }];
 function assess(x, z, px, pz) {
@@ -2733,7 +2733,8 @@ function movePlayer(dt) {
         if (sd) body.veer = sd;
         const [nx, nz] = stemPushOut(lim(px + mx), lim(pz + mz));
         const st = assess(nx, nz, px, pz);
-        if (st === null || !quadAllows(nx, nz, px, pz)) { body.why = st === null ? 'blocked' : 'limbs'; continue; }
+        if (st === null) { body.why = 'blocked'; continue; }
+        if (!quadAllows(nx, nz, px, pz)) { body.why = 'limbs'; if (!st.need) needT = 0; continue; } // held back by the limbs where hands aren't needed: stand up
         needT = st.need; body.why = 'move ' + st.need + ' g ' + st.g.toFixed(2);
         if (st.rise > STEP) rig.lift = { x: nx, z: nz, y: st.sup }; else { player.x = nx; player.z = nz; }
         ok = true; break;
