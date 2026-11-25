@@ -288,18 +288,18 @@ export function plantStats(P) {
 // ---- geometry: plain arrays (positions in metres, plant-local); the game wraps them in buffers and scales them
 // Bark: a tapered tube per axis, rings at each node; the stem flares at the collar.
 export function barkMesh(P, { minR = 0 } = {}) {
-  const pos = [], nor = [], uv = [], idx = [];
+  const pos = [], nor = [], uv = [], idx = [], node = []; // node: the segment each vertex belongs to (a break removes a subtree's vertices)
   for (const ax of P.axes) {
     const ids = ax.nodes, i0 = ids[0];
     if (ax.st === LIVE && ax.ord >= 2 && P.r0[i0] < minR) continue; // thin live twigs: hidden in the foliage
     const rb = P.r0[i0], sides = rb > 0.12 ? 7 : rb > 0.04 ? 5 : 3;
-    const pts = [], rad = [];
+    const pts = [], rad = [], rn = [];
     const p = (i, e) => (e ? [P.p1[i * 3], P.p1[i * 3 + 1], P.p1[i * 3 + 2]] : [P.p0[i * 3], P.p0[i * 3 + 1], P.p0[i * 3 + 2]]);
     if (ax.ord === 0 && P.par[i0] < 0) { // the collar: extra rings for the root flare
       const a = p(i0, 0), b = p(i0, 1), L = len3([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
-      for (const y of [0, 0.08, 0.22, 0.45]) if (y < L * 0.8) { const t = y / L; pts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]); rad.push((P.r0[i0] + (P.r1[i0] - P.r0[i0]) * t) * (1 + 0.3 * Math.exp(-y / 0.25))); } // modest: the buttress roots make the rest of the flare
-    } else { pts.push(p(i0, 0)); rad.push(P.r0[i0]); }
-    for (const i of ids) { pts.push(p(i, 1)); rad.push(P.r1[i]); }
+      for (const y of [0, 0.08, 0.22, 0.45]) if (y < L * 0.8) { const t = y / L; pts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]); rad.push((P.r0[i0] + (P.r1[i0] - P.r0[i0]) * t) * (1 + 0.3 * Math.exp(-y / 0.25))); rn.push(i0); } // modest: the buttress roots make the rest of the flare
+    } else { pts.push(p(i0, 0)); rad.push(P.r0[i0]); rn.push(i0); }
+    for (const i of ids) { pts.push(p(i, 1)); rad.push(P.r1[i]); rn.push(i); }
     const base = pos.length / 3;
     let nPrev = null, vacc = 0;
     for (let j = 0; j < pts.length; j++) {
@@ -309,7 +309,7 @@ export function barkMesh(P, { minR = 0 } = {}) {
       if (j > 0) vacc += len3([pts[j][0] - pts[j - 1][0], pts[j][1] - pts[j - 1][1], pts[j][2] - pts[j - 1][2]]) / Math.max(0.3, rad[0] * 6.283) * 0.5;
       for (let s = 0; s <= sides; s++) {
         const a = (s / sides) * 6.283, c = Math.cos(a), sn = Math.sin(a), dn = [nv[0] * c + bv[0] * sn, nv[1] * c + bv[1] * sn, nv[2] * c + bv[2] * sn];
-        pos.push(pts[j][0] + dn[0] * rad[j], pts[j][1] + dn[1] * rad[j], pts[j][2] + dn[2] * rad[j]); nor.push(...dn); uv.push(s / sides, vacc);
+        pos.push(pts[j][0] + dn[0] * rad[j], pts[j][1] + dn[1] * rad[j], pts[j][2] + dn[2] * rad[j]); nor.push(...dn); uv.push(s / sides, vacc); node.push(rn[j]);
       }
     }
     for (let j = 0; j < pts.length - 1; j++) for (let s = 0; s < sides; s++) {
@@ -324,11 +324,11 @@ export function barkMesh(P, { minR = 0 } = {}) {
     const dir = o.hang ? [0, -1, 0] : [0, 1, 0], b0 = pos.length / 3, nv = [1, 0, 0], bv = [0, 0, 1];
     for (const [t, rr] of [[0, o.r * 0.6], [0.5, o.r], [1, o.r * 0.4]]) for (let s = 0; s <= 4; s++) {
       const a = (s / 4) * 6.283, dn = [nv[0] * Math.cos(a) + bv[0] * Math.sin(a), 0, nv[2] * Math.cos(a) + bv[2] * Math.sin(a)];
-      pos.push(q[0] + dn[0] * rr, q[1] + dir[1] * o.len * 2 * t, q[2] + dn[2] * rr); nor.push(...dn); uv.push(s / 4, t);
+      pos.push(q[0] + dn[0] * rr, q[1] + dir[1] * o.len * 2 * t, q[2] + dn[2] * rr); nor.push(...dn); uv.push(s / 4, t); node.push(i);
     }
     for (let j = 0; j < 2; j++) for (let s = 0; s < 4; s++) { const a = b0 + j * 5 + s, b = a + 5; if (o.hang) idx.push(a, a + 1, b, a + 1, b + 1, b); else idx.push(a, b, a + 1, a + 1, b, b + 1); }
   }
-  return { pos, nor, uv, idx, tris: idx.length / 3 };
+  return { pos, nor, uv, idx, node, tris: idx.length / 3 };
 }
 
 // Foliage: cards ({c, u, v, n, ao0, ao1}; u, v half-extent vectors) from the foliage units, oriented by leaf kind.
@@ -336,7 +336,7 @@ export function barkMesh(P, { minR = 0 } = {}) {
 export function foliageCards(P, seed = 7) {
   const rnd = mulberry32(seed), cards = [], A = ARCH[P.sp];
   for (const L of P.leaves) {
-    const i = L.node, u = L.u;
+    const i = L.node, u = L.u, c0 = cards.length;
     const a = [P.p0[i * 3], P.p0[i * 3 + 1], P.p0[i * 3 + 2]], b = [P.p1[i * 3], P.p1[i * 3 + 1], P.p1[i * 3 + 2]];
     const t = norm([b[0] - a[0], b[1] - a[1], b[2] - a[2]]), c = [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
     const rad = Math.hypot(c[0], c[2]), f = clamp((c[1] - P.hb) / Math.max(0.5, P.h - P.hb), 0, 1);
@@ -366,6 +366,7 @@ export function foliageCards(P, seed = 7) {
         cards.push({ c: add(add(c, t, s * 0.2), face, k * 0.06), u: U.map((q) => q * s * 0.5), v: V.map((q) => q * s * 0.5), n: nC, ao0: ao * 0.85, ao1: ao });
       }
     }
+    for (let k = c0; k < cards.length; k++) cards[k].node = i;
   }
   return cards;
 }
@@ -467,4 +468,32 @@ export function rootMesh(P, place, { keep = null, all = false, flat = 0.72 } = {
     }
   }
   return { pos, nor, uv, col, idx, solids };
+}
+
+// ---- mechanics: what breaks, and where
+// The nodes removed when segment k breaks off: k and everything it carries (children always follow their parent).
+export function subtree(P, k) {
+  const out = new Uint8Array(P.n); out[k] = 1;
+  for (let i = k + 1; i < P.n; i++) if (P.par[i] >= 0 && out[P.par[i]]) out[i] = 1;
+  return out;
+}
+// A force F (newtons, a vector) applied at fraction u along segment i, on a plant drawn at scale s (world metres per
+// plant metre). Each joint from there back to the stem is a cantilever root: its bending moment is |r × F|, r from the
+// joint to the load; the stress at its surface is σ = M / Z with section modulus Z = π r³ / 4. A joint fails when σ
+// exceeds the green wood's modulus of rupture (ARCH.wood.MOR), scaled by its health: dead wood is weak, and a dead
+// limb is weakest at its collar, where it rots first. Returns the joint most over its limit (or the closest to it).
+// Ignores the limb's own weight and dynamic loads, which the caller folds into F.
+const HEALTH = [1, 0.45, 0.3, 0.2]; // LIVE, DEAD, STUB, BURIED
+export function breakCheck(P, i, u, F, s = 1) {
+  const MOR = ARCH[P.sp].wood.MOR * 1e6;
+  const q = [0, 1, 2].map((k) => (P.p0[i * 3 + k] + (P.p1[i * 3 + k] - P.p0[i * 3 + k]) * u) * s);
+  let best = { node: -1, ratio: 0 }, j = i;
+  while (j >= 0 && P.ord[j] >= 1) {
+    const r = [0, 1, 2].map((k) => q[k] - P.p0[j * 3 + k] * s), M = len3(cross(r, F)), rad = P.r0[j] * s;
+    const collar = P.st[j] === DEAD && (P.par[j] < 0 || P.ord[P.par[j]] < P.ord[j]) ? 0.6 : 1;
+    const ratio = M / ((Math.PI * rad ** 3) / 4) / (MOR * HEALTH[P.st[j]] * collar);
+    if (ratio > best.ratio) best = { node: j, ratio };
+    j = P.par[j];
+  }
+  return best;
 }

@@ -69,6 +69,13 @@ A stem, a sapling or a slim trunk is something a hand can close round; any other
 World panel: **Camera motion** (Full, Reduced, Off), **View** (first person, or third person for debugging; V toggles),
 **Body** (show the skeleton in first person). Tuning knobs are in `RIG`, `TRACTION` and `GAIT4` in `src/game.js`.
 
+## Branches
+
+Look at a branch within reach and press **B** (or the **Break branch** button) to hang your weight on it. Whether it
+breaks, and where, comes from a beam calculation with the wood's strength; dead branches snap near the trunk. Thick low
+limbs are solid, and limbs can give way under you. Fallen trees keep their branches for some years. See
+`docs/plants.md`, step 3.
+
 ## Performance panel
 
 Tap the fps counter (or press P). It shows:

@@ -1,6 +1,6 @@
 # Plants: design for a branched, rooted, breakable plant model
 
-Status: **steps 1 and 2 built** (skeletons, leaves, edible organs as data, near rendering, specimen stations; roots, wads, pits, stumps); steps 3–4 are design. This replaces the "Trees: forks, branch hierarchy, stubs" sketch in
+Status: **steps 1 and 2 built**; **step 3 mostly built** (branch obstacles, breaking, branches on fallen trees; pushing through foliage by branch is not yet); step 4 is design. This replaces the "Trees: forks, branch hierarchy, stubs" sketch in
 `extensibility.md` and folds in five requirements:
 
 1. leaf placement differs by plant;
@@ -286,6 +286,50 @@ What is not built yet:
 - Hollow, rotted stumps and nurse seedlings.
 - Roots on logs that weren't uprooted.
 
+
+## 8d. What step 3 actually does
+
+- **A tree's graph in the world.** Each tree near you uses its variant's graph seen through its own placement: the
+  instance transform and the stem bend the shader applies (`bendLocal` is its CPU twin). The world segments are cached
+  per tree.
+- **Limbs as obstacles.** These limbs become tapered solids:
+  - live limbs from 2.5 cm radius, or dead ones from 3.5 cm;
+  - any part lower than 2.4 m above the ground.
+
+  The movement rules already treat solids like these as hung stems, so you duck under them, step or vault over them,
+  or stand on them. Thinner limbs are foliage you pass through. Pushing them aside branch by branch is not built yet;
+  saplings still bend as a whole.
+- **Breaking** (`PL.breakCheck`). A load is applied at a point on a segment. Every joint between there and the stem is
+  a cantilever root: its moment is |r × F| and its stress is σ = 4M / (π r³). The joint fails when σ exceeds the green
+  wood's modulus of rupture times its health:
+  - live wood: 1;
+  - dead wood: 0.45;
+  - a dead limb at its collar, where it rots first: a further 0.6.
+
+  Tested in node: 80 kg hung 1 m out breaks a live birch limb of 2.8 cm radius or less (the design's sanity number),
+  and a dead one up to about 4 cm. Loads come from two places:
+  - **Deliberately.** Look at a branch within 2.1 m and press B or the Break button. The load is a hang-and-bounce of
+    1.4 body weights. If it holds, a message says what fraction of the breaking load you reached.
+  - **Under you.** Standing on a limb loads it with 1.25 body weights, checked four times a second.
+- **What a break leaves.**
+  - The tree's delta records the broken segment. The tree is then drawn by its own mesh, the variant's buffers without
+    the triangles of that subtree. A stub remains up to the joint.
+  - The piece that broke off is turned roughly level about the joint and dropped onto the ground, keeping its leaves.
+    Its thick parts become solids.
+  - Deltas live in memory for the session; they are not saved yet.
+- **Branches on fallen trees.** For whole logs under 30 years old and at least 12 cm dbh, near you:
+  - A graph of the tree's size is turned with the stem, including the co-dominant leaders of forked crowns.
+  - Limbs driven more than 0.35 m into the ground are crushed.
+  - The rest are shed over the years: shoots first (about 4 years), then thin limbs (7), mid limbs (14) and thick
+    limbs (30). They leave one-segment stubs.
+  - Fallen trees show all their twigs. Their foliage is green in the first year and rust-brown until about the third.
+  - Limbs thicker than 3 cm are solid.
+  - Like roots, they are grown a few per frame within a time budget, and drawn from one reusable buffer.
+
+  Lodged (hung-up) trees keep their crowns too, in the air.
+
+The gym gains two stations, "Fallen fir, 2 years" and "Fallen maple, 12 years". Both are for looking; nothing is
+scored.
 
 ## 9. How we check it (the plant gym)
 
