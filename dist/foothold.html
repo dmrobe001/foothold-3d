@@ -1175,35 +1175,31 @@ const uTime = { value: 0 };
 const PUSH = {
   uPA: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) }, uPB: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) },
   uFeet: { value: Array.from({ length: 2 }, () => new THREE.Vector4()) },
-  uBody: { value: new THREE.Vector4() }, // walker's column: x, feet y, z, height
 };
-// A pushed plant deforms in two parts, both rooted at its base:
-//   bending: the plant's spring amplitude (uPB.xy) times a cantilever's static deflection shape, phi = eta^2 (3 - eta) / 2
-//            for height fraction eta. Stems on the side you push from take all of it, the far side about half.
-//   parting: for many-stemmed plants (part = 1), stems inside the walker's column are pushed out of it, sideways.
-// Stems don't stretch: a point displaced sideways by s drops by s^2 / (2 l), l its distance from the base (arc).
-function pushPatch(sh, footR, part = 0) {
-  Object.assign(sh.uniforms, PUSH, { uFootR: { value: footR }, uPart: { value: part } });
-  sh.vertexShader = `uniform vec4 uPA[4]; uniform vec4 uPB[4]; uniform vec4 uFeet[2]; uniform vec4 uBody; uniform float uFootR; uniform float uPart;
+// A pushed plant bends like a pole loaded at one point: the hand (or body) at height h above its base, displaced by
+// s = uPB.xy there. Below h the stem takes the cantilever's point-load deflection, s * u^2 (3 - u) / 2 with u = y / h,
+// tilting with the local slope. Above h nothing bends: the rest of the plant is carried rigidly, rotated by the stem's
+// angle at the load point, atan(1.5 |s| / h). Stems don't stretch: the load point drops by 0.6 |s|^2 / h (the arc
+// length of that curve), points below drop in proportion.
+// uPA: base x, y, z, load height h. uPB: s.x, s.z, tolerance for recognising the plant's own instances, active flag.
+function pushPatch(sh, footR) {
+  Object.assign(sh.uniforms, PUSH, { uFootR: { value: footR } });
+  sh.vertexShader = `uniform vec4 uPA[4]; uniform vec4 uPB[4]; uniform vec4 uFeet[2]; uniform float uFootR;
     // io: this instance's origin (world), up: how upright its local Y axis is. Only the pushed plant's own upright
-    // instances follow the push; logs, fallen branches and neighbouring plants inside its radius stay put.
+    // instances follow the push; logs, fallen branches and neighbouring plants stay put.
     vec3 pushDisp(vec3 wp, vec3 io, float up){
       vec3 d = vec3(0.0);
-      for (int i = 0; i < 4; i++) {           // a pushed shrub bends from its base; tips move most
-        vec4 a = uPA[i], b = uPB[i]; if (b.w <= 0.0 || up < 0.8 || length(io.xz - a.xz) > 0.8) continue;
-        vec2 rel = wp.xz - a.xz; float eta = clamp((wp.y - a.y) / a.w, 0.0, 1.0);
-        float phi = eta * eta * (3.0 - eta) * 0.5;
-        float bl = length(b.xy); vec2 bd = bl > 1e-4 ? b.xy / bl : vec2(0.0);
-        float nearSide = clamp(0.5 - 0.5 * dot(rel, bd) / max(b.z * 0.5, 0.2), 0.0, 1.0);
-        vec2 s = b.xy * phi * mix(1.0, mix(0.5, 1.0, nearSide), uPart);
-        if (uPart > 0.0 && uBody.w > 0.0) {
-          vec2 o = wp.xz - uBody.xz; float r = length(o), R = 0.34;
-          float inside = (1.0 - smoothstep(R * 0.5, R + 0.1, r)) * (1.0 - smoothstep(uBody.y + uBody.w - 0.2, uBody.y + uBody.w, wp.y));
-          s += (o / max(r, 1e-3)) * max(0.0, R + 0.1 - r) * inside * smoothstep(0.05, 0.4, eta) * uPart;
+      for (int i = 0; i < 4; i++) {
+        vec4 a = uPA[i], b = uPB[i]; if (b.w <= 0.0 || up < 0.8 || length(io.xz - a.xz) > b.z) continue;
+        float sa = length(b.xy), y = wp.y - a.y; if (sa < 1e-5 || y <= 0.0) continue;
+        vec2 D = b.xy / sa; float h = max(a.w, 0.2), vd = dot(wp.xz - a.xz, D);
+        if (y < h) {
+          float u = y / h, s = sa * u * u * (3.0 - u) * 0.5, th = atan(1.5 * sa * (2.0 * u - u * u) / h);
+          d.xz += D * (s + vd * (cos(th) - 1.0)); d.y -= 0.6 * s * s / max(y, 0.05) + vd * sin(th);
+        } else {
+          float th = atan(1.5 * sa / h), c = cos(th), sn = sin(th), vu = y - h;
+          d.xz += D * (sa + vu * sn + vd * c - vd); d.y += h - 0.6 * sa * sa / h + vu * c - vd * sn - y;
         }
-        float l = max(length(wp - a.xyz), 0.05), sl = length(s);
-        if (sl > 0.85 * l) { s *= 0.85 * l / sl; sl = 0.85 * l; }
-        d.xz += s; d.y -= sl * sl / (2.0 * l);
       }
       for (int i = 0; i < 2; i++) {           // legs part low plants radially
         vec4 f = uFeet[i]; if (f.w <= 0.0 || uFootR <= 0.0) continue;
@@ -1226,7 +1222,7 @@ function pushPatch(sh, footR, part = 0) {
     mvPosition = viewMatrix * mvPosition;
     gl_Position = projectionMatrix * mvPosition;`);
 }
-function foliageMaterial(map, { wind = 0.012, alphaTest = 0.42, footR = null, part = 0 } = {}) {
+function foliageMaterial(map, { wind = 0.012, alphaTest = 0.42, footR = null } = {}) {
   const m = new THREE.MeshLambertMaterial({ map, alphaTest, side: THREE.DoubleSide, vertexColors: true });
   const uWind = { value: wind };
   m.onBeforeCompile = (sh) => {
@@ -1243,15 +1239,15 @@ function foliageMaterial(map, { wind = 0.012, alphaTest = 0.42, footR = null, pa
       transformed += normal * sin(uTime * 4.0 + dot(position, vec3(17.0, 11.0, 13.0))) * uWind * 0.25;`);
     // Keep the shared "crown" normals on both faces of each card, so foliage shades as a volume, not as flat planes.
     sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replaceAll('normal *= faceDirection;', ''));
-    if (footR !== null) pushPatch(sh, footR, part);
+    if (footR !== null) pushPatch(sh, footR);
   };
-  if (footR !== null) m.customProgramCacheKey = () => `push${footR}:${part}`;
+  if (footR !== null) m.customProgramCacheKey = () => `push${footR}`;
   return m;
 }
 const mats = {
   leaf: foliageMaterial(tex.leaf, { footR: 0 }),
   needle: foliageMaterial(tex.needle, { alphaTest: 0.38, footR: 0 }),
-  shrub: foliageMaterial(tex.shrub, { wind: 0.04, footR: 0.5, part: 1 }),
+  shrub: foliageMaterial(tex.shrub, { wind: 0.04, footR: 0.5 }),
   fern: foliageMaterial(tex.fern, { wind: 0.06, alphaTest: 0.4, footR: 0.45 }),
   grass: foliageMaterial(tex.grass, { wind: 0.09, alphaTest: 0.35, footR: 0.32 }),
   bark: new THREE.MeshLambertMaterial({ map: tex.bark }),
@@ -1370,8 +1366,7 @@ function nearPatchGeo(half = 48, step = 0.5) {
 }
 
 mats.bark.onBeforeCompile = (sh) => { bendPatch(sh); pushPatch(sh, 0); };
-mats.wood.onBeforeCompile = (sh) => pushPatch(sh, 0, 1); // tall-shrub stems bend and part with their foliage
-mats.wood.customProgramCacheKey = () => 'wood-push';
+mats.wood.onBeforeCompile = (sh) => pushPatch(sh, 0); // tall-shrub stems bend with their foliage
 mats.litter.map = tex.litter;
 
 // ---------------------------------------------------------------- geometry builders
@@ -1959,7 +1954,7 @@ function buildWorld() {
       if (kind === 'conifer') b.cone.add(trs(t.x + dx, cy, t.z + dz, yaw, cr, crownLen * 1.04, cr), lt[0] * cv, lt[1] * cv, lt[2] * cv, t.d);
       else (kind === 'pine' ? b.pine : b.broad).add(trs(t.x + dx, cy, t.z + dz, yaw, cr, crownLen, cr * (0.85 + 0.3 * r())), lt[0] * cv, lt[1] * cv, lt[2] * cv, t.d);
       if (t.d >= 8) pushCol(colTrunks, t.x, t.z, { x: t.x, z: t.z, r: t.d / 200 + 0.25 });
-      else if (h > 1.3) pushCol(saplingCells, t.x, t.z, { sap: true, x: t.x + dx * 0.3, z: t.z + dz * 0.3, r: 0.04 + t.d / 200, h, R: cr * 0.9, base: h - crownLen });
+      else if (h > 1.3) pushCol(saplingCells, t.x, t.z, { sap: true, tx: t.x, tz: t.z, tol: Math.hypot(dx, dz) + 0.05, x: t.x + dx * 0.3, z: t.z + dz * 0.3, r: 0.04 + t.d / 200, h, R: cr * 0.9, base: h - crownLen });
     } else if (t.st === 1) {
       const grey = mix3(TINT.bark[t.sp], [0.62, 0.60, 0.56], clamp(t.t / 20, 0, 0.8));
       b.trunk.add(trs(t.x, gy - 0.15, t.z, yaw, rad, t.sh, rad), grey[0] * vari, grey[1] * vari, grey[2] * vari, t.d * 0.7, [0, 0, f.bl[2], f.bl[3]], wobAttr);
@@ -2416,7 +2411,7 @@ const RIG = {
   gaitPass: 0.2,          // share of the rhythmic pelvis bounce and weight shift that reaches the eye
   leanSlope: 0.32, leanPush: 0.55, leanAccel: 0.05, gazeFollow: 0.3, // torso lean per unit uphill gradient, per push-off; camera follows 30% of lean in pitch
   kPelvis: 320, kBase: 160, kLean: 140, kCrouch: 260, kLat: 260, kHand: 160,
-  plantK: 55, plantZeta: 0.5, pushReact: 0.08, // shrub stiffness (1/s²) and damping; head shift per metre of unyielded push
+  plantK: 55, plantZeta: 0.6, pushReact: 0.08, // shrub stiffness (1/s²) and damping; head shift per metre of unyielded push
 };
 const body = {
   feet: [{ side: -1 }, { side: 1 }], next: 0, pelvis: new THREE.Vector3(), pvy: 0, base: 0, vbase: 0,
@@ -2563,8 +2558,27 @@ function plantBothFeet() {
   const rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
   for (const ft of body.feet) { ft.x = ft.tx = player.x + rx * ft.side * RIG.hipW; ft.z = ft.tz = player.z + rz * ft.side * RIG.hipW; ft.y = ft.ty = supportAt(ft.x, ft.z); ft.t = 1; }
 }
-function startSwing(ft, tx, tz, dur) {
-  Object.assign(ft, { sx: ft.x, sz: ft.z, sy: ft.y, tx, tz, ty: supportAt(tx, tz), t: 0, dur });
+// A foot lands at the aimed spot unless that is far below or above where you stand (off the side of a narrow stem or
+// ledge): then it comes in toward your centreline, which the controller has already found standable.
+function foothold(tx, tz) {
+  const s0 = supportAt(tx, tz);
+  if (Math.abs(s0 - rig.feet) < 0.45) return [tx, tz, s0];
+  // candidates: around the aim point, toward the centre, and around the footprint the controller stands on
+  const c = [];
+  for (const r of [0.12, 0.25]) for (let k = 0; k < 8; k++) { const a = k * 0.785; c.push([tx + Math.cos(a) * r, tz + Math.sin(a) * r]); }
+  for (const k of [0.3, 0.55, 0.8, 1]) c.push([lerp(tx, player.x, k), lerp(tz, player.z, k)]);
+  for (let k = 0; k < 6; k++) { const a = (k / 6) * 6.283; c.push([player.x + Math.cos(a) * FOOT, player.z + Math.sin(a) * FOOT]); }
+  let best = null, bd = Infinity, fb = [tx, tz, s0], fe = Math.abs(s0 - rig.feet);
+  for (const [x, z] of c) {
+    const s = supportAt(x, z), e = Math.abs(s - rig.feet), d = Math.hypot(x - tx, z - tz);
+    if (e < 0.45 && d < bd) { bd = d; best = [x, z, s]; }
+    if (e < fe) { fe = e; fb = [x, z, s]; }
+  }
+  return best || fb;
+}
+function startSwing(ft, tx0, tz0, dur) {
+  const [tx, tz, ty] = foothold(tx0, tz0);
+  Object.assign(ft, { sx: ft.x, sz: ft.z, sy: ft.y, tx, tz, ty, t: 0, dur });
   // lift enough to clear what lies between the old and new footholds
   let top = Math.max(ft.sy, ft.ty);
   for (const q of [0.2, 0.35, 0.5, 0.65, 0.8]) top = Math.max(top, supportAt(lerp(ft.sx, tx, q), lerp(ft.sz, tz, q)));
@@ -2641,7 +2655,7 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
     if (worst) { const [ix, iz] = ideal(worst); startSwing(worst, ix, iz, 0.3); }
   }
   for (const ft of body.feet) if (ft.t < 1) {
-    if (!m && ft.t < 0.7 && spd > 0.05) { [ft.tx, ft.tz] = aim(ft, ft.dur * (1 - ft.t)); ft.ty = supportAt(ft.tx, ft.tz); }
+    if (!m && ft.t < 0.7 && spd > 0.05) [ft.tx, ft.tz, ft.ty] = foothold(...aim(ft, ft.dur * (1 - ft.t)));
     ft.t = Math.min(1, ft.t + dt / ft.dur);
     const e = ft.t * ft.t * (3 - 2 * ft.t);
     ft.x = lerp(ft.sx, ft.tx, e); ft.z = lerp(ft.sz, ft.tz, e); ft.y = lerp(ft.sy, ft.ty, e) + Math.sin(Math.PI * ft.t) * ft.lift;
@@ -2793,11 +2807,13 @@ function updatePlants(dt, ux, uz, rx, rz, spd) {
   // hand the plant displacements and footfalls to the vegetation shaders
   for (let i = 0; i < 4; i++) {
     const p = body.plants[i];
-    if (p) { PUSH.uPA.value[i].set(p.x, groundAt(p.x, p.z), p.z, p.h); PUSH.uPB.value[i].set(p.dx, p.dz, p.R * 1.25 + 0.2, 1); }
+    if (p) { // the plant's own base (a sapling's trunk; its crown sits off-axis by its lean) and the load height
+      const bx = p.it.tx ?? p.x, bz = p.it.tz ?? p.z;
+      PUSH.uPA.value[i].set(bx, groundAt(bx, bz), bz, p.ph); PUSH.uPB.value[i].set(p.dx, p.dz, p.it.tol ?? 0.05, 1);
+    }
     else PUSH.uPB.value[i].set(0, 0, 0, 0);
   }
   body.feet.forEach((ft, i) => PUSH.uFeet.value[i].set(ft.x, ft.y, ft.z, rig.mantle ? 0 : 1));
-  PUSH.uBody.value.set(player.x, rig.feet, player.z, rig.mantle ? 0 : Math.max(0.9, body.pelvis.y + body.crouch - rig.feet + 0.6));
 }
 
 // ---- camera
@@ -3131,7 +3147,7 @@ start();
 
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
-  get world() { return W; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
+  get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
   col: { topOf, supportAt, ceilingAt, duckPosture, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, standable, scrambleTarget, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },
   info() { return { near: Object.fromEntries(Object.entries(near.b).map(([k, v]) => [k, v.n])), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries }; },
