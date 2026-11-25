@@ -97,6 +97,7 @@ The same seed and settings always give the same world.
 |---|---|
 | `src/worldgen.js` | Terrain, erosion, hydrology, stand simulation, statistics. Pure JS, no DOM, runs in Node. |
 | `src/gym.js` | Testing gym stations and the world record built from them. |
+| `src/plants.js` | Plants as graphs of segments: species architecture, growth, foliage units, edible organs, bark and foliage geometry. Design: `docs/plants.md`. |
 | `src/game.js` | Three.js rendering, procedural textures, controls, user interface (UI). |
 | `index.html` | Page shell and styles. |
 | `tools/sim-report.mjs` | Command-line stand inventory for a seed. |

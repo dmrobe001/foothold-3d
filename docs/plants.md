@@ -1,6 +1,6 @@
 # Plants: design for a branched, rooted, breakable plant model
 
-Status: **design, not built**. This replaces the "Trees: forks, branch hierarchy, stubs" sketch in
+Status: **step 1 built** (skeletons, leaves, edible organs as data, near rendering, specimen stations); steps 2–4 are design. This replaces the "Trees: forks, branch hierarchy, stubs" sketch in
 `extensibility.md` and folds in five requirements:
 
 1. leaf placement differs by plant;
@@ -8,7 +8,8 @@ Status: **design, not built**. This replaces the "Trees: forks, branch hierarchy
    deliberate breaking, pushing through foliage, and branches surviving on fallen trees;
 3. roots, some crossing above ground, which shape root wads and leave a pit when a tree uproots;
 4. stumps;
-5. vines.
+5. vines;
+6. edible parts.
 
 Labels used below: **[known]** is standard botany or mechanics with a citation-grade source; **[choice]** is a design
 decision; **[guess]** is a number to tune in play.
@@ -109,6 +110,21 @@ Leaves only reference a node, so when a branch breaks or a log turns over, its f
 branch keeps its foliage for a season (needles redden), then drops it. That rule also makes branches on fallen
 trees fade in a believable way.
 
+## 3b. Edible parts
+
+Two kinds of entry, both in the species table (`ARCH[sp].edible` and `.organ`):
+- **Organs**: discrete objects placed on the graph when the plant grows, such as cones, samaras, catkins, and later
+  berries and nuts. Each is `{node, u, part, mass, months}`. Because an organ sits on a node, it falls with its
+  branch, adds its mass to the load, and can be picked by reaching that point. Placement depends on the species,
+  size (a minimum dbh for bearing), crown zone (fir cones only in the top fifth, upright; pine cones mid crown,
+  hanging) and, for shoot-tip organs, the tips only.
+- **Tissues**: parts of a segment rather than objects, such as inner bark, sap and needle tips. They are listed with
+  the segments they live on (stem, shoot tips) and the months they are good, so a later gathering mechanic reads them
+  from the graph: inner bark from any stem segment, sap from the stem in spring, tea from live shoot tips.
+
+Months are northern temperate. The uses listed are traditional and are not advice. Roots will carry edible tissues
+the same way, and vines (wild grape) will carry fruit as organs.
+
 ## 4. Mechanics the graph enables (designed for, built later)
 
 All of these are **cantilever beam** calculations [known] on the segment chain. The section modulus of a round
@@ -207,6 +223,34 @@ climbing and swinging. Leaves are kind 3e.
 - **Far.** Today's card crowns.
 
 The existing near/far level-of-detail switch, tiles and batches stay as they are.
+
+## 8b. What step 1 actually does
+
+**Generator** (`src/plants.js`, built):
+- architecture after Weber and Penn (1995): axes grown by per-species rules, filling the crown envelope from the stand
+  simulation;
+- pipe-model radii, with the exponent fitted to dbh;
+- dead branches and stubs below the live crown;
+- decurrent leaders for maple and some birch, and forked variants after leader loss;
+- foliage units of four kinds, and organs.
+
+Generation takes 0.3–16 ms per plant in node. A mature fir has about 900 segments.
+
+**Rendering** (`src/game.js`):
+- Live trees and saplings within 45 m use a library of grown plants. Per species there are 6 size classes, and per
+  class shaded, open and forked crowns with 2 seeds each, normalised to unit height and instanced.
+- Each tree picks a variant by dbh class and crown length, then is scaled and turned, with the existing lean, sweep and
+  sinuosity applied in the shader.
+- Further out, the existing card crowns draw the trees, and they hide the trees inside the 45 m ring, so each tree is
+  drawn once.
+
+What is not built yet:
+- Per-tree skeletons. A tree uses its variant's graph, so a delta for a single tree comes with steps 2 and 3, which
+  grow trees near the player individually from their own seed and history.
+- Light-driven growth. Crown length stands in for it.
+
+**Cost:** in the default forest, about 2.75 million triangles and about 500 draw calls near the player, against
+1.5 million and about 360 before.
 
 ## 9. How we check it (the plant gym)
 

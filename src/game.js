@@ -1,9 +1,10 @@
 // Foothold renderer, controls and UI. World data comes from ./worldgen.js.
 import * as THREE from 'three';
-import { generateWorld, sampleGrid, SPECIES, GEOLOGY, crownRadius, crownFraction, WORLD, N, NF, CELL, HALF, hash3, mulberry32, makeNoise2D, clamp, smoothstep } from './worldgen.js';
+import { generateWorld, sampleGrid, SPECIES, GEOLOGY, crownRadius, crownFraction, treeHeight, WORLD, N, NF, CELL, HALF, hash3, mulberry32, makeNoise2D, clamp, smoothstep } from './worldgen.js';
 import { settleDeadfall, trunkProfile } from './deadfall.js';
 import { buildGymWorld, gymToWorld, stationOrigin, STATIONS } from './gym.js';
 import * as SK from './skeleton.js';
+import * as PL from './plants.js';
 
 const $ = (id) => document.getElementById(id);
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
@@ -806,6 +807,90 @@ class NearBatch { // fixed-capacity instanced mesh refilled as the player moves
   commit() { this.mesh.count = this.n; this.mesh.instanceMatrix.needsUpdate = true; this.mesh.instanceColor.needsUpdate = true; }
 }
 
+// ---------------------------------------------------------------- plants near the player: grown skeletons
+// Live trees and saplings within PLANT_R of the player are drawn from a library of grown plants (src/plants.js): per
+// species, size class and crown shape, two seeded skeletons (plus a forked one), normalised to unit height and instanced.
+// Beyond the ring, the tiles' card crowns draw them, and those hide the trees inside it (uNear), so each tree is drawn once.
+const PLANT_R = 45, PCLASS = [1.5, 4, 10, 20, 35, 60], PSHAPE = ['shaded', 'open', 'forked'];
+const uNear = { value: new THREE.Vector3(1e9, 1e9, 0) };
+function hidePatch(sh, origin, declare = false) {
+  sh.uniforms.uNear = uNear;
+  sh.vertexShader = `uniform vec3 uNear;\n${declare ? 'attribute vec4 aBend;\n' : ''}` + sh.vertexShader.replace('#include <clipping_planes_vertex>', `#include <clipping_planes_vertex>
+    #ifdef USE_INSTANCING
+    if (distance(${origin}, uNear.xy) < uNear.z) gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+    #endif`);
+}
+function treeFoliage(map, alphaTest, near) {
+  const m = foliageMaterial(map, { alphaTest, footR: near ? 0 : null }), base = m.onBeforeCompile;
+  m.onBeforeCompile = (sh) => { base(sh); if (near) bendPatch(sh); else hidePatch(sh, 'aBend.xy', true); };
+  m.customProgramCacheKey = () => (near ? 'treeNearFol' : 'treeFarFol');
+  return m;
+}
+function treeDepth(bend, hide) {
+  const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+  m.onBeforeCompile = (sh) => { if (bend) bendPatch(sh); if (hide) hidePatch(sh, hide, hide === 'aBend.xy'); };
+  m.customProgramCacheKey = () => `treeDepth${bend}${hide}`;
+  return m;
+}
+const treeMats = {
+  bark: (() => { const m = new THREE.MeshLambertMaterial({ map: tex.bark }); m.onBeforeCompile = (sh) => { bendPatch(sh); pushPatch(sh, 0); }; m.customProgramCacheKey = () => 'treeNearBark'; return m; })(),
+  farBark: (() => { const m = new THREE.MeshLambertMaterial({ map: tex.bark }); m.onBeforeCompile = (sh) => { bendPatch(sh); hidePatch(sh, 'instanceMatrix[3].xz'); }; m.customProgramCacheKey = () => 'treeFarBark'; return m; })(),
+  leaf: treeFoliage(tex.leaf, 0.42, true), needle: treeFoliage(tex.needle, 0.38, true),
+  farLeaf: treeFoliage(tex.leaf, 0.42, false), farNeedle: treeFoliage(tex.needle, 0.38, false),
+  nearFolDepth: treeDepth(true, null), farBarkDepth: treeDepth(true, 'instanceMatrix[3].xz'), farFolDepth: treeDepth(false, 'aBend.xy'),
+};
+const plantLib = new Map(); // key -> { P, hRep, crRep, barkGeo, leafGeo, bark, leaf, cap, n }
+let plantCells = new Map(), plantGroup = null;
+const plantNear = { cx: 1e9, cz: 1e9 };
+function plantClass(d) { let best = 0; for (let i = 1; i < PCLASS.length; i++) if (Math.abs(Math.log(d / PCLASS[i])) < Math.abs(Math.log(d / PCLASS[best]))) best = i; return best; }
+function plantVariant(sp, ci, shape, si) {
+  const key = `${sp}:${ci}:${shape}:${si}`; let v = plantLib.get(key); if (v) return v;
+  const dRep = Math.min(PCLASS[ci], SPECIES[sp].dmax * 0.75), hRep = treeHeight(sp, dRep), crRep = crownRadius(sp, dRep);
+  const cf = crownFraction(sp) * (shape === 0 ? 0.8 : 1) * (dRep < 6 ? 1.15 : 1), crownLen = Math.min(hRep * 0.95, hRep * cf);
+  const seed = 1009 + sp * 7919 + ci * 613 + shape * 97 + si * 31;
+  const P = PL.growPlant({ sp, d: dRep, h: hRep, crownLen, cr: crRep, seed, forked: shape === 2 });
+  const B = PL.barkMesh(P), barkGeo = new THREE.BufferGeometry();
+  barkGeo.setAttribute('position', new THREE.Float32BufferAttribute(B.pos.map((q) => q / hRep), 3));
+  barkGeo.setAttribute('normal', new THREE.Float32BufferAttribute(B.nor, 3)); barkGeo.setAttribute('uv', new THREE.Float32BufferAttribute(B.uv, 2)); barkGeo.setIndex(B.idx);
+  const sc = (a) => a.map((q) => q / hRep);
+  const leafGeo = cardGeometry(PL.foliageCards(P, seed + 1).map((k) => ({ ...k, c: sc(k.c), u: sc(k.u), v: sc(k.v) })));
+  v = { key, sp, P, hRep, crRep, barkGeo, leafGeo, bark: null, leaf: null, cap: 0, n: 0 };
+  plantLib.set(key, v); return v;
+}
+function plantMeshes(v, need) { // (re)allocate a variant's instanced meshes to hold `need` trees
+  if (v.cap >= need) return;
+  if (v.bark) { plantGroup.remove(v.bark, v.leaf); v.bark.dispose(); v.leaf.dispose(); }
+  const cap = Math.max(16, 1 << Math.ceil(Math.log2(need)));
+  const bend = new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4), wob = new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4);
+  for (const g of [v.barkGeo, v.leafGeo]) { g.setAttribute('aBend', bend); g.setAttribute('aWob', wob); }
+  const conifer = SPECIES[v.sp].kind === 'conifer' || SPECIES[v.sp].kind === 'pine';
+  v.bark = new THREE.InstancedMesh(v.barkGeo, treeMats.bark, cap); v.leaf = new THREE.InstancedMesh(v.leafGeo, conifer ? treeMats.needle : treeMats.leaf, cap);
+  v.leaf.instanceMatrix = v.bark.instanceMatrix;
+  v.bark.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3); v.leaf.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
+  v.bark.customDepthMaterial = bendDepthMat; v.leaf.customDepthMaterial = treeMats.nearFolDepth;
+  for (const m of [v.bark, v.leaf]) { m.frustumCulled = false; m.castShadow = true; m.receiveShadow = true; m.count = 0; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); }
+  v.cap = cap; v.bendA = bend; v.wobA = wob; plantGroup.add(v.bark, v.leaf);
+}
+function refreshPlants(px, pz, force) {
+  if (!force && Math.hypot(px - plantNear.cx, pz - plantNear.cz) < 5) return;
+  plantNear.cx = px; plantNear.cz = pz;
+  const pick = [], R2 = PLANT_R * PLANT_R, c0 = Math.floor((px - PLANT_R + HALF) / 16), c1 = Math.floor((px + PLANT_R + HALF) / 16), d0 = Math.floor((pz - PLANT_R + HALF) / 16), d1 = Math.floor((pz + PLANT_R + HALF) / 16);
+  for (let ci = c0; ci <= c1; ci++) for (let cj = d0; cj <= d1; cj++) for (const r of plantCells.get(ci * 4096 + cj) || []) if ((r.x - px) ** 2 + (r.z - pz) ** 2 < R2) pick.push(r);
+  for (const v of plantLib.values()) v.n = 0;
+  for (const r of pick) r.v.n++;
+  for (const v of plantLib.values()) { if (v.n) plantMeshes(v, v.n); v.fill = 0; }
+  for (const r of pick) {
+    const v = r.v, i = v.fill++;
+    v.bark.instanceMatrix.array.set(r.m, i * 16); v.bark.instanceColor.array.set(r.bc, i * 3); v.leaf.instanceColor.array.set(r.lc, i * 3);
+    v.bendA.array.set(r.bend, i * 4); v.wobA.array.set(r.wob, i * 4);
+  }
+  for (const v of plantLib.values()) if (v.bark) {
+    v.bark.count = v.leaf.count = v.n; v.bark.visible = v.leaf.visible = v.n > 0;
+    if (v.n) { v.bark.instanceMatrix.needsUpdate = true; v.bark.instanceColor.needsUpdate = true; v.leaf.instanceColor.needsUpdate = true; v.bendA.needsUpdate = true; v.wobA.needsUpdate = true; }
+  }
+  uNear.value.set(px, pz, PLANT_R);
+}
+
 // ---------------------------------------------------------------- world build
 let W = null;          // world data from worldgen
 let worldGroup = null; // all meshes for the current world
@@ -889,9 +974,10 @@ function buildWorld() {
 
   // trees, snags, logs, root plates, outcrops — batched into 64 m tiles so whole tiles can be culled
   const TILE = 64, NT = WORLD / TILE;
-  const B = Array.from({ length: NT * NT }, () => ({ trunk: new Batch(), piece: new Batch(), butt: new Batch(), broad: new Batch(), cone: new Batch(), pine: new Batch(), plate: new Batch(), rk: [new Batch(), new Batch(), new Batch(), new Batch()] }));
+  const B = Array.from({ length: NT * NT }, () => ({ live: new Batch(), trunk: new Batch(), piece: new Batch(), butt: new Batch(), broad: new Batch(), cone: new Batch(), pine: new Batch(), plate: new Batch(), rk: [new Batch(), new Batch(), new Batch(), new Batch()] }));
   const tileOf = (x, z) => clamp(Math.floor((z + HALF) / TILE), 0, NT - 1) * NT + clamp(Math.floor((x + HALF) / TILE), 0, NT - 1);
-  colTrunks = new Map(); colLogs = []; logCells = new Map(); solids = new Map(); saplingCells = new Map();
+  colTrunks = new Map(); colLogs = []; logCells = new Map(); solids = new Map(); saplingCells = new Map(); plantCells = new Map();
+  if (!plantGroup) { plantGroup = new THREE.Group(); scene.add(plantGroup); }
   const ckey = (ci, cj) => ci * 4096 + cj;
   const pushCol = (map, x, z, item, cs = 8) => { const k = ckey(Math.floor((x + HALF) / cs), Math.floor((z + HALF) / cs)); let a = map.get(k); if (!a) map.set(k, (a = [])); a.push(item); };
   // bedrock outcrops: large, partly buried blocks on steep rocky ground, aligned with the slope
@@ -930,15 +1016,23 @@ function buildWorld() {
       const h = t.h, cf = crownFraction(t.sp) * (t.L !== undefined ? 0.75 + 0.25 * clamp(t.L * 2, 0, 1) : 1) * (t.d < 6 ? 1.15 : 1);
       const crownLen = Math.min(h * 0.95, h * cf), cr = crownRadius(t.sp, t.d) * (0.85 + 0.3 * r());
       const bt = TINT.bark[t.sp], H = kind === 'conifer' ? h * 0.97 : h * 0.86;
-      b.trunk.add(trs(t.x, gy - 0.15, t.z, yaw, rad, H, rad), bt[0] * vari, bt[1] * vari, bt[2] * vari, t.d, bendAttr, wobAttr);
+      b.live.add(trs(t.x, gy - 0.15, t.z, yaw, rad, H, rad), bt[0] * vari, bt[1] * vari, bt[2] * vari, t.d, bendAttr, wobAttr);
       const lt = TINT.leaf[t.sp], shadeDull = t.L !== undefined ? 0.82 + 0.18 * clamp(t.L * 3, 0, 1) : 1, cv = vari * shadeDull;
       const cy = gy + h - crownLen;
       // the crown sits on the bent stem: offset by the stem displacement at crown base (and a bit toward the top)
       const ub = clamp((h - crownLen) / H, 0, 1), um = clamp((h - crownLen * 0.5) / H, 0, 1);
       const o1 = toW(...bendLocal(f, ub, H)), o2 = toW(...bendLocal(f, um, H));
       const dx = (o1[0] + o2[0]) / 2, dz = (o1[1] + o2[1]) / 2;
-      if (kind === 'conifer') b.cone.add(trs(t.x + dx, cy, t.z + dz, yaw, cr, crownLen * 1.04, cr), lt[0] * cv, lt[1] * cv, lt[2] * cv, t.d);
-      else (kind === 'pine' ? b.pine : b.broad).add(trs(t.x + dx, cy, t.z + dz, yaw, cr, crownLen, cr * (0.85 + 0.3 * r())), lt[0] * cv, lt[1] * cv, lt[2] * cv, t.d);
+      const base = [t.x, t.z, 0, 0]; // far crowns carry their tree's base, so the near ring can hide them
+      if (kind === 'conifer') b.cone.add(trs(t.x + dx, cy, t.z + dz, yaw, cr, crownLen * 1.04, cr), lt[0] * cv, lt[1] * cv, lt[2] * cv, t.d, base);
+      else (kind === 'pine' ? b.pine : b.broad).add(trs(t.x + dx, cy, t.z + dz, yaw, cr, crownLen, cr * (0.85 + 0.3 * r())), lt[0] * cv, lt[1] * cv, lt[2] * cv, t.d, base);
+      { // the grown plant drawn near the player: a library variant by size class and crown shape, scaled to this tree
+        const r2 = mulberry32(hash3(Math.round(t.x * 10), Math.round(t.z * 10), 91)), A = PL.ARCH[t.sp];
+        const shape = r2() < A.fork ? 2 : cf / (crownFraction(t.sp) * (t.d < 6 ? 1.15 : 1)) < 0.9 ? 0 : 1;
+        const v = plantVariant(t.sp, plantClass(Math.max(1, t.d)), shape, r2() < 0.5 ? 0 : 1), sx = v.hRep * (cr / v.crRep);
+        const rec = { x: t.x, z: t.z, v, m: trs(t.x, gy - 0.15, t.z, yaw, sx, h, sx).elements.slice(), bc: [lin(bt[0] * vari), lin(bt[1] * vari), lin(bt[2] * vari)], lc: [lin(lt[0] * cv), lin(lt[1] * cv), lin(lt[2] * cv)], bend: bendAttr, wob: wobAttr };
+        pushCol(plantCells, t.x, t.z, rec, 16);
+      }
       if (t.d >= 8) pushCol(colTrunks, t.x, t.z, { x: t.x, z: t.z, r: t.d / 200 + 0.25 });
       else if (h > 1.3) pushCol(saplingCells, t.x, t.z, { sap: true, tx: t.x, tz: t.z, tol: Math.hypot(dx, dz) + 0.05, x: t.x + dx * 0.3, z: t.z + dz * 0.3, r: 0.04 + t.d / 200, h, R: cr * 0.9, base: h - crownLen });
     } else if (t.st === 1) {
@@ -984,9 +1078,13 @@ function buildWorld() {
       }
     }
     // crowns get a full and a reduced geometry sharing one instance buffer; the loop picks one by distance
-    for (const [batch, hiG, loG, mat] of [[b.broad, geos.broad, geos.broadLo, mats.leaf], [b.cone, geos.cone, geos.coneLo, mats.needle], [b.pine, geos.broad, geos.broadLo, mats.needle]]) {
-      const hi = batch.build(hiG, mat, { farMin: 4 }); if (!hi) continue;
-      const lo = lodTwin(hi, loG, false);
+    {
+      const hi = b.live.build(geos.trunk, treeMats.farBark, { farMin: 9, form: true });
+      if (hi) { const lo = lodTwin(hi, geos.trunkLo, true); hi.customDepthMaterial = lo.customDepthMaterial = treeMats.farBarkDepth; g.add(hi, lo); g.userData.hi.push(hi); g.userData.lo.push(lo); }
+    }
+    for (const [batch, hiG, loG, mat] of [[b.broad, geos.broad, geos.broadLo, treeMats.farLeaf], [b.cone, geos.cone, geos.coneLo, treeMats.farNeedle], [b.pine, geos.broad, geos.broadLo, treeMats.farNeedle]]) {
+      const hi = batch.build(hiG, mat, { farMin: 4, form: true }); if (!hi) continue;
+      const lo = lodTwin(hi, loG, false); hi.customDepthMaterial = lo.customDepthMaterial = treeMats.farFolDepth;
       g.add(hi, lo); g.userData.hi.push(hi); g.userData.lo.push(lo);
     }
     g.userData.cx = (ti % NT) * TILE - HALF + TILE / 2; g.userData.cz = Math.floor(ti / NT) * TILE - HALF + TILE / 2;
@@ -1116,6 +1214,7 @@ function onGround(x, y, z, yaw, s) { // a flat item lying on the local slope
   _m.makeBasis(_t.multiplyScalar(s), _n.multiplyScalar(s), _b.multiplyScalar(s)); _m.setPosition(x, y, z); return _m;
 }
 function refreshNear(px, pz, force = false) {
+  refreshPlants(px, pz, force);
   if (!force && Math.hypot(px - near.cx, pz - near.cz) < 6) return;
   near.cx = px; near.cz = pz;
   for (const nb of Object.values(near.b)) nb.reset();
