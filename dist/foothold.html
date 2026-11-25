@@ -2508,7 +2508,7 @@ function spring(x, v, target, k, dt, zeta = 1.1) {
 function resetRig(feetY) { // stand at the player's x, z: on the ground (not a stem hung overhead), or at a given support height
   supportRef = feetY ?? ground(player.x, player.z);
   rig.feet = feetY ?? footSupport(player.x, player.z); rig.vy = 0; rig.lift = null; body.want = null;
-  Object.assign(body, { need: 0, needT: 0, four: false, yaw: player.yaw, head: 2, q: newQuad() }); body.q.n = [0, 1, 0];
+  Object.assign(body, { need: 0, needT: 0, four: false, mix: 0, yaw: player.yaw, head: 2, q: newQuad() }); body.q.n = [0, 1, 0];
   for (const h of body.hands) { h.hold = null; h.sw = null; }
   const rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
   for (const f of body.feet) {
@@ -2753,6 +2753,7 @@ function movePlayer(dt) {
   body.needT = needT;
   body.need = clamp(body.need + clamp(needT - body.need, -dt * 2.5, dt * 4), 0, 1);
   body.four = body.four ? body.need > 0.25 : body.need > 0.6; // hands down / hands free, with hysteresis
+  body.mix = clamp((body.mix || 0) + (body.four ? dt * 3 : -dt * 3), 0, 1); // the posture eases between walking and on hands
   { const c = ceilingAt(player.x, player.z, rig.feet); body.head = c === Infinity ? 2 : c - rig.feet; }
   const moved = Math.hypot(player.x - px, player.z - pz);
   updateBody(dt, moved, run, player.x - px, player.z - pz, f);
@@ -2884,7 +2885,7 @@ function quadPose() {
 }
 // the whole body: the walking posture and the posture on hands, mixed by how much the hands are needed
 function bodyPose() {
-  const w = smoothstep(0.15, 0.85, body.need), P = walkPose();
+  const w = smoothstep(0, 1, body.mix || 0), P = walkPose();
   if (w <= 0) return P;
   const Q = quadPose(), mix = (a, b) => [lerp(a[0], b[0], w), lerp(a[1], b[1], w), lerp(a[2], b[2], w)];
   return {
@@ -3090,13 +3091,15 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
     if (over > 0) { body.crouch -= over; eye.y -= over; }
   }
   const sol = SK.solvePose(bodyPose()); body.sol = sol;
-  const w = smoothstep(0.15, 0.85, body.need);
+  const w = smoothstep(0, 1, body.mix || 0);
   if (w > 0) {
-    const q = body.q, h = sol.J.head, eq = V.add(V.add(h, q.n, 0.08), q.a, 0.04);
+    const q = body.q, h = sol.J.head, e4 = V.add(V.add(h, q.n, 0.08), q.a, 0.04);
+    q.eye = q.eye && w < 1.01 && V.len(V.sub(q.eye, e4)) < 1.5 ? V.add(q.eye, V.sub(e4, q.eye), Math.min(1, dt * 12)) : e4; // the head steadies the eye
+    const eq = q.eye;
     eye = { x: lerp(eye.x, eq[0], w), y: lerp(eye.y, eq[1], w), z: lerp(eye.z, eq[2], w) };
     q.comU = V.dot(V.sub(V.add(sol.J.pelvis, sol.J.chest).map((v) => v / 2), q.S0), q.a);
     if (four) q.stats.short = Math.max(q.stats.short, ...[0, 1, 2, 3].map((i) => limbAt(i) ? sol.short[['handL', 'handR', 'footL', 'footR'][i]] : 0));
-  }
+  } else body.q.eye = null;
   body.eye = eye; player.eye = eye.y;
 }
 
@@ -3169,7 +3172,7 @@ function applyCamera() {
     camera.position.set(e.x, e.y, e.z);
     // crawling, the gaze tips up (or down) the stem by part of its slope, depending on which way you look along it
     // on hands, the gaze tips up (or down) the surface by part of its slope, depending on which way you look along it
-    const q = body.q, ah = Math.hypot(q.a[0], q.a[2]) || 1e-6, cpT = smoothstep(0.15, 0.85, body.need) * 0.55 * Math.atan(q.a[1] / ah) * (-Math.sin(player.yaw) * q.a[0] - Math.cos(player.yaw) * q.a[2]) / ah;
+    const q = body.q, ah = Math.hypot(q.a[0], q.a[2]) || 1e-6, cpT = smoothstep(0, 1, body.mix || 0) * 0.55 * Math.atan(q.a[1] / ah) * (-Math.sin(player.yaw) * q.a[0] - Math.cos(player.yaw) * q.a[2]) / ah;
     body.crawlPitch = lerp(body.crawlPitch || 0, cpT, 0.08);
     camera.rotation.set(clamp(player.pitch - (body.lean - 0.85 * body.duckLean) * RIG.gazeFollow * M + body.crawlPitch, -1.45, 1.45), player.yaw, body.roll * M);
   }
