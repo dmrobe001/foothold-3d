@@ -1234,9 +1234,16 @@ function nearbyTrunks(x, z) {
 // springs: a dip-and-catch on step-ups, knee compression on landing, a pitch-and-roll "vault" when scrambling, a
 // stride-locked side-to-side sway that grows with uphill steepness, and a sideways dodge around shrubs. Flat-ground walking
 // has no bob. Motion strength: settings.motion = full | reduced | off.
-const rig = { climb: 0, feet: 0, vy: 0, oy: 0, voy: 0, lat: 0, vlat: 0, roll: 0, vroll: 0, pit: 0, vpit: 0, phase: 0, mantle: null, swayAmp: 0 };
+const rig = { vSway: 0, lx: 0, lz: 0, climb: 0, feet: 0, vy: 0, oy: 0, voy: 0, lat: 0, vlat: 0, roll: 0, vroll: 0, pit: 0, vpit: 0, phase: 0, mantle: null, swayAmp: 0 };
 const MOTION = { full: 1, reduced: 0.4, off: 0 };
-function resetRig() { Object.assign(rig, { feet: footSupport(player.x, player.z), vy: 0, oy: 0, voy: 0, lat: 0, vlat: 0, roll: 0, vroll: 0, pit: 0, vpit: 0, mantle: null, swayAmp: 0 }); player.eye = rig.feet + 1.65; }
+// Tuning knobs. k values are spring stiffness (1/s²); settle time ≈ 5/√k seconds (critically damped).
+const RIG = {
+  kLat: 220, kRoll: 200, kPitch: 150, kUp: 260, kDown: 420, // shrub dodge return / roll / scramble pitch / step catch-up / step-down
+  dipStep: 5,                         // extra downward head velocity per metre of step-up
+  swayFrom: 0.12, swayFull: 0.7,      // uphill gradient (rise/run) where stride sway starts and reaches full strength
+  swayLat: 0.16, swayRoll: 0.06, swayBob: 0.07, // full-strength sway: metres sideways, radians of roll, metres of bob
+};
+function resetRig() { Object.assign(rig, { lx: player.x, lz: player.z, feet: footSupport(player.x, player.z), vy: 0, oy: 0, voy: 0, lat: 0, vlat: 0, roll: 0, vroll: 0, pit: 0, vpit: 0, mantle: null, swayAmp: 0, vSway: 0 }); player.eye = rig.feet + 1.65; }
 function spring(x, v, target, k, dt) { // critically damped, sub-stepped for stability
   const c = 2 * Math.sqrt(k), n = Math.ceil(dt / 0.008), h = dt / n;
   for (let i = 0; i < n; i++) { v += (-k * (x - target) - c * v) * h; x += v * h; }
@@ -1306,7 +1313,7 @@ function movePlayer(dt) {
     const sup = footSupport(player.x, player.z);
     if (sup >= rig.feet) {
       const d = sup - rig.feet;
-      if (d > 0.08) { rig.oy -= d; rig.voy -= d * 6 * M; }     // the head lags, dips, then catches up
+      if (d > 0.08) { rig.oy -= d; rig.voy -= d * RIG.dipStep * M; }     // the head lags, dips, then catches up
       else rig.oy -= d;
       rig.feet = sup; rig.vy = 0;
     } else {
@@ -1320,15 +1327,22 @@ function movePlayer(dt) {
   }
 
   // stride-locked sway on steep climbs; amplitude follows steepness through a spring so it swells and fades
+  // uphill steepness along the direction of travel, from the smooth 2 m terrain (not frame-to-frame jitter)
+  if (moved > 0) {
+    const ux = (player.x - rig.lx) / moved, uz = (player.z - rig.lz) / moved;
+    uphill = (sampleGrid(W.H, N, player.x + ux, player.z + uz) - sampleGrid(W.H, N, player.x - ux, player.z - uz)) / 2;
+  }
+  rig.lx = player.x; rig.lz = player.z;
   rig.phase += (moved / (run ? 1.3 : 0.75)) * Math.PI;
-  const steep = smoothstep(0.15, 0.9, uphill) * (moved > 0 ? 1 : 0);
-  [rig.swayAmp] = spring(rig.swayAmp, 0, steep, 6, dt);
+  const steep = smoothstep(RIG.swayFrom, RIG.swayFull, uphill) * (moved > 0 ? 1 : 0);
+  [rig.swayAmp, rig.vSway] = spring(rig.swayAmp, rig.vSway, steep, 8, dt);
   const sway = Math.sin(rig.phase) * rig.swayAmp, bob = -Math.abs(Math.sin(rig.phase)) * rig.swayAmp;
   const dodge = shrubPush(player.x, player.z, rx, rz);
-  [rig.lat, rig.vlat] = spring(rig.lat, rig.vlat, (sway * 0.11 + dodge) * M, 60, dt);
-  [rig.roll, rig.vroll] = spring(rig.roll, rig.vroll, (-sway * 0.045 - dodge * 0.1) * M, 50, dt);
-  [rig.pit, rig.vpit] = spring(rig.pit, rig.vpit, 0, 40, dt);
-  [rig.oy, rig.voy] = spring(rig.oy, rig.voy, bob * 0.05 * M, 70, dt);
+  [rig.lat, rig.vlat] = spring(rig.lat, rig.vlat, (sway * RIG.swayLat + dodge) * M, RIG.kLat, dt);
+  [rig.roll, rig.vroll] = spring(rig.roll, rig.vroll, (-sway * RIG.swayRoll - dodge * 0.1) * M, RIG.kRoll, dt);
+  [rig.pit, rig.vpit] = spring(rig.pit, rig.vpit, 0, RIG.kPitch, dt);
+  // vertical: stiffer when the head is above where it should be, so stepping down off a log doesn't float
+  [rig.oy, rig.voy] = spring(rig.oy, rig.voy, bob * RIG.swayBob * M, rig.oy > 0 ? RIG.kDown : RIG.kUp, dt);
   player.eye = rig.feet + 1.65 + rig.oy;
 }
 function applyCamera() {
@@ -1605,7 +1619,7 @@ start();
 
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
-  get world() { return W; }, player, settings, ground: (x, z) => ground(x, z), resetRig, input, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
+  get world() { return W; }, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
   col: { footSupport, standable, scrambleTarget, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },
   info() { return { near: Object.fromEntries(Object.entries(near.b).map(([k, v]) => [k, v.n])), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries }; },
