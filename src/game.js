@@ -903,7 +903,7 @@ function buildWorld() {
         // the wad is a near-vertical soil wall: ellipsoid thin along the fall direction
         addSolid(ellipsoid(t.x - dirx * 0.15, cyP, t.z - dirz * 0.15, pr * (0.7 + 0.3 * pf), pr * (0.5 + 0.5 * pf), th * 0.5, -dirz, dirx), pr);
       }
-      if (t.d >= 5) addSolid({ kind: 'log', x: (bx + tx) / 2, z: (bz + tz) / 2, x0: bx, z0: bz, x1: tx, z1: tz, ya0: y0, ya1: y1, r: rr }, len / 2 + rr);
+      if (t.d >= 5) logSolids(bx, y0, bz, tx, y1, tz, rad * (1 - 0.15 * fd), rad * (1 - 0.35 * fd), [f.A * (1 - 0.4 * fd), f.k, f.ph, 0.25]);
       if (t.d >= 12) {
         const log = { x0: bx, z0: bz, x1: tx, z1: tz, y0: y0 + rr * 0.8, y1: y1 + rr * 0.8, r: rr, cls };
         colLogs.push(log);
@@ -1146,6 +1146,32 @@ const STEP = 0.55, SCRAMBLE = 1.35, MAX_SLOPE = 0.95, MAX_GROUND_SLOPE = 1.15, F
 let solids = null; // 8 m hash of static solids
 let saplingCells = null; // small simulated trees (dbh < 8 cm): stems to walk around, crowns to push
 const ckey8 = (x, z) => Math.floor((x + HALF) / 8) * 4096 + Math.floor((z + HALF) / 8);
+// A fallen stem as collision: a chain of short segments following exactly what the bark shader draws for it
+// (straight axis + sinuosity wobble, lathe-profile taper, vertically slumped cross-section). Short segments also
+// register in every grid cell the log crosses.
+const TRUNK_PROFILE = [[0, 0.8], [0.025, 0.66], [0.07, 0.55], [0.14, 0.5], [0.24, 0.48], [0.34, 0.46], [0.45, 0.44], [0.56, 0.42], [0.67, 0.39], [0.78, 0.36], [0.89, 0.33], [1, 0.3]];
+function trunkProfile(u) {
+  for (let i = 1; i < TRUNK_PROFILE.length; i++) if (u <= TRUNK_PROFILE[i][0]) { const [a, ra] = TRUNK_PROFILE[i - 1], [b, rb] = TRUNK_PROFILE[i]; return lerp(ra, rb, (u - a) / (b - a)); }
+  return 0.3;
+}
+function logSolids(bx, y0, bz, tx, y1, tz, sx, sz, wob) {
+  const ax = tx - bx, ay = y1 - y0, az = tz - bz, L = Math.hypot(ax, ay, az) || 1, Y = [ax / L, ay / L, az / L];
+  let X = [Y[1] * 0 - Y[2] * 1, Y[2] * 0 - Y[0] * 0, Y[0] * 1 - Y[1] * 0]; // Y x UP, as along() builds it
+  const lx = Math.hypot(...X); X = lx < 1e-6 ? [1, 0, 0] : X.map((c) => c / lx);
+  const Z = [X[1] * Y[2] - X[2] * Y[1], X[2] * Y[0] - X[0] * Y[2], X[0] * Y[1] - X[1] * Y[0]];
+  const at = (u) => { // centre of the drawn stem at axial fraction u, and its horizontal / vertical radius
+    const y = u * L, env = smoothstep(0, 2, y), bxw = wob[0] * env * Math.sin(wob[1] * y + wob[2]), bzw = wob[0] * env * wob[3] * Math.sin(0.73 * wob[1] * y + 1.3 * wob[2]);
+    const pr = trunkProfile(u);
+    return [bx + ax * u + X[0] * bxw + Z[0] * bzw, y0 + ay * u + X[1] * bxw + Z[1] * bzw, bz + az * u + X[2] * bxw + Z[2] * bzw, sx * pr, sz * pr];
+  };
+  const n = Math.max(2, Math.ceil(L / 0.8));
+  let p = at(0);
+  for (let i = 1; i <= n; i++) {
+    const q = at(i / n), r = Math.max(p[3], q[3]);
+    if (r >= 0.02) addSolid({ kind: 'log', x: (p[0] + q[0]) / 2, z: (p[2] + q[2]) / 2, x0: p[0], z0: p[2], x1: q[0], z1: q[2], ya0: p[1], ya1: q[1], r, r0: p[3], r1: q[3], rz0: p[4], rz1: q[4] }, Math.hypot(q[0] - p[0], q[2] - p[2]) / 2 + r);
+    p = q;
+  }
+}
 function addSolid(o, r) {
   if (o.kind === 'mesh') { // every 8 m cell the world box touches
     for (let ci = Math.floor((o.x0 + HALF) / 8); ci <= Math.floor((o.x1 + HALF) / 8); ci++)
@@ -1221,7 +1247,9 @@ function topOf(o, x, z) {
   const vx = o.x1 - o.x0, vz = o.z1 - o.z0, L2 = vx * vx + vz * vz || 1;
   const t = clamp(((x - o.x0) * vx + (z - o.z0) * vz) / L2, 0, 1);
   const d = Math.hypot(x - (o.x0 + vx * t), z - (o.z0 + vz * t));
-  return d < o.r ? lerp(o.ya0, o.ya1, t) + Math.sqrt(o.r * o.r - d * d) : -Infinity;
+  if (o.r0 === undefined) return d < o.r ? lerp(o.ya0, o.ya1, t) + Math.sqrt(o.r * o.r - d * d) : -Infinity;
+  const rx = lerp(o.r0, o.r1, t); if (d >= rx) return -Infinity; // tapered, slumped (elliptical) section
+  return lerp(o.ya0, o.ya1, t) + lerp(o.rz0, o.rz1, t) * Math.sqrt(1 - (d / rx) ** 2);
 }
 const BRANCH_R = { twig: 0.012, stick: 0.022, limb: 0.032 }; // radius as a fraction of length (matches crookedGeo)
 function branchSolid(it) { // fallen branch -> a thin lying cylinder, placed exactly as refreshNear draws it
