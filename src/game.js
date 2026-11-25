@@ -156,19 +156,35 @@ const uTime = { value: 0 };
 const PUSH = {
   uPA: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) }, uPB: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) },
   uFeet: { value: Array.from({ length: 2 }, () => new THREE.Vector4()) },
+  uBody: { value: new THREE.Vector4() }, // walker's column: x, feet y, z, height
 };
-function pushPatch(sh, footR) {
-  Object.assign(sh.uniforms, PUSH, { uFootR: { value: footR } });
-  sh.vertexShader = `uniform vec4 uPA[4]; uniform vec4 uPB[4]; uniform vec4 uFeet[2]; uniform float uFootR;
+// A pushed plant deforms in two parts, both rooted at its base:
+//   bending: the plant's spring amplitude (uPB.xy) times a cantilever's static deflection shape, phi = eta^2 (3 - eta) / 2
+//            for height fraction eta. Stems on the side you push from take all of it, the far side about half.
+//   parting: for many-stemmed plants (part = 1), stems inside the walker's column are pushed out of it, sideways.
+// Stems don't stretch: a point displaced sideways by s drops by s^2 / (2 l), l its distance from the base (arc).
+function pushPatch(sh, footR, part = 0) {
+  Object.assign(sh.uniforms, PUSH, { uFootR: { value: footR }, uPart: { value: part } });
+  sh.vertexShader = `uniform vec4 uPA[4]; uniform vec4 uPB[4]; uniform vec4 uFeet[2]; uniform vec4 uBody; uniform float uFootR; uniform float uPart;
     // io: this instance's origin (world), up: how upright its local Y axis is. Only the pushed plant's own upright
     // instances follow the push; logs, fallen branches and neighbouring plants inside its radius stay put.
     vec3 pushDisp(vec3 wp, vec3 io, float up){
       vec3 d = vec3(0.0);
       for (int i = 0; i < 4; i++) {           // a pushed shrub bends from its base; tips move most
         vec4 a = uPA[i], b = uPB[i]; if (b.w <= 0.0 || up < 0.8 || length(io.xz - a.xz) > 0.8) continue;
-        float hw = clamp((wp.y - a.y) / a.w, 0.0, 1.2); hw = hw * hw;
-        float w = (1.0 - smoothstep(b.z * 0.55, b.z, length(wp.xz - a.xz))) * (1.0 - smoothstep(1.1, 1.4, (wp.y - a.y) / a.w));
-        d.xz += b.xy * w * hw; d.y -= length(b.xy) * w * hw * 0.3;
+        vec2 rel = wp.xz - a.xz; float eta = clamp((wp.y - a.y) / a.w, 0.0, 1.0);
+        float phi = eta * eta * (3.0 - eta) * 0.5;
+        float bl = length(b.xy); vec2 bd = bl > 1e-4 ? b.xy / bl : vec2(0.0);
+        float nearSide = clamp(0.5 - 0.5 * dot(rel, bd) / max(b.z * 0.5, 0.2), 0.0, 1.0);
+        vec2 s = b.xy * phi * mix(1.0, mix(0.5, 1.0, nearSide), uPart);
+        if (uPart > 0.0 && uBody.w > 0.0) {
+          vec2 o = wp.xz - uBody.xz; float r = length(o), R = 0.34;
+          float inside = (1.0 - smoothstep(R * 0.5, R + 0.1, r)) * (1.0 - smoothstep(uBody.y + uBody.w - 0.2, uBody.y + uBody.w, wp.y));
+          s += (o / max(r, 1e-3)) * max(0.0, R + 0.1 - r) * inside * smoothstep(0.05, 0.4, eta) * uPart;
+        }
+        float l = max(length(wp - a.xyz), 0.05), sl = length(s);
+        if (sl > 0.85 * l) { s *= 0.85 * l / sl; sl = 0.85 * l; }
+        d.xz += s; d.y -= sl * sl / (2.0 * l);
       }
       for (int i = 0; i < 2; i++) {           // legs part low plants radially
         vec4 f = uFeet[i]; if (f.w <= 0.0 || uFootR <= 0.0) continue;
@@ -191,7 +207,7 @@ function pushPatch(sh, footR) {
     mvPosition = viewMatrix * mvPosition;
     gl_Position = projectionMatrix * mvPosition;`);
 }
-function foliageMaterial(map, { wind = 0.012, alphaTest = 0.42, footR = null } = {}) {
+function foliageMaterial(map, { wind = 0.012, alphaTest = 0.42, footR = null, part = 0 } = {}) {
   const m = new THREE.MeshLambertMaterial({ map, alphaTest, side: THREE.DoubleSide, vertexColors: true });
   const uWind = { value: wind };
   m.onBeforeCompile = (sh) => {
@@ -208,15 +224,15 @@ function foliageMaterial(map, { wind = 0.012, alphaTest = 0.42, footR = null } =
       transformed += normal * sin(uTime * 4.0 + dot(position, vec3(17.0, 11.0, 13.0))) * uWind * 0.25;`);
     // Keep the shared "crown" normals on both faces of each card, so foliage shades as a volume, not as flat planes.
     sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replaceAll('normal *= faceDirection;', ''));
-    if (footR !== null) pushPatch(sh, footR);
+    if (footR !== null) pushPatch(sh, footR, part);
   };
-  if (footR !== null) m.customProgramCacheKey = () => `push${footR}`;
+  if (footR !== null) m.customProgramCacheKey = () => `push${footR}:${part}`;
   return m;
 }
 const mats = {
   leaf: foliageMaterial(tex.leaf, { footR: 0 }),
   needle: foliageMaterial(tex.needle, { alphaTest: 0.38, footR: 0 }),
-  shrub: foliageMaterial(tex.shrub, { wind: 0.04, footR: 0.5 }),
+  shrub: foliageMaterial(tex.shrub, { wind: 0.04, footR: 0.5, part: 1 }),
   fern: foliageMaterial(tex.fern, { wind: 0.06, alphaTest: 0.4, footR: 0.45 }),
   grass: foliageMaterial(tex.grass, { wind: 0.09, alphaTest: 0.35, footR: 0.32 }),
   bark: new THREE.MeshLambertMaterial({ map: tex.bark }),
@@ -335,7 +351,8 @@ function nearPatchGeo(half = 48, step = 0.5) {
 }
 
 mats.bark.onBeforeCompile = (sh) => { bendPatch(sh); pushPatch(sh, 0); };
-mats.wood.onBeforeCompile = (sh) => pushPatch(sh, 0); // tall-shrub stems bend with their foliage
+mats.wood.onBeforeCompile = (sh) => pushPatch(sh, 0, 1); // tall-shrub stems bend and part with their foliage
+mats.wood.customProgramCacheKey = () => 'wood-push';
 mats.litter.map = tex.litter;
 
 // ---------------------------------------------------------------- geometry builders
@@ -1292,15 +1309,16 @@ function rockSupport(x, z) { // ground and the static solids registered so far (
   if (list) for (const o of list) { const t = topOf(o, x, z); if (t > y) y = t; }
   return y;
 }
-// A stem hung up in a neighbour's crown can pass overhead: where its underside clears your head, you walk beneath it.
+// A stem hung up in a neighbour's crown can pass overhead: where its underside clears a ducking head, you walk
+// beneath it (the body stoops and bends its knees to fit, see duckPosture).
 // `supportRef` is the height of the feet the query is for (set once per movement step); a stem resting near the ground
 // always counts, so lookups a little uphill of the feet still see logs lying there.
-const HEADROOM = 1.85;
+const DUCK_MIN = 1.1; // lowest head-top height (above the feet) a stooped, knee-bent walk reaches
 let supportRef = Infinity, logUnder = 0;
 function supportAt(x, z) {
   let y = ground(x, z);
   const list = solids.get(ckey8(x, z));
-  const clear = Math.max(supportRef, y) + HEADROOM; // y is the ground here
+  const clear = Math.max(supportRef, y) + DUCK_MIN; // y is the ground here
   if (list) for (const o of list) { logUnder = -Infinity; const t = topOf(o, x, z); if (t > y && logUnder < clear) y = t; }
   const ci = Math.floor((x + HALF) / NC), cj = Math.floor((z + HALF) / NC);
   for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) { // big near-field rocks can overhang their cell
@@ -1312,6 +1330,15 @@ function supportAt(x, z) {
     }
   }
   return y;
+}
+function ceilingAt(x, z, feet) { // lowest underside of a stem passing overhead that a duck could get under
+  let c = Infinity; const list = solids.get(ckey8(x, z)); if (!list) return c;
+  for (const o of list) {
+    if (o.kind !== 'log' || o.r0 === undefined) continue;
+    logUnder = -Infinity; if (topOf(o, x, z) === -Infinity) continue;
+    if (logUnder > feet + DUCK_MIN - 0.2 && logUnder < c) c = logUnder;
+  }
+  return c;
 }
 function footSupport(x, z) {
   let y = supportAt(x, z);
@@ -1332,6 +1359,9 @@ function standable(x, z, feet, fromX, fromZ, climb = 0) {
   if (rise > 0.005 && sup - g > 0.25 && supportGrad(x, z) > MAX_SLOPE) { steep = rise; if (climb + steep > STEP) return null; }
   if (sup <= g + 0.05 && slopeAt(x, z) > MAX_GROUND_SLOPE && g > ground(fromX, fromZ) + 1e-3) return null;
   if (trunkHit(x, z)) return null;
+  // a stem overhead too low to duck under, here or where the stooped head reaches
+  const hx = x - Math.sin(player.yaw) * 0.45, hz = z - Math.cos(player.yaw) * 0.45;
+  if (Math.min(ceilingAt(x, z, sup), ceilingAt(hx, hz, sup)) - sup < DUCK_MIN) return null;
   return { sup, steep };
 }
 function scrambleTarget(px, pz, feet, ux, uz) { // a ledge within reach ahead that is flat enough to stand on
@@ -1373,7 +1403,7 @@ const body = {
   feet: [{ side: -1 }, { side: 1 }], next: 0, pelvis: new THREE.Vector3(), pvy: 0, base: 0, vbase: 0,
   lean: 0, vlean: 0, crouch: 0, vcrouch: 0, lat: 0, vlat: 0, react: 0, vreact: 0, roll: 0, vroll: 0,
   hands: [{ side: -1, p: new THREE.Vector3(), v: new THREE.Vector3(), target: null }, { side: 1, p: new THREE.Vector3(), v: new THREE.Vector3(), target: null }],
-  plants: [], fwd: [0, -1], speed: 0, phase: 0, stems: new Map(), lastVx: 0, lastVz: 0, airborne: false,
+  plants: [], duck: 0, duckLean: 0, duckHold: null, fwd: [0, -1], speed: 0, phase: 0, stems: new Map(), lastVx: 0, lastVz: 0, airborne: false,
 };
 const rig = { climb: 0, feet: 0, vy: 0, mantle: null };
 body.veer = 1;
@@ -1391,7 +1421,7 @@ function resetRig() {
     Object.assign(f, { sx: f.x, sz: f.z, sy: f.y, tx: f.x, tz: f.z, ty: f.y, t: 1, dur: 0.3, lift: 0 });
   }
   body.pelvis.set(player.x, rig.feet + RIG.leg - 0.03, player.z); body.pvy = 0;
-  body.base = body.pelvis.y; Object.assign(body, { vbase: 0, lean: 0, vlean: 0, crouch: 0, vcrouch: 0, lat: 0, vlat: 0, react: 0, vreact: 0, roll: 0, vroll: 0, plants: [], airborne: false });
+  body.base = body.pelvis.y; Object.assign(body, { vbase: 0, lean: 0, vlean: 0, crouch: 0, vcrouch: 0, lat: 0, vlat: 0, react: 0, vreact: 0, roll: 0, vroll: 0, plants: [], airborne: false, duck: 0, duckLean: 0, duckHold: null });
   body.stems.clear();
   for (const h of body.hands) { h.p.set(player.x, rig.feet + 0.9, player.z); h.v.set(0, 0, 0); h.target = null; }
   player.eye = rig.feet + 1.65;
@@ -1455,7 +1485,7 @@ function movePlayer(dt) {
   if (input.keys.has('ArrowRight')) player.yaw -= dt * 1.8;
   if (input.keys.has('ShiftLeft') || input.keys.has('ShiftRight')) run = true;
   const mag = Math.hypot(f, s); if (mag > 1) { f /= mag; s /= mag; }
-  const speed = run ? 4.2 : 1.6;
+  const speed = (run ? 4.2 : 1.6) * (1 - 0.55 * body.duck); // a stooped duck-walk is slow
   const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
   const px = player.x, pz = player.z;
   if (!rig.mantle && rig.vy === 0) { const here = footSupport(px, pz); if (here - rig.feet > STEP) rig.feet = here; } // embedded (e.g. a rock streamed in around you): climb out
@@ -1522,6 +1552,30 @@ function startSwing(ft, tx, tz, dur) {
   ft.lift = RIG.lift + (top - Math.max(ft.sy, ft.ty));
   ft.rise = ft.ty - ft.sy;
 }
+// Head height for ducking. Head top above the feet = pelvis + crouch + (spine + neck)·cos(lean) + 0.17 (head above the
+// neck joint). Given the lowest stem underside over where the head is and is about to be, the deficit is shared: the
+// knees take about half (pelvis down to ~0.45 m lower), the back stoops for the rest (up to 1 rad), then the knees again.
+function duckPosture(ux, uz, spd) {
+  const feet = rig.feet, fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), ahead = 1.0 + Math.min(0.6, spd * 0.3); // a fixed lead: the duck-walk slows you, which must not shrink the warning
+  let c = Infinity, cx = 0, cz = 0;
+  // stems are narrow: sample every 0.1 m where the head is going (along travel) and where it reaches (along facing)
+  const pts = [[0, 0, 0.18], [0, 0, -0.18]];
+  for (let a = 0; a <= ahead + 1e-6; a += 0.1) pts.push([a, 0, 0]);
+  for (let b = 0.1; b <= 0.8; b += 0.1) pts.push([0, b, 0], [0.25, b, 0]);
+  for (const [a, b, s] of pts) {
+    const x = player.x + ux * a + fx * b - uz * s, z = player.z + uz * a + fz * b + ux * s, y = ceilingAt(x, z, feet);
+    if (y < c) { c = y; cx = x; cz = z; }
+  }
+  if (c === Infinity) return null;
+  // the pelvis baseline lags a step up, so plan for full standing height
+  const sl = RIG.spine + RIG.neck, head0 = Math.max(body.base - feet, RIG.leg - 0.03) + sl + 0.17, D = head0 - (c - feet - 0.1);
+  if (D <= 0) return null;
+  let crouch = -Math.min(0.38, D * 0.55);
+  const D2 = D + crouch, lean = Math.acos(clamp(1 - D2 / sl, Math.cos(1.0), 1));
+  const D3 = D2 - sl * (1 - Math.cos(lean)); if (D3 > 0) crouch = Math.max(-0.45, crouch - D3);
+  const side = (cx - player.x) * Math.cos(player.yaw) - (cz - player.z) * Math.sin(player.yaw) >= 0 ? 1 : -1;
+  return { lean, crouch, amt: clamp(D / 0.6, 0, 1), x: cx, y: c, z: cz, side };
+}
 function updateBody(dt, moved, run, dx, dz, fwdInput) {
   const M = MOTION[settings.motion] ?? 1;
   const vx = dx / Math.max(dt, 1e-4), vz = dz / Math.max(dt, 1e-4), spd = Math.hypot(vx, vz);
@@ -1537,7 +1591,7 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
   // the cycle (walk 0.4: always one foot down; run 0.62: brief flight). A swing aims the foot so its stance is centred
   // under the hip: it lands (1 - duty) * stepLen ahead of the hip.
   const runK = clamp((spd - 1.6) / 2.6, 0, 1);
-  const stepLen = lerp(RIG.stepWalk, RIG.stepRun, runK) * (1 - 0.5 * steep), duty = lerp(0.4, 0.62, runK);
+  const stepLen = lerp(RIG.stepWalk, RIG.stepRun, runK) * (1 - 0.5 * steep) * (1 - 0.4 * body.duck), duty = lerp(0.4, 0.62, runK);
   const ideal = (ft) => [player.x + rx * ft.side * RIG.hipW, player.z + rz * ft.side * RIG.hipW];
   const landAhead = (1 - duty) * stepLen;
   const aim = (ft, tLeft) => { const [ix, iz] = ideal(ft), a = landAhead * 0.8 + spd * tLeft; return [ix + ux * a, iz + uz * a]; };
@@ -1589,7 +1643,12 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
     }
     pTarget = Math.max(pTarget, rig.feet + 0.68); // walking never folds into a squat; landings and scrambles use the crouch spring
   }
-  [body.crouch, body.vcrouch] = spring(body.crouch, body.vcrouch, 0, RIG.kCrouch, dt);
+  // ducking under a stem overhead: stoop and bend the knees just enough to keep the head below it
+  const dk = m ? null : duckPosture(ux, uz, spd);
+  body.duck += ((dk ? dk.amt : 0) - body.duck) * Math.min(1, dt * 8);
+  body.duckLean += ((dk ? dk.lean : 0) - body.duckLean) * Math.min(1, dt * 10);
+  body.duckHold = dk && dk.amt > 0.25 ? dk : null;
+  [body.crouch, body.vcrouch] = spring(body.crouch, body.vcrouch, dk ? dk.crouch : 0, RIG.kCrouch, dt);
   [body.pelvis.y, body.pvy] = spring(body.pelvis.y, body.pvy, pTarget, RIG.kPelvis, dt);
   // the slowly varying part of pelvis height (terrain) vs the rhythmic part (gait), split by a low-pass "baseline"
   // terrain baseline: nominal standing height over the planted feet (or the controller when nothing is planted)
@@ -1612,6 +1671,7 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
   const sw = body.feet.find((ft) => ft.t < 1);
   const barrier = !m && sw && sw.rise > 0.3 ? sw : null;
   if (barrier) { const q = Math.sin(Math.PI * barrier.t); leanT += 0.3 * q; crouchT -= 0.08 * q; }
+  if (dk) { leanT = Math.max(leanT, dk.lean); crouchT = Math.min(crouchT, dk.crouch); }
   [body.lean, body.vlean] = spring(body.lean, body.vlean, leanT, RIG.kLean, dt);
   body.crouch += (crouchT - body.crouch) * Math.min(1, dt * 12);
   [body.roll, body.vroll] = spring(body.roll, body.vroll, rollT, RIG.kLean, dt);
@@ -1631,6 +1691,8 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
       tx = m.x1 + cRx * hnd.side * 0.25 - fwdX * 0.25; tz = m.z1 + cRz * hnd.side * 0.25 - fwdZ * 0.25; ty = m.y1 + 0.02; k = 400;
     } else if (barrier && barrier.side === hnd.side) {
       tx = barrier.tx + cRx * hnd.side * 0.15; tz = barrier.tz + cRz * hnd.side * 0.15; ty = barrier.ty + 0.03; k = 300;
+    } else if (body.duckHold && body.duckHold.side === hnd.side) { // a hand on the stem passing overhead
+      const d = body.duckHold; tx = d.x; tz = d.z; ty = d.y - 0.03; k = 260;
     } else if (pl) { // palm on the near face of the shrub, which moves away as it yields
       const dl = Math.hypot(pl.dx, pl.dz), sgn = pl.side;
       tx = pl.x - rx * sgn * Math.max(0.05, pl.R - dl) + ux * 0.1; tz = pl.z - rz * sgn * Math.max(0.05, pl.R - dl) + uz * 0.1; ty = Math.min(chestY, groundAt(pl.x, pl.z) + pl.ph);
@@ -1657,6 +1719,10 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
   };
   if (!M) { // motion off: steady eye at standing height above the controller, smoothed
     body.eye.x = player.x; body.eye.z = player.z;
+  }
+  { // the head is solid: if the posture springs lag a sudden rise (a step up under a stem), the knees give at once
+    const c = ceilingAt(body.eye.x, body.eye.z, rig.feet), over = body.eye.y + 0.17 - (c - 0.03);
+    if (over > 0) { body.crouch -= over; body.eye.y -= over; }
   }
   player.eye = body.eye.y;
 }
@@ -1712,6 +1778,7 @@ function updatePlants(dt, ux, uz, rx, rz, spd) {
     else PUSH.uPB.value[i].set(0, 0, 0, 0);
   }
   body.feet.forEach((ft, i) => PUSH.uFeet.value[i].set(ft.x, ft.y, ft.z, rig.mantle ? 0 : 1));
+  PUSH.uBody.value.set(player.x, rig.feet, player.z, rig.mantle ? 0 : Math.max(0.9, body.pelvis.y + body.crouch - rig.feet + 0.6));
 }
 
 // ---- camera
@@ -1724,7 +1791,7 @@ function applyCamera() {
     camera.rotation.set(-0.28 + player.pitch * 0.3, cyaw, 0);
   } else {
     camera.position.set(e.x, e.y, e.z);
-    camera.rotation.set(clamp(player.pitch - body.lean * RIG.gazeFollow * M, -1.45, 1.45), player.yaw, body.roll * M);
+    camera.rotation.set(clamp(player.pitch - (body.lean - 0.85 * body.duckLean) * RIG.gazeFollow * M, -1.45, 1.45), player.yaw, body.roll * M);
   }
   updateSkeleton();
 }
@@ -2046,7 +2113,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
-  col: { topOf, supportAt, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, standable, scrambleTarget, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
+  col: { topOf, supportAt, ceilingAt, duckPosture, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, standable, scrambleTarget, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },
   info() { return { near: Object.fromEntries(Object.entries(near.b).map(([k, v]) => [k, v.n])), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries }; },
   view(x, y, z, tx, ty, tz) { // free camera for inspection: player stands at the target so near detail loads there
