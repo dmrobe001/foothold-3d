@@ -328,6 +328,22 @@ What is not built yet:
 
   Lodged (hung-up) trees keep their crowns too, in the air.
 
+**Brush** (revised after play). Every branch segment of a fallen tree, and the low limbs of standing trees, that
+crosses your body's path from shin to chest holds you back:
+- **Weights:** twigs under 1.2 cm radius count 0.8, branches under 2.5 cm count 1.5, thicker ones 3. Fresh foliage
+  (under 3 years) up to doubles the twig weight.
+- **Slowing:** walking speed is divided by (1 + 0.32 · total), and never falls below 30 %. Your head is jostled in
+  proportion.
+- **Snapping:** dead twigs in the way snap as you push, a few every 0.4 s.
+- **Solids:** fallen-tree limbs from 2 cm radius are solid, down from 3 cm.
+
+Tested in the gym: walking 5 s across the crown of the 2-year fallen fir covers 6.8 m against 8.0 m on open ground,
+and snaps 15 twig segments.
+
+**Breaking** also works on fallen trees' branches, which count as dead wood. The aim is forgiving for touch screens:
+the button picks the nearest branch roughly in front of you within 2.4 m, and shows its diameter. World-space foliage
+(fallen trees and broken-off pieces) no longer sways in the wind; the wind term scaled with absolute height.
+
 The gym gains two stations, "Fallen fir, 2 years" and "Fallen maple, 12 years". Both are for looking; nothing is
 scored.
 

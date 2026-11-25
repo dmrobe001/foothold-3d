@@ -484,14 +484,14 @@ export function subtree(P, k) {
 // limb is weakest at its collar, where it rots first. Returns the joint most over its limit (or the closest to it).
 // Ignores the limb's own weight and dynamic loads, which the caller folds into F.
 const HEALTH = [1, 0.45, 0.3, 0.2]; // LIVE, DEAD, STUB, BURIED
-export function breakCheck(P, i, u, F, s = 1) {
+export function breakCheck(P, i, u, F, s = 1, dead = false) { // dead: treat all of it as dead wood (a fallen tree's branches)
   const MOR = ARCH[P.sp].wood.MOR * 1e6;
   const q = [0, 1, 2].map((k) => (P.p0[i * 3 + k] + (P.p1[i * 3 + k] - P.p0[i * 3 + k]) * u) * s);
   let best = { node: -1, ratio: 0 }, j = i;
   while (j >= 0 && P.ord[j] >= 1) {
     const r = [0, 1, 2].map((k) => q[k] - P.p0[j * 3 + k] * s), M = len3(cross(r, F)), rad = P.r0[j] * s;
     const collar = P.st[j] === DEAD && (P.par[j] < 0 || P.ord[P.par[j]] < P.ord[j]) ? 0.6 : 1;
-    const ratio = M / ((Math.PI * rad ** 3) / 4) / (MOR * HEALTH[P.st[j]] * collar);
+    const st = dead ? Math.max(DEAD, P.st[j]) : P.st[j], ratio = M / ((Math.PI * rad ** 3) / 4) / (MOR * HEALTH[st] * (dead && (P.par[j] < 0 || P.ord[P.par[j]] < P.ord[j]) ? 0.6 : collar));
     if (ratio > best.ratio) best = { node: j, ratio };
     j = P.par[j];
   }
