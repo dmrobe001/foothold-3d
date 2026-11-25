@@ -32,8 +32,8 @@ Panels: **Map** (tap to teleport), **Stand** (inventory, diameter distribution, 
 - **Scramble:** pushing forward into something up to 1.35 m high with a standable top climbs onto it in a short animation.
 - **Blocks:** trunks, taller steep-sided things, and natural ground steeper than about 49°.
 - **No slowdowns.** Instead the camera shows effort with damped springs: it dips and catches up on step-ups, compresses on
-  landings, pitches and rolls during scrambles, sways side to side in stride on steep climbs, and dodges sideways past
-  shrubs. Flat ground has no head bob. **World → Camera motion** sets Full, Reduced or Off.
+  landings, pitches and rolls during scrambles, shifts side to side in stride on steep climbs, and dodges sideways past
+  shrubs. Sway and dodge are pure translation, so the horizon stays level; only scrambles tilt it. Flat ground has no head bob. **World → Camera motion** sets Full, Reduced or Off.
 
 ## Reproduce stand statistics without a browser
 

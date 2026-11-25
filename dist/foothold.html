@@ -1948,23 +1948,26 @@ function nearbyTrunks(x, z) {
 // springs: a dip-and-catch on step-ups, knee compression on landing, a pitch-and-roll "vault" when scrambling, a
 // stride-locked side-to-side sway that grows with uphill steepness, and a sideways dodge around shrubs. Flat-ground walking
 // has no bob. Motion strength: settings.motion = full | reduced | off.
-const rig = { vSway: 0, lx: 0, lz: 0, climb: 0, feet: 0, vy: 0, oy: 0, voy: 0, lat: 0, vlat: 0, roll: 0, vroll: 0, pit: 0, vpit: 0, phase: 0, mantle: null, swayAmp: 0 };
+const rig = { dodgeDir: 0, vSway: 0, lx: 0, lz: 0, climb: 0, feet: 0, vy: 0, oy: 0, voy: 0, lat: 0, vlat: 0, roll: 0, vroll: 0, pit: 0, vpit: 0, phase: 0, mantle: null, swayAmp: 0 };
 const MOTION = { full: 1, reduced: 0.4, off: 0 };
-// Tuning knobs. k values are spring stiffness (1/s²); settle time ≈ 5/√k seconds (critically damped).
+// Tuning knobs. k values are spring stiffness (1/s²); damping ratio 1.1, settle time ≈ 5/√k seconds.
 const RIG = {
   kLat: 220, kRoll: 200, kPitch: 150, kUp: 260, kDown: 420, // shrub dodge return / roll / scramble pitch / step catch-up / step-down
   dipStep: 5,                         // extra downward head velocity per metre of step-up
   swayFrom: 0.12, swayFull: 0.7,      // uphill gradient (rise/run) where stride sway starts and reaches full strength
-  swayLat: 0.16, swayRoll: 0.06, swayBob: 0.07, // full-strength sway: metres sideways, radians of roll, metres of bob
+  swayLat: 0.2, swayBob: 0.07,     // full-strength sway: metres sideways, metres of bob (no roll: translation only)
 };
-function resetRig() { Object.assign(rig, { lx: player.x, lz: player.z, feet: footSupport(player.x, player.z), vy: 0, oy: 0, voy: 0, lat: 0, vlat: 0, roll: 0, vroll: 0, pit: 0, vpit: 0, mantle: null, swayAmp: 0, vSway: 0 }); player.eye = rig.feet + 1.65; }
-function spring(x, v, target, k, dt) { // critically damped, sub-stepped for stability
-  const c = 2 * Math.sqrt(k), n = Math.ceil(dt / 0.008), h = dt / n;
+function resetRig() { Object.assign(rig, { lx: player.x, lz: player.z, feet: footSupport(player.x, player.z), vy: 0, oy: 0, voy: 0, lat: 0, vlat: 0, roll: 0, vroll: 0, pit: 0, vpit: 0, mantle: null, swayAmp: 0, vSway: 0, dodgeDir: 0 }); player.eye = rig.feet + 1.65; }
+function spring(x, v, target, k, dt) { // slightly overdamped, sub-stepped for stability
+  const c = 2.2 * Math.sqrt(k), n = Math.ceil(dt / 0.008), h = dt / n; // damping ratio 1.1: no overshoot
   for (let i = 0; i < n; i++) { v += (-k * (x - target) - c * v) * h; x += v * h; }
   return [x, v];
 }
-function shrubPush(x, z, rx, rz) { // signed sideways nudge away from shrub stems near the head's path
-  let push = 0;
+// Sideways nudge past shrubs. The dodge side is chosen once, when the first shrub comes within reach (away from the
+// nearest stem), and held until every shrub is behind you, so walking through the middle of a bush or between two
+// bushes never flips the target back and forth. Strength is the strongest single shrub, easing in quadratically.
+function shrubPush(x, z, rx, rz) {
+  let w = 0, nearest = Infinity, nearestSide = 0;
   const ci = Math.floor((x + HALF) / NC), cj = Math.floor((z + HALF) / NC);
   for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
     const items = near?.cells.get((ci + di) * 4096 + cj + dj); if (!items) continue;
@@ -1972,11 +1975,14 @@ function shrubPush(x, z, rx, rz) { // signed sideways nudge away from shrub stem
       const t = it[0]; if (t !== 'tall' && t !== 'shrub' && t !== 'seedB' && t !== 'seedC') continue;
       const r = t === 'tall' ? it[4] * 0.9 + 0.3 : it[4] * 0.8 + 0.2, d = Math.hypot(it[1] - x, it[2] - z);
       if (d >= r) continue;
-      const side = (x - it[1]) * rx + (z - it[2]) * rz, w = (1 - d / r) * (t === 'tall' ? 0.45 : t === 'shrub' ? 0.22 : 0.12);
-      push += (side >= 0 ? 1 : -1) * w;
+      const u = 1 - d / r;
+      w = Math.max(w, u * u * (t === 'tall' ? 0.5 : t === 'shrub' ? 0.26 : 0.14));
+      if (d < nearest) { nearest = d; nearestSide = (x - it[1]) * rx + (z - it[2]) * rz; }
     }
   }
-  return clamp(push, -0.5, 0.5);
+  if (w === 0) { rig.dodgeDir = 0; return 0; }
+  if (!rig.dodgeDir) rig.dodgeDir = nearestSide >= 0 ? 1 : -1;
+  return rig.dodgeDir * Math.min(w, 0.5);
 }
 function movePlayer(dt) {
   const M = MOTION[settings.motion] ?? 1;
@@ -2053,7 +2059,7 @@ function movePlayer(dt) {
   const sway = Math.sin(rig.phase) * rig.swayAmp, bob = -Math.abs(Math.sin(rig.phase)) * rig.swayAmp;
   const dodge = shrubPush(player.x, player.z, rx, rz);
   [rig.lat, rig.vlat] = spring(rig.lat, rig.vlat, (sway * RIG.swayLat + dodge) * M, RIG.kLat, dt);
-  [rig.roll, rig.vroll] = spring(rig.roll, rig.vroll, (-sway * RIG.swayRoll - dodge * 0.1) * M, RIG.kRoll, dt);
+  [rig.roll, rig.vroll] = spring(rig.roll, rig.vroll, 0, RIG.kRoll, dt); // roll only from scramble impulses
   [rig.pit, rig.vpit] = spring(rig.pit, rig.vpit, 0, RIG.kPitch, dt);
   // vertical: stiffer when the head is above where it should be, so stepping down off a log doesn't float
   [rig.oy, rig.voy] = spring(rig.oy, rig.voy, bob * RIG.swayBob * M, rig.oy > 0 ? RIG.kDown : RIG.kUp, dt);
@@ -2333,7 +2339,7 @@ start();
 
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
-  get world() { return W; }, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
+  get world() { return W; }, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, nearCells: () => near.cells, step(dt) { movePlayer(dt); refreshNear(player.x, player.z); },
   col: { footSupport, standable, scrambleTarget, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },
   info() { return { near: Object.fromEntries(Object.entries(near.b).map(([k, v]) => [k, v.n])), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries }; },
