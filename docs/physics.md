@@ -371,6 +371,33 @@ Measured after (same walk): the 526 kg log rises at 0.2 m/s at most and does not
 nothing faster than 1.1 m/s; sticks of one body spin under 2 × sqrt(g/L). Thin jointed sticks still reach 5–9 ×
 sqrt(g/L) in a single segment: their joints flex quickly (open). Lever and drop tests unchanged; gym 40/40.
 
+## Energy audit (sixth pass)
+
+`foothold.physics.audit()` (main thread) turns on an energy account for every awake free object: kinetic (from the
+velocity, or between stages from the motion since the substep began, which is what the velocity will become), gravity,
+bent joints (½θ²/α with the solver's own compliance) and pressed soil (½d²/α per ground sample, as the ground model has
+it); stiff wood-on-wood contact energy is not counted. Each stage's change is added to `f.au` (integrate, joints,
+ground, static, body, pair, vel, rods, ext); the stages telescope to the whole change, so in a dissipative system any
+positive total not paid for from outside (your body, feet and pushes, plants) is a solver error, and the stage says
+where.
+
+**Found:** a fresh fallen tree left alone loses energy every second and sleeps (Node replay: −4936, −741, −156, −36,
+−7 J in successive seconds). On a forest walk the jiggling tree was being fed **4–6 kJ every second by living plants**
+under it: a branch or root touching a free object handed it a burst of velocity, and roots in the soil and stems too
+stiff to bend counted as immovable, so they gave the full budget every step in whatever direction the overlap pointed.
+The ground and joints burned it off as fast, so it never settled.
+
+**Fixed:** a branch or root now meets a free object as any contact does (split impulse): an impulse only stops the
+object moving into it (against a root, fully inelastic), and the overlap left is cleared by moving the object without
+speed. The jiggling tree's peak kinetic energy fell from 10–23 J to 2 J, then 0.1 J. The speed, spin and bend-recovery
+limits are gone (fresh tree waking: at most 2 m/s without them).
+
+**Still seen (open):** your foot pressing a branch into the soil puts energy into the soil spring (up to 40 kJ in a
+second, burned off by the ground, no visible motion): the body's share of a contact uses the object's mass, not whether
+the ground holds it. Two logs generated overlapping are pushed apart by the overlap clearing (potential energy without
+motion, about 1–3 kJ a second between a 1.5 t and a 0.5 t log). A settled object's energy creeps by under 2 J a second
+(the overlap clearing lifts it slightly).
+
 ## Push
 
 The Break button is now Push. Held, it presses on whatever your hands reach in the direction you look, ramping to 300 N

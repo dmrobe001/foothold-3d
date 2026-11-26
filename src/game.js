@@ -4556,7 +4556,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); physStep(dt); refreshNear(player.x, player.z); },
-  physics: { clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
+  physics: { clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
   branches: { crunchSegs, crunchStack, branchLoad, get crunchList() { return crunchList; }, logBuf: () => logBuf, logLeafBuf: () => logLeafBuf, logBranches, plantVariant, target: () => breakTargetAt, pick() { const r = running; running = true; breakTarget(); running = r; return breakTargetAt; }, push: pushState, pushStart, pushStop, pushUpdate, breakBranch, treeSegs, plantCells: () => plantCells, brokenTrees: () => brokenTrees, limbSolids, logBranchCells: () => branchLogCells },
   plants: { lib: plantLib, roots: () => rootMeshObj, rootQueue: () => rootQueue, rootCells: () => rootCells, PL },
   gym: { get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },

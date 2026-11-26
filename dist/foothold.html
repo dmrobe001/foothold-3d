@@ -1823,7 +1823,7 @@ const PH = (() => {
 // Reaction on the body: each touching segment pushes back with the branch's cantilever stiffness out to the contact
 // point, k_eff = 3 E I / ℓ³ (ℓ: arc length from the group's anchor), times how far that point is from rest.
 // a joint snaps clean off only if dry and under BREAK_R (m); rolling resistance coefficients (soft forest floor; bark on bark) and sliding friction; soil and litter under a segment: stiffness per contact point SOIL · r · length (N/m: 50 kN/m under a 0.8 m section of a 30 cm log, a few hundred under a twig); bark on bark: compliance WOOD (m/N)
-const BREAK_R = 0.015, SOIL = 4e5, WOOD = 2e-6, CRR_SOIL = 0.25, CRR_WOOD = 0.08, MU_SOIL = 0.8, MU_WOOD = 0.7, SLOP = 0.008, DEP = 0.5, VMAX = 20, WMAX = 40, WDEP = 20; // DEP: the fastest an overlap is pushed out (m/s); deeper ones take a few substeps, not one kick
+const BREAK_R = 0.015, SOIL = 4e5, WOOD = 2e-6, CRR_SOIL = 0.25, CRR_WOOD = 0.08, MU_SOIL = 0.8, MU_WOOD = 0.7, SLOP = 0.008, DEP = 0.5, VMAX = Infinity, WMAX = Infinity, WDEP = Infinity; // (no speed, spin or bend-recovery limits: the energy audit found the sources instead) // DEP: the fastest an overlap is pushed out (m/s); deeper ones take a few substeps, not one kick
 class PhysicsCore {
   constructor() { this.groups = new Map(); this.free = new Map(); }
   add(g) { // g: { id, n, par Int32, u, s0 (n*3), x0 (n*3), r, L, k, w, lim }
@@ -1859,7 +1859,7 @@ class PhysicsCore {
     for (const q of forces || []) { if (q.gid !== undefined) { gf.push(q); continue; } const f = this.free.get(q.id); if (f) { f.ext.push(q); if (f.sleep) this.wake(f); } }
     for (const g of groups) { g.touch.fill(0); g.nearP = this.nearCaps(g, caps, 0); }
     let nodes = 0; for (const g of groups) nodes += g.n;
-    for (const f of frees) { if (!f.rk) f.rk = new Float32Array(f.nb); f.rk.fill(DEP); }
+    for (const f of frees) { if (!f.rk) f.rk = new Float32Array(f.nb); f.rk.fill(DEP * dt); } // how far branches may move each part this step (moves, not speed)
     for (let s = 0; s < SUB; s++) {
       for (const f of frees) this.fCaps(f);
       const awake = frees.filter((f) => !f.sleep);
@@ -1871,6 +1871,7 @@ class PhysicsCore {
       this.all = all;
       let off = caps.length;
       for (const f of awake) for (let c = 0; c < f.nc; c++) { all.set(f.wc.subarray(c * 7, c * 7 + 7), off); owner[off / 7] = fref.length / 2; fref.push(f, c); off += 7; } // fref: (free, capsule) pairs
+      const AU = this.audit ? awake.map((f) => this.energy(f, 0)) : null;
       for (const g of groups) {
         const near = nf ? g.nearP.concat(this.nearCaps(g, all, caps.length)) : g.nearP;
         if (!(g.quiet < 0.5 || g.maxV > 0.05 || near.length || gf.some((q) => q.gid === g.id))) continue; // asleep: untouched for half a second and still
@@ -1881,15 +1882,25 @@ class PhysicsCore {
         this.clear(g, all, near, owner);
         for (let i = 0; i < g.n * 3; i++) g.v[i] = (g.x[i] - g.xp[i]) / h * 0.985;
       }
+      if (AU) awake.forEach((f, i) => { this.au(f).rods += this.energy(f, 0) - AU[i]; });
       // free objects: XPBD wants many small substeps and one pass each
       const hf = h / FSUB;
       for (const f of awake) this.fSelfPairs(f);
       for (let fs = 0; fs < FSUB; fs++) {
         if (!fs) for (const f of frees) if (f.sleep) this.fBody(f, all, caps.length, hf); // the body bumping a sleeping thing wakes it
-        for (const f of awake) this.fIntegrate(f, hf);
-        for (const f of awake) { this.fJoints(f, hf); this.fGround(f, hf); this.fStatic(f, hf); this.fBody(f, all, caps.length, hf); }
-        for (let a = 0; a < frees.length; a++) for (let b = a; b < frees.length; b++) { const f = frees[a], g = frees[b]; if (f.sleep && g.sleep) continue; this.fPair(f, g, hf); }
-        for (const f of awake) this.fVel(f, hf);
+        if (!this.audit) {
+          for (const f of awake) this.fIntegrate(f, hf);
+          for (const f of awake) { this.fJoints(f, hf); this.fGround(f, hf); this.fStatic(f, hf); this.fBody(f, all, caps.length, hf); }
+          for (let a = 0; a < frees.length; a++) for (let b = a; b < frees.length; b++) { const f = frees[a], g = frees[b]; if (f.sleep && g.sleep) continue; this.fPair(f, g, hf); }
+          for (const f of awake) this.fVel(f, hf);
+        } else { // the same, with the energy each stage adds or takes (positions-derived velocity between stages: the stages telescope to the whole change)
+          for (const f of awake) { const e0 = this.energy(f, 0); this.fIntegrate(f, hf); this.au(f).integrate += this.energy(f, hf) - e0; }
+          for (const f of awake) for (const [k, fn] of [['joints', () => this.fJoints(f, hf)], ['ground', () => this.fGround(f, hf)], ['static', () => this.fStatic(f, hf)], ['body', () => this.fBody(f, all, caps.length, hf)]]) { const e0 = this.energy(f, hf); fn(); this.au(f)[k] += this.energy(f, hf) - e0; }
+          const ep = awake.map((f) => this.energy(f, hf));
+          for (let a = 0; a < frees.length; a++) for (let b = a; b < frees.length; b++) { const f = frees[a], g = frees[b]; if (f.sleep && g.sleep) continue; this.fPair(f, g, hf); }
+          awake.forEach((f, i) => { this.au(f).pair += this.energy(f, hf) - ep[i]; });
+          for (const f of awake) { const e0 = this.energy(f, hf); this.fVel(f, hf); this.au(f).vel += this.energy(f, 0) - e0; }
+        }
       }
       for (const f of awake) this.fBreak(f, h);
     }
@@ -1959,6 +1970,41 @@ class PhysicsCore {
       if (this.segCap(W[a], W[a + 1], W[a + 2], W[a + 3], W[a + 4], W[a + 5], W, k, W[a + 6] + 0.01)) f.noPair.add(c * f.nc + d); }
     this.free.set(f.id, f);
   }
+  // ---- energy audit (this.audit): every awake free object's energy, and the stage that changed it ----
+  // E = kinetic (from f.v, f.w when h = 0; from the motion since the substep began, (x − xp)/h, when h > 0, which is what the
+  // velocity will be if nothing else acts) + gravity + bent joints (½θ²/α, the solver's own compliance) + pressed soil (½d²/α
+  // per ground sample, as fGround models it). Stiff wood-on-wood contact energy is not counted.
+  au(f) { return f.au || (f.au = { rods: 0, ext: 0, integrate: 0, joints: 0, ground: 0, static: 0, body: 0, pair: 0, vel: 0 }); }
+  kinetic(f, h) {
+    if (!f.bIn) { f.bIn = new Float32Array(f.nb * 9); for (let b = 0; b < f.nb; b++) { const [a, b1, c, d, e, g, p, q, i] = f.bI.subarray(b * 9, b * 9 + 9), A = e * i - g * q, B = -(d * i - g * p), C = d * q - e * p, det = a * A + b1 * B + c * C || 1e-12; f.bIn.set([A / det, -(b1 * i - c * q) / det, (b1 * g - c * e) / det, B / det, (a * i - c * p) / det, -(a * g - c * d) / det, C / det, -(a * q - b1 * p) / det, (a * e - b1 * d) / det], b * 9); } }
+    let E = 0; const t = this._ta || (this._ta = [0, 0, 0]);
+    for (let b = 0; b < f.nb; b++) {
+      const o = b * 3, j = b * 4, q = f.bq; let vx, vy, vz, wx, wy, wz;
+      if (h > 0) { vx = (f.bx[o] - f.xp[o]) / h; vy = (f.bx[o + 1] - f.xp[o + 1]) / h; vz = (f.bx[o + 2] - f.xp[o + 2]) / h;
+        const p = f.qp, ax = q[j], ay = q[j + 1], az = q[j + 2], aw = q[j + 3], bx = -p[j], by = -p[j + 1], bz = -p[j + 2], bw = p[j + 3];
+        let dx = aw * bx + ax * bw + ay * bz - az * by, dy = aw * by - ax * bz + ay * bw + az * bx, dz = aw * bz + ax * by - ay * bx + az * bw; const dw = aw * bw - ax * bx - ay * by - az * bz;
+        if (dw < 0) { dx = -dx; dy = -dy; dz = -dz; } wx = 2 * dx / h; wy = 2 * dy / h; wz = 2 * dz / h; }
+      else { vx = f.v[o]; vy = f.v[o + 1]; vz = f.v[o + 2]; wx = f.w[o]; wy = f.w[o + 1]; wz = f.w[o + 2]; }
+      const cq = [-q[j], -q[j + 1], -q[j + 2], q[j + 3]]; this.rot(cq, 0, wx, wy, wz, t); const I = f.bIn, i9 = b * 9; // spin in the body's own frame
+      E += 0.5 * f.bm[b] * (vx * vx + vy * vy + vz * vz) + 0.5 * (t[0] * (I[i9] * t[0] + I[i9 + 1] * t[1] + I[i9 + 2] * t[2]) + t[1] * (I[i9 + 3] * t[0] + I[i9 + 4] * t[1] + I[i9 + 5] * t[2]) + t[2] * (I[i9 + 6] * t[0] + I[i9 + 7] * t[1] + I[i9 + 8] * t[2]));
+    }
+    return E;
+  }
+  energy(f, h) {
+    let E = this.kinetic(f, h);
+    for (let b = 0; b < f.nb; b++) E += f.bm[b] * 9.81 * f.bx[b * 3 + 1];
+    const t = [0, 0, 0];
+    for (let j = 0; j < f.nj; j++) { if (f.jbr[j]) continue; const a = f.ja[j], b = f.jb[j], qa = f.bq, ia = a * 4, ib = b * 4, ax = qa[ia], ay = qa[ia + 1], az = qa[ia + 2], aw = qa[ia + 3], bx = qa[ib], by = qa[ib + 1], bz = qa[ib + 2], bw = qa[ib + 3];
+      let ex = aw * -bx + ax * bw + ay * -bz - az * -by, ey = aw * -by - ax * -bz + ay * bw + az * -bx, ez = aw * -bz + ax * -by - ay * -bx + az * bw; const ew = aw * bw + ax * bx + ay * by + az * bz; if (ew < 0) { ex = -ex; ey = -ey; ez = -ez; }
+      const rx = 2 * ex, ry = 2 * ey, rz = 2 * ez;
+      if (!f.jh[j]) E += 0.5 * (rx * rx + ry * ry + rz * rz) / f.jal[j];
+      else { this.rot(f.bq, ib, f.jax[j * 3], f.jax[j * 3 + 1], f.jax[j * 3 + 2], t); const tw = rx * t[0] + ry * t[1] + rz * t[2], b2 = rx * rx + ry * ry + rz * rz - tw * tw; E += 0.5 * tw * tw / (f.jal[j] * 5) + 0.5 * Math.max(0, b2) / (f.jal[j] * 1e4); } }
+    if (f.hf) { this.fCaps(f); const wc = f.wc;
+      for (let c = 0; c < f.nc; c++) { const k = c * 7, ln = Math.hypot(wc[k + 3] - wc[k], wc[k + 4] - wc[k + 1], wc[k + 5] - wc[k + 2]), ns = Math.max(2, Math.ceil(ln / 0.5)), r = wc[k + 6];
+        for (let si = 0; si <= ns; si++) { const u = si / ns, px = wc[k] + (wc[k + 3] - wc[k]) * u, py = wc[k + 1] + (wc[k + 4] - wc[k + 1]) * u, pz = wc[k + 2] + (wc[k + 5] - wc[k + 2]) * u, H = this.hfAt(f.hf, px, pz); if (!H) continue;
+          const pen = H[0] + r - py; if (pen > 0) E += 0.5 * pen * pen * SOIL * Math.max(0.003, r) * Math.max(0.1, ln / ns * 2); } } }
+    return E;
+  }
   wake(f) { f.sleep = false; f.still = 0; f.age = 0; f.snap = null; }
   rot(q, j, vx, vy, vz, out) { // rotate (vx,vy,vz) by quaternion q[j..j+3]
     const x = q[j], y = q[j + 1], z = q[j + 2], w = q[j + 3], tx = 2 * (y * vz - z * vy), ty = 2 * (z * vx - x * vz), tz = 2 * (x * vy - y * vx);
@@ -1982,12 +2028,14 @@ class PhysicsCore {
     }
   }
   fIntegrate(f, h) {
+    const ke0 = this.audit && f.ext.length ? this.kinetic(f, 0) : 0;
     for (const q of f.ext) { // point forces: linear and angular velocity at once
       const b = q.b, m = f.bm[b], o = b * 3, rx = q.p[0] - f.bx[o], ry = q.p[1] - f.bx[o + 1], rz = q.p[2] - f.bx[o + 2], Fx = q.F[0], Fy = q.F[1], Fz = q.F[2];
       f.v[o] += Fx * h / m; f.v[o + 1] += Fy * h / m; f.v[o + 2] += Fz * h / m;
       const tx = (ry * Fz - rz * Fy) * h, ty = (rz * Fx - rx * Fz) * h, tz = (rx * Fy - ry * Fx) * h, I = f.Iw, i9 = b * 9;
       f.w[o] += I[i9] * tx + I[i9 + 1] * ty + I[i9 + 2] * tz; f.w[o + 1] += I[i9 + 3] * tx + I[i9 + 4] * ty + I[i9 + 5] * tz; f.w[o + 2] += I[i9 + 6] * tx + I[i9 + 7] * ty + I[i9 + 8] * tz;
     }
+    if (this.audit && f.ext.length) { const d = this.kinetic(f, 0) - ke0; this.au(f).ext += d; this.au(f).integrate -= d; } // (pushes and feet: work done on it from outside)
     for (let b = 0; b < f.nb; b++) {
       const o = b * 3, j = b * 4;
       f.v[o + 1] -= 9.81 * h; f.dep[b] = DEP * h; f.app[b] = Math.hypot(f.v[o], f.v[o + 1], f.v[o + 2]) * h + 1e-4;
@@ -2016,6 +2064,12 @@ class PhysicsCore {
     if (R) { if (jj * wg > R[b]) jj = R[b] / wg; R[b] -= jj * wg; if (jj <= 0) return; }
     f.v[o] += nx * jj / m; f.v[o + 1] += ny * jj / m; f.v[o + 2] += nz * jj / m;
     const tx = (ry * nz - rz * ny) * jj, ty = (rz * nx - rx * nz) * jj, tz = (rx * ny - ry * nx) * jj, I = f.Iw, i9 = b * 9;
+    w[o] += I[i9] * tx + I[i9 + 1] * ty + I[i9 + 2] * tz; w[o + 1] += I[i9 + 3] * tx + I[i9 + 4] * ty + I[i9 + 5] * tz; w[o + 2] += I[i9 + 6] * tx + I[i9 + 7] * ty + I[i9 + 8] * tz;
+  }
+  imp(f, b, P, nx, ny, nz, j) { // an impulse j along n at point P: velocity and spin
+    const o = b * 3, m = f.bm[b], rx = P[0] - f.bx[o], ry = P[1] - f.bx[o + 1], rz = P[2] - f.bx[o + 2], w = f.w;
+    f.v[o] += nx * j / m; f.v[o + 1] += ny * j / m; f.v[o + 2] += nz * j / m;
+    const tx = (ry * nz - rz * ny) * j, ty = (rz * nx - rx * nz) * j, tz = (rx * ny - ry * nx) * j, I = f.Iw, i9 = b * 9;
     w[o] += I[i9] * tx + I[i9 + 1] * ty + I[i9 + 2] * tz; w[o + 1] += I[i9 + 3] * tx + I[i9 + 4] * ty + I[i9 + 5] * tz; w[o + 2] += I[i9 + 6] * tx + I[i9 + 7] * ty + I[i9 + 8] * tz;
   }
   gkick(f, b, rx, ry, rz, px, py, pz) { // a kick that moves and turns the body without giving it speed (its previous pose moves with it)
@@ -2334,7 +2388,13 @@ class PhysicsCore {
       const b = f.cb[cc], P = [hit.qx, hit.qy, hit.qz], wo = this.wGen(f, b, P[0] - f.bx[b * 3], P[1] - f.bx[b * 3 + 1], P[2] - f.bx[b * 3 + 2], -hit.nx, -hit.ny, -hit.nz), wr = g.pin[i] ? 0 : g.w[i] * hit.t * hit.t;
       if (wo + wr <= 0) return 0;
       if (wo > 0) f.cts.push(b, P[0], P[1], P[2], -hit.nx, -hit.ny, -hit.nz, 0, 0, 0), f.touch = true; // the same contact treatment as anything else (rebound damping, rolling resistance)
-      if (wo > 0) this.vkick(f, b, P, -hit.nx, -hit.ny, -hit.nz, Math.min(hit.pen * wo / (wo + wr), DEP * (this.hstep || 1 / 240)) / wo / (this.hstep || 1 / 240)); // as momentum: it moves out over the step, with the speed that takes
+      if (wo > 0 && !f.sleep) { // a contact like any other (split impulse): an impulse only stops it moving into the branch (against a root or a
+        // stem too stiff to bend, a fully inelastic stop), and the overlap left is cleared by moving it, which gives it no speed
+        const mx = -hit.nx, my = -hit.ny, mz = -hit.nz, vr = (g.v[i * 3] * mx + g.v[i * 3 + 1] * my + g.v[i * 3 + 2] * mz) * hit.t, vf = this.vAt(f, b, P, mx, my, mz);
+        if (vf < vr) this.imp(f, b, P, mx, my, mz, (vr - vf) / (wo + wr));
+        const R = f.rk, dg = Math.min(hit.pen * wo / (wo + wr), R ? R[b] : Infinity);
+        if (dg > 0) { if (R) R[b] -= dg; this.gkick(f, b, P[0] - f.bx[b * 3], P[1] - f.bx[b * 3 + 1], P[2] - f.bx[b * 3 + 2], mx * dg / wo, my * dg / wo, mz * dg / wo); const A = this.all; if (A) for (const e of [0, 3]) { A[c + e] += mx * dg; A[c + e + 1] += my * dg; A[c + e + 2] += mz * dg; } }
+      }
       return wr / (wo + wr);
     }
     const ell = Math.max(0.05, g.ell[i] - g.L[i] * (1 - hit.t)), keff = g.pin[i] ? 1e9 : g.k[i] * g.L[i] ** 3 / ell ** 3, kb = this.kb ? this.kb[c / 7] : 1e9;
@@ -7001,7 +7061,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); physStep(dt); refreshNear(player.x, player.z); },
-  physics: { clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
+  physics: { clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
   branches: { crunchSegs, crunchStack, branchLoad, get crunchList() { return crunchList; }, logBuf: () => logBuf, logLeafBuf: () => logLeafBuf, logBranches, plantVariant, target: () => breakTargetAt, pick() { const r = running; running = true; breakTarget(); running = r; return breakTargetAt; }, push: pushState, pushStart, pushStop, pushUpdate, breakBranch, treeSegs, plantCells: () => plantCells, brokenTrees: () => brokenTrees, limbSolids, logBranchCells: () => branchLogCells },
   plants: { lib: plantLib, roots: () => rootMeshObj, rootQueue: () => rootQueue, rootCells: () => rootCells, PL },
   gym: { get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },
