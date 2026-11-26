@@ -16,7 +16,7 @@
 // Reaction on the body: each touching segment pushes back with the branch's cantilever stiffness out to the contact
 // point, k_eff = 3 E I / ℓ³ (ℓ: arc length from the group's anchor), times how far that point is from rest.
 // a joint snaps clean off only if dry and under BREAK_R (m); rolling resistance coefficients (soft forest floor; bark on bark) and sliding friction; soil and litter under a segment: stiffness per contact point SOIL · r · length (N/m: 50 kN/m under a 0.8 m section of a 30 cm log, a few hundred under a twig); bark on bark: compliance WOOD (m/N)
-const BREAK_R = 0.015, SOIL = 4e5, WOOD = 2e-6, CRR_SOIL = 0.25, CRR_WOOD = 0.08, MU_SOIL = 0.8, MU_WOOD = 0.7, SLOP = 0.008;
+const BREAK_R = 0.015, SOIL = 4e5, WOOD = 2e-6, CRR_SOIL = 0.25, CRR_WOOD = 0.08, MU_SOIL = 0.8, MU_WOOD = 0.7, SLOP = 0.008, DEP = 2, VMAX = 20, WMAX = 40, WDEP = 20; // DEP: the fastest an overlap is pushed out (m/s); deeper ones take a few substeps, not one kick
 export class PhysicsCore {
   constructor() { this.groups = new Map(); this.free = new Map(); }
   add(g) { // g: { id, n, par Int32, u, s0 (n*3), x0 (n*3), r, L, k, w, lim }
@@ -52,6 +52,7 @@ export class PhysicsCore {
     for (const q of forces || []) { if (q.gid !== undefined) { gf.push(q); continue; } const f = this.free.get(q.id); if (f) { f.ext.push(q); if (f.sleep) this.wake(f); } }
     for (const g of groups) { g.touch.fill(0); g.nearP = this.nearCaps(g, caps, 0); }
     let nodes = 0; for (const g of groups) nodes += g.n;
+    for (const f of frees) { if (!f.rk) f.rk = new Float32Array(f.nb); f.rk.fill(DEP); }
     for (let s = 0; s < SUB; s++) {
       for (const f of frees) this.fCaps(f);
       const awake = frees.filter((f) => !f.sleep);
@@ -139,7 +140,7 @@ export class PhysicsCore {
   //      limit), mu, hf, statics }
   addFree(f) {
     const nb = f.nb; f.v = new Float32Array(nb * 3); f.w = new Float32Array(nb * 3); f.xp = new Float32Array(nb * 3); f.qp = new Float32Array(nb * 4);
-    f.jbr = new Uint8Array(f.nj); f.jh = new Uint8Array(f.nj); f.jl = new Float32Array(f.nj * 3); f.still = 0; f.age = 0; f.sleep = !!f.sleep; f.ext = []; f.breaks = []; f.wc = new Float32Array(f.nc * 7); f.box = [0, 0, 0, 0, 0, 0]; f.Iw = new Float32Array(nb * 9);
+    f.jbr = new Uint8Array(f.nj); f.jh = new Uint8Array(f.nj); f.jl = new Float32Array(f.nj * 3); f.still = 0; f.age = 0; f.sleep = !!f.sleep; f.ext = []; f.breaks = []; f.dep = new Float32Array(nb); f.app = new Float32Array(nb); f.wc = new Float32Array(f.nc * 7); f.box = [0, 0, 0, 0, 0, 0]; f.Iw = new Float32Array(nb * 9);
     if (f.v0) for (let b = 0; b < nb; b++) for (let k = 0; k < 3; k++) f.v[b * 3 + k] = f.v0[k];
     this.fFrames(f); this.fCaps(f);
     f.cts = []; f.noPair = new Set(); // parts of one object that touch in its rest shape (a fork's two branches at their base) never collide with each other
@@ -182,7 +183,7 @@ export class PhysicsCore {
     }
     for (let b = 0; b < f.nb; b++) {
       const o = b * 3, j = b * 4;
-      f.v[o + 1] -= 9.81 * h;
+      f.v[o + 1] -= 9.81 * h; f.dep[b] = DEP * h; f.app[b] = Math.hypot(f.v[o], f.v[o + 1], f.v[o + 2]) * h + 1e-4;
       for (let d = 0; d < 3; d++) { f.xp[o + d] = f.bx[o + d]; f.bx[o + d] += f.v[o + d] * h; }
       for (let d = 0; d < 4; d++) f.qp[j + d] = f.bq[j + d];
       const q = f.bq, wx = f.w[o], wy = f.w[o + 1], wz = f.w[o + 2], qx = q[j], qy = q[j + 1], qz = q[j + 2], qw = q[j + 3];
@@ -203,7 +204,9 @@ export class PhysicsCore {
     const vn = (f.v[o] + w[o + 1] * rz - w[o + 2] * ry) * nx + (f.v[o + 1] + w[o + 2] * rx - w[o] * rz) * ny + (f.v[o + 2] + w[o] * ry - w[o + 1] * rx) * nz;
     const need = j * this.wGen(f, b, rx, ry, rz, nx, ny, nz) * (this.hstep || 1 / 240); // the push this would give, as a speed, compared with how fast it already leaves
     if (vn * (this.hstep || 1 / 240) >= need) return;
-    const jj = j * Math.min(1, Math.max(0, 1 - vn * (this.hstep || 1 / 240) / need));
+    let jj = j * Math.min(1, Math.max(0, 1 - vn * (this.hstep || 1 / 240) / need));
+    const wg = this.wGen(f, b, rx, ry, rz, nx, ny, nz), R = f.rk; // every rod touching it shares one budget of DEP a step (many twigs from many sides do not add up to a throw)
+    if (R) { if (jj * wg > R[b]) jj = R[b] / wg; R[b] -= jj * wg; if (jj <= 0) return; }
     f.v[o] += nx * jj / m; f.v[o + 1] += ny * jj / m; f.v[o + 2] += nz * jj / m;
     const tx = (ry * nz - rz * ny) * jj, ty = (rz * nx - rx * nz) * jj, tz = (rx * ny - ry * nx) * jj, I = f.Iw, i9 = b * 9;
     w[o] += I[i9] * tx + I[i9 + 1] * ty + I[i9 + 2] * tz; w[o + 1] += I[i9 + 3] * tx + I[i9 + 4] * ty + I[i9 + 5] * tz; w[o + 2] += I[i9 + 6] * tx + I[i9 + 7] * ty + I[i9 + 8] * tz;
@@ -217,11 +220,22 @@ export class PhysicsCore {
     q[j] += 0.5 * (ax * qw + ay * qz - az * qy); q[j + 1] += 0.5 * (ay * qw + az * qx - ax * qz); q[j + 2] += 0.5 * (az * qw + ax * qy - ay * qx); q[j + 3] += 0.5 * (-ax * qx - ay * qy - az * qz); this.qn(q, j);
   }
   // one positional constraint between point P1 on (f1, b1) and P2 on (f2, b2) (b < 0: fixed): separate them by d along n
-  pos(f1, b1, P1, f2, b2, P2, nx, ny, nz, d, alpha, h) {
+  cpos(f1, b1, P1, f2, b2, P2, nx, ny, nz, d, alpha, h, vn) { // a contact: it may cancel their approach (vn < 0), and beyond that push
+    // apart from a budget of DEP·h per body per substep shared by all its contacts (a long piece sampled at many points gets no more)
+    // (both budgets are per body per substep and spent by every contact on it, so many samples of one overlap get them once: the
+    // approach part, |v|·h, only ever cancels approach; the push part is DEP·h)
+    const a1 = !f1.sleep, a2 = f2 && b2 >= 0 && !f2.sleep, B1 = f1.dep, B2 = a2 ? f2.dep : null, A1 = f1.app, A2 = a2 ? f2.app : null;
+    const bud = Math.min(a1 ? B1[b1] : Infinity, B2 ? B2[b2] : Infinity), ap = Math.min(Math.max(0, -vn) * h, a1 ? A1[b1] : Infinity, A2 ? A2[b2] : Infinity);
+    const l = this.pos(f1, b1, P1, f2, b2, P2, nx, ny, nz, d, alpha, h, ap + bud), ua = Math.min(this.lastMove, ap), ub = this.lastMove - ua;
+    if (a1) { A1[b1] -= ua; B1[b1] = Math.max(0, B1[b1] - ub); } if (A2) { A2[b2] -= ua; B2[b2] = Math.max(0, B2[b2] - ub); }
+    return l;
+  }
+  pos(f1, b1, P1, f2, b2, P2, nx, ny, nz, d, alpha, h, cap = Infinity) { // cap: the most a contact may move them apart in one substep
+    // (beyond cancelling their approach): a deep overlap is pushed out at DEP, not in one kick that becomes its speed
     const r1x = P1[0] - (b1 >= 0 ? f1.bx[b1 * 3] : 0), r1y = P1[1] - (b1 >= 0 ? f1.bx[b1 * 3 + 1] : 0), r1z = P1[2] - (b1 >= 0 ? f1.bx[b1 * 3 + 2] : 0);
     const r2x = P2[0] - (b2 >= 0 ? f2.bx[b2 * 3] : 0), r2y = P2[1] - (b2 >= 0 ? f2.bx[b2 * 3 + 1] : 0), r2z = P2[2] - (b2 >= 0 ? f2.bx[b2 * 3 + 2] : 0);
     const w1 = this.wGen(f1, b1, r1x, r1y, r1z, nx, ny, nz), w2 = this.wGen(f2, b2, r2x, r2y, r2z, nx, ny, nz), den = w1 + w2 + alpha / (h * h); if (den <= 0) return 0;
-    const l = d / den;
+    let l = d / den; if (l * (w1 + w2) > cap) l = cap / (w1 + w2); this.lastMove = l * (w1 + w2);
     this.kick(f1, b1, r1x, r1y, r1z, nx * l, ny * l, nz * l); this.kick(f2, b2, r2x, r2y, r2z, -nx * l, -ny * l, -nz * l);
     return l;
   }
@@ -248,7 +262,10 @@ export class PhysicsCore {
       this.rot(f.bq, a * 4, f.jra[j * 3], f.jra[j * 3 + 1], f.jra[j * 3 + 2], t); this.rot(f.bq, b * 4, f.jrb[j * 3], f.jrb[j * 3 + 1], f.jrb[j * 3 + 2], u);
       const P1 = [f.bx[a * 3] + t[0], f.bx[a * 3 + 1] + t[1], f.bx[a * 3 + 2] + t[2]], P2 = [f.bx[b * 3] + u[0], f.bx[b * 3 + 1] + u[1], f.bx[b * 3 + 2] + u[2]];
       const dx = P2[0] - P1[0], dy = P2[1] - P1[1], dz = P2[2] - P1[2], dl = Math.hypot(dx, dy, dz);
-      if (dl > 1e-7) this.pos(f, a, P1, f, b, P2, dx / dl, dy / dl, dz / dl, dl, 0, h);
+      if (dl > 1e-7) { // held as it opens; a gap left from before (it slept so, or a contact forced it) closes at DEP, not in one throw
+        const nx = dx / dl, ny = dy / dl, nz = dz / dl, grow = this.vAt(f, b, P2, nx, ny, nz) - this.vAt(f, a, P1, nx, ny, nz);
+        this.pos(f, a, P1, f, b, P2, nx, ny, nz, dl, 0, h, (DEP + Math.max(0, grow)) * h);
+      }
       // angular: rotation taking b's orientation back to a's (rest relative orientation is identity: both built in world axes)
       const qa = f.bq, ia = a * 4, ib = b * 4, ax = qa[ia], ay = qa[ia + 1], az = qa[ia + 2], aw = qa[ia + 3], bx = qa[ib], by = qa[ib + 1], bz = qa[ib + 2], bw = qa[ib + 3];
       let ex = aw * -bx + ax * bw + ay * -bz - az * -by, ey = aw * -by - ax * -bz + ay * bw + az * -bx, ez = aw * -bz + ax * -by - ay * -bx + az * bw; const ew = aw * bw + ax * bx + ay * by + az * bz; // qa ⊗ conj(qb)
@@ -264,10 +281,13 @@ export class PhysicsCore {
     }
   }
   ang(f, a, b, nx, ny, nz, th, alpha, h) { // turn b toward a (and a toward b) about n by th, against compliance alpha; returns λ
+    // (no faster than WDEP beyond their own relative turning: a bend left from before is undone over a few substeps, not thrown)
     const I = f.Iw;
     const wA = nx * (I[a * 9] * nx + I[a * 9 + 1] * ny + I[a * 9 + 2] * nz) + ny * (I[a * 9 + 3] * nx + I[a * 9 + 4] * ny + I[a * 9 + 5] * nz) + nz * (I[a * 9 + 6] * nx + I[a * 9 + 7] * ny + I[a * 9 + 8] * nz);
     const wB = nx * (I[b * 9] * nx + I[b * 9 + 1] * ny + I[b * 9 + 2] * nz) + ny * (I[b * 9 + 3] * nx + I[b * 9 + 4] * ny + I[b * 9 + 5] * nz) + nz * (I[b * 9 + 6] * nx + I[b * 9 + 7] * ny + I[b * 9 + 8] * nz);
-    const l = th / (wA + wB + alpha / (h * h));
+    let l = th / (wA + wB + alpha / (h * h));
+    const w = f.w, rel = Math.abs((w[b * 3] - w[a * 3]) * nx + (w[b * 3 + 1] - w[a * 3 + 1]) * ny + (w[b * 3 + 2] - w[a * 3 + 2]) * nz), cap = (WDEP + rel) * h;
+    if (l * (wA + wB) > cap) l = cap / (wA + wB);
     this.turn(f, b, nx * l, ny * l, nz * l); this.turn(f, a, -nx * l, -ny * l, -nz * l);
     return l;
   }
@@ -296,8 +316,8 @@ export class PhysicsCore {
       const pen = H[0] + r - py; if (pen <= 0) continue;
       const nl = Math.hypot(H[1], 1, H[2]), nx = -H[1] / nl, ny = 1 / nl, nz = -H[2] / nl, P = [px - nx * r, py - ny * r, pz - nz * r];
       const alpha = 1 / (SOIL * Math.max(0.003, r) * Math.max(0.1, ln / ns * 2)); // (per sample: the ground under its share of the length) // soil bears on the area under it: stiffer under a thick, long log than a twig
-      f.touch = true; const vn0 = this.vAt(f, f.cb[c], P, nx, ny, nz), jn = this.pos(f, f.cb[c], P, null, -1, P, nx, ny, nz, pen, alpha, h); f.cts.push(f.cb[c], P[0], P[1], P[2], nx, ny, nz, jn / h, CRR_SOIL * r, vn0);
-      this.fric(f, f.cb[c], P, null, -1, P, nx, ny, nz, pen, mu, h);
+      f.touch = true; const vn0 = this.vAt(f, f.cb[c], P, nx, ny, nz), jn = this.cpos(f, f.cb[c], P, null, -1, P, nx, ny, nz, pen, alpha, h, vn0); f.cts.push(f.cb[c], P[0], P[1], P[2], nx, ny, nz, jn / h, CRR_SOIL * r, vn0);
+      this.fric(f, f.cb[c], P, null, -1, P, nx, ny, nz, Math.min(pen, this.lastMove + DEP * h), mu, h); // (friction bounded by the push it actually got)
     } }
   }
   fStatic(f, h) {
@@ -306,7 +326,7 @@ export class PhysicsCore {
     for (let c = 0; c < f.nc; c++) { const k = c * 7; for (let s = 0; s < S.length; s += 7) {
       if (!this.segCap(wc[k], wc[k + 1], wc[k + 2], wc[k + 3], wc[k + 4], wc[k + 5], S, s, wc[k + 6])) continue;
       const H = this.hit, P = [H.px - H.nx * wc[k + 6], H.py - H.ny * wc[k + 6], H.pz - H.nz * wc[k + 6]];
-      f.touch = true; const vn0 = this.vAt(f, f.cb[c], P, H.nx, H.ny, H.nz), ln = this.pos(f, f.cb[c], P, null, -1, P, H.nx, H.ny, H.nz, H.pen, WOOD, h); f.cts.push(f.cb[c], P[0], P[1], P[2], H.nx, H.ny, H.nz, ln / h, CRR_WOOD * wc[k + 6], vn0); this.fric(f, f.cb[c], P, null, -1, P, H.nx, H.ny, H.nz, H.pen, MU_WOOD, h);
+      f.touch = true; const vn0 = this.vAt(f, f.cb[c], P, H.nx, H.ny, H.nz), ln = this.cpos(f, f.cb[c], P, null, -1, P, H.nx, H.ny, H.nz, H.pen, WOOD, h, vn0); f.cts.push(f.cb[c], P[0], P[1], P[2], H.nx, H.ny, H.nz, ln / h, CRR_WOOD * wc[k + 6], vn0); this.fric(f, f.cb[c], P, null, -1, P, H.nx, H.ny, H.nz, Math.min(H.pen, this.lastMove + DEP * h), MU_WOOD, h);
     } }
   }
   fBody(f, all, nc, h) { // the body: shared by mass (the body's share moves it now, within the step)
@@ -318,7 +338,7 @@ export class PhysicsCore {
         const H = this.hit, b = f.cb[s], P = [H.px - H.nx * wc[k + 6], H.py - H.ny * wc[k + 6], H.pz - H.nz * wc[k + 6]];
         if (f.sleep) this.wake(f);
         const wo = this.wGen(f, b, P[0] - f.bx[b * 3], P[1] - f.bx[b * 3 + 1], P[2] - f.bx[b * 3 + 2], H.nx, H.ny, H.nz), wbd = this.mb ? 1 / this.mb[c / 7] : 0, so = wo / (wo + wbd || 1);
-        this.pos(f, b, P, null, -1, P, H.nx, H.ny, H.nz, H.pen * so, 0, h);
+        this.pos(f, b, P, null, -1, P, H.nx, H.ny, H.nz, H.pen * so, 0, h, (DEP + 3) * h); // (a body already deep in it, as when a log wakes around your legs, pushes it out at walking pace, not in one throw)
         const need = H.pen * (1 - so), D = this.CD, j4 = c / 7 * 4;
         if (D && need > 1e-6) { D[j4] -= H.nx * need; D[j4 + 1] -= H.ny * need; D[j4 + 2] -= H.nz * need; D[j4 + 3] = Math.hypot(D[j4], D[j4 + 1], D[j4 + 2]); for (const e of [0, 3]) { all[c + e] -= H.nx * need; all[c + e + 1] -= H.ny * need; all[c + e + 2] -= H.nz * need; } }
         this.fCaps(f);
@@ -350,9 +370,9 @@ export class PhysicsCore {
       if (H.pen <= SLOP) return; H.pen -= SLOP; // a little overlap is tolerated (logs in a pile rest slightly into each other)
       if (g.sleep && !f.sleep && H.pen > 0.02) this.wake(g); // woken only by a real push
       if (f.sleep && !g.sleep && H.pen > 0.02) this.wake(f);
-      f.touch = g.touch = true; const ln = this.pos(f, f.cb[c], P1, g, g.cb[d], P2, H.nx, H.ny, H.nz, H.pen, WOOD, h); // bark on bark
+      f.touch = g.touch = true; const vr = this.vAt(f, f.cb[c], P1, H.nx, H.ny, H.nz) - this.vAt(g, g.cb[d], P2, H.nx, H.ny, H.nz), ln = this.cpos(f, f.cb[c], P1, g, g.cb[d], P2, H.nx, H.ny, H.nz, H.pen, WOOD, h, vr); // bark on bark
       if (!f.sleep) f.cts.push(f.cb[c], P1[0], P1[1], P1[2], H.nx, H.ny, H.nz, ln / h, CRR_WOOD * fw[k + 6], 0); if (g !== f && !g.sleep) g.cts.push(g.cb[d], P2[0], P2[1], P2[2], -H.nx, -H.ny, -H.nz, ln / h, CRR_WOOD * gw[l + 6], 0);
-      this.fric(f, f.cb[c], P1, g, g.cb[d], P2, H.nx, H.ny, H.nz, H.pen, mu, h);
+      this.fric(f, f.cb[c], P1, g, g.cb[d], P2, H.nx, H.ny, H.nz, Math.min(H.pen, this.lastMove + DEP * h), mu, h);
     }
   }
   joined(f, a, b) { if (!f.jmap) { f.jmap = new Map(); for (let j = 0; j < f.nj; j++) { f.jmap.set(f.ja[j] * f.nb + f.jb[j], j); f.jmap.set(f.jb[j] * f.nb + f.ja[j], j); } } const j = f.jmap.get(a * f.nb + b); return j !== undefined && !f.jbr[j]; }
@@ -368,9 +388,15 @@ export class PhysicsCore {
       const damp = 1 - 0.4 * h; for (let d = 0; d < 3; d++) f.w[o + d] *= damp;
       if (Math.hypot(f.v[o], f.v[o + 1], f.v[o + 2]) > 0.3 || Math.hypot(f.w[o], f.w[o + 1], f.w[o + 2]) > 1) fast = true;
     }
-    { const k = 1 - Math.exp(-25 * h), I = f.Iw, w = f.w; // wood damps its own vibration: each joint takes out part of the two bodies' relative spin
+    { const k = 1 - Math.exp(-25 * h), kh = 1 - Math.exp(-80 * h), I = f.Iw, w = f.w; // wood damps its own vibration: each joint takes out part of the two bodies' relative spin
       for (let j = 0; j < f.nj; j++) { if (f.jbr[j]) continue; const a = f.ja[j], b = f.jb[j], ia = (I[a * 9] + I[a * 9 + 4] + I[a * 9 + 8]), ib = (I[b * 9] + I[b * 9 + 4] + I[b * 9 + 8]), s = ia + ib || 1;
-        for (let d = 0; d < 3; d++) { const rel = (w[b * 3 + d] - w[a * 3 + d]) * k; w[b * 3 + d] -= rel * ib / s; w[a * 3 + d] += rel * ia / s; } } }
+        const kk = f.jh[j] ? kh : k; // a splinter rubs: a joint that gave way damps the swing across it harder still
+        for (let d = 0; d < 3; d++) { const rel = (w[b * 3 + d] - w[a * 3 + d]) * kk; w[b * 3 + d] -= rel * ib / s; w[a * 3 + d] += rel * ia / s; } } }
+    for (let b = 0; b < f.nb; b++) { // nothing in a wood is thrown faster than this; a light part caught between constraints can be (the solver's error, not physics)
+      const o = b * 3, v = Math.hypot(f.v[o], f.v[o + 1], f.v[o + 2]), w = Math.hypot(f.w[o], f.w[o + 1], f.w[o + 2]);
+      if (v > VMAX) for (let d = 0; d < 3; d++) f.v[o + d] *= VMAX / v;
+      if (w > WMAX) for (let d = 0; d < 3; d++) f.w[o + d] *= WMAX / w;
+    }
     for (let i = 0; i < f.cts.length; i += 10) { // an impact (approaching faster than 0.3 m/s) on the ground or a fixed thing rebounds with at most 20 % of that speed; lifting off is free
       const b = f.cts[i], o = b * 3, rx = f.cts[i + 1] - f.bx[o], ry = f.cts[i + 2] - f.bx[o + 1], rz = f.cts[i + 3] - f.bx[o + 2], nx = f.cts[i + 4], ny = f.cts[i + 5], nz = f.cts[i + 6], w = f.w;
       const vn = (f.v[o] + w[o + 1] * rz - w[o + 2] * ry) * nx + (f.v[o + 1] + w[o + 2] * rx - w[o] * rz) * ny + (f.v[o + 2] + w[o] * ry - w[o + 1] * rx) * nz;
@@ -451,6 +477,7 @@ export class PhysicsCore {
       for (const c of near) {
         const R = caps[c + 6]; // boxes first: most segments are nowhere near most capsules
         if (Math.min(caps[c], caps[c + 3]) - R > hx || Math.max(caps[c], caps[c + 3]) + R < lx || Math.min(caps[c + 1], caps[c + 4]) - R > hy || Math.max(caps[c + 1], caps[c + 4]) + R < ly || Math.min(caps[c + 2], caps[c + 5]) - R > hz || Math.max(caps[c + 2], caps[c + 5]) + R < lz) continue;
+        if (g.skipFree !== undefined && owner && owner[c / 7] >= 0 && this.fref[owner[c / 7] * 2].id === g.skipFree) continue;
         if (!this.segCap(S[k], S[k + 1], S[k + 2], x[k], x[k + 1], x[k + 2], caps, c, r)) continue;
         const hit = this.hit, b1 = g.pin[i] ? 0 : hit.t, b0 = p >= 0 ? (1 - hit.t) * g.u[i] : 0, den = b0 * b0 + b1 * b1 || 1;
         const sh = this.share(g, i, hit, c, owner), shp = p >= 0 ? this.shareAt(g, p, c, owner) : 0, k1 = Math.min(hit.pen * sh * b1 / den, 0.3), k0 = Math.min(hit.pen * shp * b0 / den, 0.3);
@@ -486,7 +513,7 @@ export class PhysicsCore {
       const b = f.cb[cc], P = [hit.qx, hit.qy, hit.qz], wo = this.wGen(f, b, P[0] - f.bx[b * 3], P[1] - f.bx[b * 3 + 1], P[2] - f.bx[b * 3 + 2], -hit.nx, -hit.ny, -hit.nz), wr = g.pin[i] ? 0 : g.w[i] * hit.t * hit.t;
       if (wo + wr <= 0) return 0;
       if (wo > 0) f.cts.push(b, P[0], P[1], P[2], -hit.nx, -hit.ny, -hit.nz, 0, 0, 0), f.touch = true; // the same contact treatment as anything else (rebound damping, rolling resistance)
-      if (wo > 0) this.vkick(f, b, P, -hit.nx, -hit.ny, -hit.nz, hit.pen * wo / (wo + wr) / wo / (this.hstep || 1 / 240)); // as momentum: it moves out over the step, with the speed that takes
+      if (wo > 0) this.vkick(f, b, P, -hit.nx, -hit.ny, -hit.nz, Math.min(hit.pen * wo / (wo + wr), DEP * (this.hstep || 1 / 240)) / wo / (this.hstep || 1 / 240)); // as momentum: it moves out over the step, with the speed that takes
       return wr / (wo + wr);
     }
     const ell = Math.max(0.05, g.ell[i] - g.L[i] * (1 - hit.t)), keff = g.pin[i] ? 1e9 : g.k[i] * g.L[i] ** 3 / ell ** 3, kb = this.kb ? this.kb[c / 7] : 1e9;
@@ -583,7 +610,7 @@ export function makeFree(id, pts, edges, wood, extra = {}) {
 
 // the worker's program: the class above plus a message loop
 export function workerSource() {
-  return `const BREAK_R = ${BREAK_R}, SOIL = ${SOIL}, WOOD = ${WOOD}, CRR_SOIL = ${CRR_SOIL}, CRR_WOOD = ${CRR_WOOD}, MU_SOIL = ${MU_SOIL}, MU_WOOD = ${MU_WOOD}, SLOP = ${SLOP};
+  return `const BREAK_R = ${BREAK_R}, SOIL = ${SOIL}, WOOD = ${WOOD}, CRR_SOIL = ${CRR_SOIL}, CRR_WOOD = ${CRR_WOOD}, MU_SOIL = ${MU_SOIL}, MU_WOOD = ${MU_WOOD}, SLOP = ${SLOP}, DEP = ${DEP}, VMAX = ${VMAX}, WMAX = ${WMAX}, WDEP = ${WDEP};
 ${PhysicsCore.toString()}
 const core = new PhysicsCore();
 onmessage = (e) => {

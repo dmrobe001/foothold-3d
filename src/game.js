@@ -1168,13 +1168,14 @@ function limbLoad(dt) {
 }
 // a fallen tree's branch breaks: its graph loses the subtree, the merged mesh is rebuilt, and (unless it was a twig
 // crushed underfoot) the piece drops to the ground
+const xfSnap = (o) => o.ph?.xf ? { a2: o.ph.xf.a2.slice(), q: o.ph.xf.q.slice() } : null; // where its segments are drawn now
 function logBreak(r, node, drop) {
-  const M = r.m, P = M.v.P, g = PL.subtree(P, node);
+  const xf = xfSnap(r), M = r.m, P = M.v.P, g = PL.subtree(P, node);
   if (!r.gone) r.gone = new Uint8Array(P.n);
   const fresh = Array.from(g, (x, i) => x && !r.gone[i] && M.segs[i * 7 + 6] > 0);
   for (let i = 0; i < P.n; i++) if (g[i]) r.gone[i] = 1;
   for (const o of M.solids) removeSolid(o);
-  if (drop) fallOrDrop({ trunkR: 0, src: logSources(M), toW: (x, y, z) => M.W3(x, y, z), nrm: (x, y, z) => [x * M.X.x + y * M.a.x + z * M.Z.x, x * M.X.y + y * M.a.y + z * M.Z.y, x * M.X.z + y * M.a.z + z * M.Z.z], ws: M.segs, P, s: M.s, gone: fresh, node, tint: mix3(TINT.bark[r.t.sp], [0.55, 0.50, 0.44], 0.6).map(lin), conifer: SPECIES[r.t.sp].kind === 'conifer' || SPECIES[r.t.sp].kind === 'pine', leaves: M.T < 3 });
+  if (drop) fallOrDrop({ trunkR: 0, src: logSources(M), toW: (x, y, z) => M.W3(x, y, z), nrm: (x, y, z) => [x * M.X.x + y * M.a.x + z * M.Z.x, x * M.X.y + y * M.a.y + z * M.Z.y, x * M.X.z + y * M.a.z + z * M.Z.z], ws: M.segs, xf, P, s: M.s, gone: fresh, node, tint: mix3(TINT.bark[r.t.sp], [0.55, 0.50, 0.44], 0.6).map(lin), conifer: SPECIES[r.t.sp].kind === 'conifer' || SPECIES[r.t.sp].kind === 'pine', leaves: M.T < 3 });
   r.m = logBranches(r.t, r.gone); for (const o of r.m.solids) addSolid(o, o.reach);
   if (r.ph) { physRegroup(r, r.m.segs, (i) => r.m.segs[i * 7 + 6] > 0 && !r.gone[i]); logMesh(r); } // the rest keep moving where they are
   logDirty = true; rootWork(0);
@@ -1182,26 +1183,27 @@ function logBreak(r, node, drop) {
 // A root or a small plant's stem snaps: as for a branch, what it carried comes away and falls as a piece, the rest
 // keeps moving, and the plant is drawn without it from now on.
 function breakOff(o, kind, node) {
-  const P = kind === 'root' ? o.m.P : plantProxy(o).P, ws = kind === 'root' ? o.m.ws : plantProxy(o).ws, g = PL.subtree(P, node);
+  const xf = xfSnap(o), P = kind === 'root' ? o.m.P : plantProxy(o).P, ws = kind === 'root' ? o.m.ws : plantProxy(o).ws, g = PL.subtree(P, node);
   if (!o.gone) o.gone = new Uint8Array(P.n);
   const fresh = Array.from(g, (x, i) => !!x && !o.gone[i]); for (let i = 0; i < P.n; i++) if (g[i]) o.gone[i] = 1;
   if (kind === 'root') {
     const M = o.m, src = { bark: { pos: M.pos, nor: M.nor, uv: M.uv, idx: M.idx, node: M.node, ps: 1 } };
-    fallOrDrop({ trunkR: 0, src, toW: (x, y, z) => [x, y, z], nrm: (x, y, z) => [x, y, z], ws, P, s: 1, gone: fresh, node, tint: ROOT_TINT[o.t.sp], conifer: false, leaves: false });
+    fallOrDrop({ trunkR: 0, src, toW: (x, y, z) => [x, y, z], nrm: (x, y, z) => [x, y, z], ws, xf, P, s: 1, gone: fresh, node, tint: ROOT_TINT[o.t.sp], conifer: false, leaves: false });
     const keep = []; for (let t = 0; t < M.idx.length; t += 3) { const a = M.node[M.idx[t]], b = M.node[M.idx[t + 1]], c = M.node[M.idx[t + 2]]; if (!o.gone[a] && !o.gone[b] && !o.gone[c]) keep.push(M.idx[t], M.idx[t + 1], M.idx[t + 2]); }
     M.idx = keep; for (const i of fresh.keys()) if (fresh[i]) M.fixed[i] = 1; // gone: no longer part of the graph
     if (o.mesh) o.mesh[0].geometry.setIndex(keep); rootDirty = true;
   } else {
     const T = proxyTemplate(o[0]), Mx = plantProxy(o).M, nm3 = new THREE.Matrix3().getNormalMatrix(Mx), v = new THREE.Vector3(), geoArr = (G2) => ({ pos: G2.attributes.position.array, nor: G2.attributes.normal.array, uv: G2.attributes.uv.array, col: G2.attributes.color?.array, idx: G2.index.array, node: G2.attributes.aNode.array, ps: 1 });
     const names = PROXY[o[0]].batches, bi = names.indexOf('tstem'), li = names.findIndex((n2) => n2 !== 'tstem');
-    fallOrDrop({ trunkR: 0, src: { bark: bi >= 0 ? geoArr(T.binds[bi]) : { pos: [], nor: [], uv: [], idx: [], node: [], ps: 1 }, leaf: li >= 0 ? geoArr(T.binds[li]) : null }, toW: (x, y, z) => { v.set(x, y, z).applyMatrix4(Mx); return [v.x, v.y, v.z]; }, nrm: (x, y, z) => { v.set(x, y, z).applyMatrix3(nm3).normalize(); return [v.x, v.y, v.z]; }, ws, P, s: 1, gone: fresh, node, tint: [0.5, 0.44, 0.38], conifer: o[0] === 'seedC', leaves: li >= 0 });
+    fallOrDrop({ trunkR: 0, src: { bark: bi >= 0 ? geoArr(T.binds[bi]) : { pos: [], nor: [], uv: [], idx: [], node: [], ps: 1 }, leaf: li >= 0 ? geoArr(T.binds[li]) : null }, toW: (x, y, z) => { v.set(x, y, z).applyMatrix4(Mx); return [v.x, v.y, v.z]; }, nrm: (x, y, z) => { v.set(x, y, z).applyMatrix3(nm3).normalize(); return [v.x, v.y, v.z]; }, ws, xf, P, s: 1, gone: fresh, node, tint: [0.5, 0.44, 0.38], conifer: o[0] === 'seedC', leaves: li >= 0 });
+    o.mesh?.forEach((m, k) => { const g = keptGeo(T.binds[k], o.gone); if (m.geometry !== T.binds[k]) m.geometry.dispose(); m.geometry = g; });
   }
   if (o.ph) physRegroup(o, ws, (i) => !o.gone[i] && (kind !== 'root' || !o.m.fixed[i]));
   crunchList = null;
 }
 function logSources(M) { const v = M.v, F = fullBark(v), L = v.leafGeo; return { bark: { pos: F.pos, nor: F.nor, uv: F.uv, idx: F.idx, node: F.node, ps: 1 }, leaf: { pos: L.attributes.position.array, nor: L.attributes.normal.array, uv: L.attributes.uv.array, col: L.attributes.color.array, idx: L.index.array, node: L.attributes.aNode.array, ps: v.hRep } }; }
 function breakBranch(rec, node) {
-  const P = rec.v.P, gone = PL.subtree(P, node);
+  const xf = xfSnap(rec), P = rec.v.P, gone = PL.subtree(P, node);
   if (!rec.gone) rec.gone = new Uint8Array(P.n);
   const fresh = Array.from(gone).map((g, i) => g && !rec.gone[i]); for (let i = 0; i < P.n; i++) if (gone[i]) rec.gone[i] = 1;
   (rec.breaks || (rec.breaks = [])).push(node);
@@ -1211,7 +1213,7 @@ function breakBranch(rec, node) {
   const v = rec.v, X = treeXf(rec), M3 = new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().fromArray(rec.m)), nv = new THREE.Vector3();
   fallOrDrop({ trunkR: rec.t ? rec.t.d / 200 : 0, src: { bark: { pos: v.barkGeo.attributes.position.array, nor: v.barkGeo.attributes.normal.array, uv: v.barkGeo.attributes.uv.array, idx: v.barkGeo.index.array, node: v.barkGeo.attributes.aNode.array, ps: v.hRep },
     leaf: { pos: v.leafGeo.attributes.position.array, nor: v.leafGeo.attributes.normal.array, uv: v.leafGeo.attributes.uv.array, col: v.leafGeo.attributes.color.array, idx: v.leafGeo.index.array, node: v.leafGeo.attributes.aNode.array, ps: v.hRep } },
-    toW: X.toW, nrm: (x, y, z) => { nv.set(x, y, z).applyMatrix3(M3).normalize(); return [nv.x, nv.y, nv.z]; }, ws: treeSegs(rec), P, s: X.s, gone: fresh, node, tint: rec.bc, conifer: SPECIES[v.sp].kind === 'conifer' || SPECIES[v.sp].kind === 'pine', leaves: true });
+    toW: X.toW, nrm: (x, y, z) => { nv.set(x, y, z).applyMatrix3(M3).normalize(); return [nv.x, nv.y, nv.z]; }, ws: treeSegs(rec), xf, P, s: X.s, gone: fresh, node, tint: rec.bc, conifer: SPECIES[v.sp].kind === 'conifer' || SPECIES[v.sp].kind === 'pine', leaves: true });
   customTree(rec);
   plantNear.cx = 1e9; refreshPlants(player.x, player.z, true);
 }
@@ -1246,8 +1248,8 @@ function pieceGeometry(o, place = (p) => _pg.set(p[0], p[1], p[2])) {
         const vi = S.idx[t + c]; let k = map.get(vi);
         if (k === undefined) {
           k = out.pos.length / 3; map.set(vi, k); out.node.push(S.node[vi]);
-          const w = place(o.toW(S.pos[vi * 3] * S.ps, S.pos[vi * 3 + 1] * S.ps, S.pos[vi * 3 + 2] * S.ps)); out.pos.push(w.x, w.y, w.z);
-          const nn = o.nrm(S.nor[vi * 3], S.nor[vi * 3 + 1], S.nor[vi * 3 + 2]); tmp.set(nn[0], nn[1] + (withCol ? 1.2 : 0), nn[2]).normalize(); if (q) tmp.applyQuaternion(q); out.nor.push(tmp.x, tmp.y, tmp.z);
+          const nd = S.node[vi], w = place(xfPoint(o, nd, o.toW(S.pos[vi * 3] * S.ps, S.pos[vi * 3 + 1] * S.ps, S.pos[vi * 3 + 2] * S.ps), false)); out.pos.push(w.x, w.y, w.z);
+          const nn = xfPoint(o, nd, o.nrm(S.nor[vi * 3], S.nor[vi * 3 + 1], S.nor[vi * 3 + 2]), true); tmp.set(nn[0], nn[1] + (withCol ? 1.2 : 0), nn[2]).normalize(); if (q) tmp.applyQuaternion(q); out.nor.push(tmp.x, tmp.y, tmp.z);
           out.uv.push(S.uv[vi * 2], S.uv[vi * 2 + 1]); if (withCol) out.col.push(S.col[vi * 3], S.col[vi * 3 + 1], S.col[vi * 3 + 2]);
         }
         out.idx.push(k);
@@ -1257,7 +1259,14 @@ function pieceGeometry(o, place = (p) => _pg.set(p[0], p[1], p[2])) {
   take(o.src.bark, piece, false, o.q); if (o.leaves) take(o.src.leaf, leaf, true, o.q);
   return { piece, leaf };
 }
-const _pg = new THREE.Vector3();
+const _pg = new THREE.Vector3(), _xq = new THREE.Quaternion(), _xv = new THREE.Vector3();
+function xfPoint(o, nd, p, dir) { // a rest point (or direction) of segment nd, where that segment is drawn now
+  const X = o.xf; if (!X || !(nd < o.P.n)) return p;
+  _xq.set(X.q[nd * 4], X.q[nd * 4 + 1], X.q[nd * 4 + 2], X.q[nd * 4 + 3]);
+  if (dir) { _xv.set(p[0], p[1], p[2]).applyQuaternion(_xq); return [_xv.x, _xv.y, _xv.z]; }
+  const k = nd * 7; _xv.set(p[0] - o.ws[k], p[1] - o.ws[k + 1], p[2] - o.ws[k + 2]).applyQuaternion(_xq);
+  return [X.a2[nd * 3] + _xv.x, X.a2[nd * 3 + 1] + _xv.y, X.a2[nd * 3 + 2] + _xv.z];
+}
 function pieceMeshes(o, G, parent) {
   const mk = (b, mat) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(b.nor, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2)); if (b.col) g.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3)); g.setIndex(b.idx); const m = new THREE.Mesh(g, mat); m.castShadow = true; m.receiveShadow = true; parent.add(m); return m; };
   const barkMat = new THREE.MeshLambertMaterial({ map: tex.bark }); barkMat.color.setRGB(o.tint[0] * 1.6, o.tint[1] * 1.6, o.tint[2] * 1.6);
@@ -1313,7 +1322,7 @@ function spawnFree(segs, wood, meshes, extra = {}) {
   const id = fallId++, f = PH.makeFree(id, pts, edges, wood, { ...freeWorld(cx, cz, segs), sleep: !!extra.sleep, twig: extra.twig }); // (physics data only: it goes to the worker)
   const nb = f.nb, data = new Float32Array(nb * 8); for (let b = 0; b < nb; b++) { data.set([f.bx[b * 3], f.bx[b * 3 + 1], f.bx[b * 3 + 2], 0, 0, 0, 0, 1], b * 8); }
   const tex = new THREE.DataTexture(data, nb * 2, 1, THREE.RGBAFormat, THREE.FloatType); tex.needsUpdate = true;
-  const o = { id, f: { nb, cb: f.cb, cl: f.cl, cr: f.cr, bx: Float32Array.from(f.bx), bq: Float32Array.from(f.bq) }, tex, data, group: new THREE.Group(), awake: true, solids: [], x: cx, z: cz, top: 0, rad: 1, ...extra.tag };
+  const o = { id, f: { nb, cb: f.cb, cl: f.cl, cr: f.cr, ja: Int32Array.from(f.ja), jb: Int32Array.from(f.jb), bx: Float32Array.from(f.bx), bq: Float32Array.from(f.bq) }, tex, data, group: new THREE.Group(), awake: true, solids: [], x: cx, z: cz, top: 0, rad: 1, ...extra.tag };
   o.seg2body = f.seg2body; freeMeshes(o, meshes);
   worldGroup.add(o.group); freeBounds(o); o.wx = cx; o.wz = cz; falls.set(id, o);
   delete f.seg2body; // (the worker does not need it)
@@ -1333,6 +1342,16 @@ function freeMeshes(o, meshes) { // its meshes, each vertex in its body's frame 
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(M.uv, 2));
     if (M.col) g.setAttribute('color', new THREE.Float32BufferAttribute(M.col, 3)); g.setAttribute('aBody', new THREE.BufferAttribute(body, 1)); g.setIndex(Array.from(M.idx));
     const mesh = new THREE.Mesh(g, freeMat(M.mat, o, M.key)); mesh.frustumCulled = false; mesh.castShadow = true; mesh.receiveShadow = true; o.group.add(mesh);
+  }
+}
+function freeCut(o, joints) { // joints snapped inside it: the triangles that bridged the two parts go (else they stretch after them)
+  const cut = o.cut || (o.cut = new Set()), nb = o.f.nb;
+  for (const j of joints) { const a = o.f.ja[j], b = o.f.jb[j]; cut.add(a * nb + b); cut.add(b * nb + a); }
+  for (const m of o.group.children) {
+    const g = m.geometry, B = g.attributes.aBody?.array; if (!B) continue;
+    const I0 = m.userData.idx0 || (m.userData.idx0 = Array.from(g.index.array)), out = [];
+    for (let t = 0; t < I0.length; t += 3) { const a = B[I0[t]], b = B[I0[t + 1]], c = B[I0[t + 2]]; if (cut.has(a * nb + b) || cut.has(b * nb + c) || cut.has(c * nb + a)) continue; out.push(I0[t], I0[t + 1], I0[t + 2]); }
+    g.setIndex(out);
   }
 }
 function freeBounds(o) { const F = o.f; let x = 0, z = 0, top = -Infinity; for (let b = 0; b < F.nb; b++) { x += F.bx[b * 3]; z += F.bx[b * 3 + 2]; top = Math.max(top, F.bx[b * 3 + 1]); } o.x = x / F.nb; o.z = z / F.nb; o.top = top + 1; o.rad = 3; }
@@ -1356,7 +1375,7 @@ function spawnFall(o) {
   for (let i = 0; i < P.n; i++) {
     if (!gone[i]) continue;
     const k = i * 7, r = ws[k + 6]; if (!(r > 0)) continue;
-    let a = [ws[k], ws[k + 1], ws[k + 2]]; const b = [ws[k + 3], ws[k + 4], ws[k + 5]], L = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]); if (L < 1e-4) continue;
+    let a = xfPoint(o, i, [ws[k], ws[k + 1], ws[k + 2]], false); const b = xfPoint(o, i, [ws[k + 3], ws[k + 4], ws[k + 5]], false), L = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]); if (L < 1e-4) continue;
     if (i === node && o.trunkR) { const cut = Math.min(L * 0.5, o.trunkR + r); a = a.map((v, d) => v + (b[d] - v) * cut / L); } // start at the bark, not the stem's axis
     const p = P.par[i]; idx.set(i, segs.length); segs.push({ a, b, r: Math.max(0.003, r), par: idx.get(p) ?? -1 });
   }
@@ -1399,6 +1418,7 @@ function logWake(dt) {
     }
     const o = spawnFree(segs, WOOD_FREE.rotted(p._t.sp, p._fd || 0), [], { sleep: true, tag: { piece: p, blog: rb, bmap } }); if (!o) { p._free = undefined; continue; }
     p._free = o.id; o.awake = false;
+    if (rb?.ph) physDropOwner(rb, true); // its branch rods are rebuilt knowing they are this object's wood
     for (const so of p._solids) { // stood on: your weight presses the part of it under your foot
       const vx = p.x1 - p.x0, vz = p.z1 - p.z0, t = clamp(((so.x - p.x0) * vx + (so.z - p.z0) * vz) / (vx * vx + vz * vz || 1), 0, 0.999);
       so.free = o.id; so.fb = o.seg2body[Math.floor(t * segs.length)];
@@ -1447,6 +1467,7 @@ function freeUpdate(st) { // poses from the solver
   for (const q of st.free || []) {
     const o = falls.get(q.id); if (!o) continue;
     if (o.piece && !o.live && !q.sleep) logAlive(o); // (before taking the new pose: the mesh is built in the pose it slept in)
+    if (q.breaks?.length) freeCut(o, q.breaks);
     o.f.bx = q.x; o.f.bq = q.q;
     for (let b = 0; b < o.f.nb; b++) { o.data.set([q.x[b * 3], q.x[b * 3 + 1], q.x[b * 3 + 2], 0, q.q[b * 4], q.q[b * 4 + 1], q.q[b * 4 + 2], q.q[b * 4 + 3]], b * 8); }
     o.tex.needsUpdate = true; freeBounds(o);
@@ -1486,8 +1507,8 @@ function dropPiece(o) {
         const vi = S.idx[t + c]; let k = map.get(vi);
         if (k === undefined) {
           k = out.pos.length / 3; map.set(vi, k);
-          const w = place(o.toW(S.pos[vi * 3] * S.ps, S.pos[vi * 3 + 1] * S.ps, S.pos[vi * 3 + 2] * S.ps)); out.pos.push(w.x, w.y, w.z);
-          const nn = o.nrm(S.nor[vi * 3], S.nor[vi * 3 + 1], S.nor[vi * 3 + 2]); tmp.set(nn[0], nn[1] + (withCol ? 1.2 : 0), nn[2]).normalize().applyQuaternion(q); out.nor.push(tmp.x, tmp.y, tmp.z);
+          const nd = S.node[vi], w = place(xfPoint(o, nd, o.toW(S.pos[vi * 3] * S.ps, S.pos[vi * 3 + 1] * S.ps, S.pos[vi * 3 + 2] * S.ps), false)); out.pos.push(w.x, w.y, w.z);
+          const nn = xfPoint(o, nd, o.nrm(S.nor[vi * 3], S.nor[vi * 3 + 1], S.nor[vi * 3 + 2]), true); tmp.set(nn[0], nn[1] + (withCol ? 1.2 : 0), nn[2]).normalize().applyQuaternion(q); out.nor.push(tmp.x, tmp.y, tmp.z);
           out.uv.push(S.uv[vi * 2], S.uv[vi * 2 + 1]); if (withCol) out.col.push(S.col[vi * 3], S.col[vi * 3 + 1], S.col[vi * 3 + 2]);
         }
         out.idx.push(k);
@@ -1612,6 +1633,16 @@ function proxyTemplate(type) { // fitted once per geometry type
       for (let j = 0; j < n; j++) { const a = p0[j], b = p1[j], d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], l2 = d[0] ** 2 + d[1] ** 2 + d[2] ** 2 || 1, t = clamp(((q[0] - a[0]) * d[0] + (q[1] - a[1]) * d[1] + (q[2] - a[2]) * d[2]) / l2, 0, 1), e = Math.hypot(a[0] + d[0] * t - q[0], a[1] + d[1] * t - q[1], a[2] + d[2] * t - q[2]); if (e < bd) { bd = e; bj = j; bt = t; } }
       aN[v] = bj; aB[v] = par[bj]; aT[v] = bt;
     }
+    { // one connected piece (a leaf, a frond) stays on one chain of segments: a triangle between two sibling segments tore when they moved apart
+      const I = g.index.array, root = Int32Array.from({ length: nv }, (_, i) => i), find = (i) => { while (root[i] !== i) i = root[i] = root[root[i]]; return i; };
+      for (let t = 0; t < I.length; t += 3) { const a = find(I[t]), b2 = find(I[t + 1]), c = find(I[t + 2]); root[b2] = a; root[c] = a; }
+      const votes = new Map(); for (let v = 0; v < nv; v++) { const r = find(v); let m = votes.get(r); if (!m) votes.set(r, (m = new Map())); m.set(aN[v], (m.get(aN[v]) || 0) + 1); }
+      const major = new Map(); for (const [r, m] of votes) { let bj = 0, bc = -1; for (const [j, c] of m) if (c > bc) { bc = c; bj = j; } major.set(r, bj); }
+      const onChain = (j, M) => { for (let q = M; q >= 0; q = par[q]) if (q === j) return true; for (let q = j; q >= 0; q = par[q]) if (q === M) return true; return false; };
+      for (let v = 0; v < nv; v++) { const M = major.get(find(v)); if (onChain(aN[v], M)) continue;
+        const q = [A[v * 3], A[v * 3 + 1], A[v * 3 + 2]], a = p0[M], b2 = p1[M], d = [b2[0] - a[0], b2[1] - a[1], b2[2] - a[2]], l2 = d[0] ** 2 + d[1] ** 2 + d[2] ** 2 || 1;
+        aN[v] = M; aB[v] = par[M]; aT[v] = clamp(((q[0] - a[0]) * d[0] + (q[1] - a[1]) * d[1] + (q[2] - a[2]) * d[2]) / l2, 0, 1); }
+    }
     const G = new THREE.BufferGeometry(); for (const k in g.attributes) G.setAttribute(k, g.attributes[k]); G.setIndex(g.index);
     G.setAttribute('aNode', new THREE.BufferAttribute(aN, 1)); G.setAttribute('aNodeB', new THREE.BufferAttribute(aB, 1)); G.setAttribute('aT', new THREE.BufferAttribute(aT, 1));
     return G;
@@ -1636,6 +1667,12 @@ function plantItemsNear(x, z, R) {
   }
   return out;
 }
+function keptGeo(src, gone) { // the template's buffers, without the triangles of anything gone
+  const g = new THREE.BufferGeometry(), I = src.index.array, N = src.attributes.aNode.array, out = [];
+  for (const k in src.attributes) g.setAttribute(k, src.attributes[k]);
+  for (let t = 0; t < I.length; t += 3) if (!gone[N[I[t]]] && !gone[N[I[t + 1]]] && !gone[N[I[t + 2]]]) out.push(I[t], I[t + 1], I[t + 2]);
+  g.setIndex(out); return g;
+}
 function plantOwnerMeshes(it) { // its own deforming meshes, instead of the instance
   const T = proxyTemplate(it[0]), M = it._px.M, out = [];
   PROXY[it[0]].batches.forEach((nm, k) => {
@@ -1644,7 +1681,7 @@ function plantOwnerMeshes(it) { // its own deforming meshes, instead of the inst
     const m = wood ? new THREE.MeshLambertMaterial({ map: tex.bark }) : foliageMaterial(base.map, { wind: 0, alphaTest: base.alphaTest });
     const prev = m.onBeforeCompile; m.onBeforeCompile = (sh) => { if (prev) prev(sh); nodePatch2(sh, it.ph, !wood); }; m.customProgramCacheKey = () => `proxy${wood ? 'W' : 'F'}`;
     m.color.setRGB(col[0], col[1], col[2]);
-    const mesh = new THREE.Mesh(T.binds[k], m); mesh.matrixAutoUpdate = false; mesh.matrix.copy(M); mesh.frustumCulled = false; mesh.castShadow = false; mesh.receiveShadow = true;
+    const mesh = new THREE.Mesh(it.gone ? keptGeo(T.binds[k], it.gone) : T.binds[k], m); mesh.matrixAutoUpdate = false; mesh.matrix.copy(M); mesh.frustumCulled = false; mesh.castShadow = false; mesh.receiveShadow = true;
     worldGroup.add(mesh); out.push(mesh);
   });
   for (const [nm, k] of it._bi || []) near.b[nm].hide(k);
@@ -1777,12 +1814,13 @@ function physAddGroup(w) {
   const ph = owner.ph; (ph.groups || (ph.groups = new Set())).add(w.key);
   if (old) for (const i of old.nodes) if (!G.nodeSet.has(i)) ph.sim[i] = 0;
   for (const i of nodes) ph.sim[i] = 1;
+  if (kind === 'log') for (const o of falls.values()) if (o.blog === owner) g.skipFree = o.id; // a fresh log's branches: the same wood as that free object's parts (they must not meet)
   physSend({ type: 'add', g });
 }
 function physRemoveGroup(key) {
   const G = phys.groups.get(key); if (!G) return;
   phys.groups.delete(key); physSend({ type: 'remove', id: G.id });
-  const o = G.owner; if (o.ph) { o.ph.groups.delete(key); for (const i of G.nodes) o.ph.sim[i] = 0; o.ph.data.fill(0); o.ph.tex.needsUpdate = true; if (!o.ph.groups.size) physOwnerOff(o); }
+  const o = G.owner; if (o.ph) { o.ph.groups.delete(key); for (const i of G.nodes) o.ph.sim[i] = 0; o.ph.data.fill(0); ownerUpload(o); if (!o.ph.groups.size) physOwnerOff(o); }
 }
 function physRegroup(o, ws, valid) { // after a break: the owner's groups lose what broke off and keep the state of the rest
   for (const key of [...(o.ph?.groups || [])]) {
@@ -1796,14 +1834,15 @@ function physRegroup(o, ws, valid) { // after a break: the owner's groups lose w
 }
 function physDropOwner(o, keepMesh) { // its graph changed (a break): forget its groups; they are rebuilt next round
   for (const key of [...(o.ph?.groups || [])]) { const G = phys.groups.get(key); if (G) { phys.groups.delete(key); physSend({ type: 'remove', id: G.id }); } }
-  if (o.ph) { o.ph.groups.clear(); o.ph.sim.fill(0); o.ph.data.fill(0); o.ph.tex.needsUpdate = true; if (!keepMesh) physOwnerOff(o); }
+  if (o.ph) { o.ph.groups.clear(); o.ph.sim.fill(0); o.ph.data.fill(0); ownerUpload(o); if (!keepMesh) physOwnerOff(o); }
 }
 // an object being simulated gets a displacement texture (one texel per segment) and its own deforming mesh
 function ownerTex(o, kind) { // the displacement texture alone (a broken tree has one even when nothing moves it)
   if (o.ph) return o.ph;
-  const n = kind === 'tree' ? o.v.P.n : kind === 'log' ? o.m.v.P.n : kind === 'root' ? o.m.P.n + 1 : plantProxy(o).P.n, W = Math.min(n, 1024), H = Math.ceil(n / W), data = new Float32Array(W * H * 4);
-  const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat, THREE.FloatType); tex.needsUpdate = true;
-  return (o.ph = { kind, tex, data, W, groups: new Set(), sim: new Uint8Array(n) });
+  const n = kind === 'tree' ? o.v.P.n : kind === 'log' ? o.m.v.P.n : kind === 'root' ? o.m.P.n + 1 : plantProxy(o).P.n, W = Math.min(n, 1024), H = Math.ceil(n / W), data = new Float32Array(n * 4);
+  const gdata = new Float32Array(W * 3 * H * 4), tex = new THREE.DataTexture(gdata, W * 3, H, THREE.RGBAFormat, THREE.FloatType);
+  o.ph = { kind, tex, data, gdata, W, n, groups: new Set(), sim: new Uint8Array(n) }; ownerUpload(o);
+  return o.ph;
 }
 function physOwnerOn(o, kind) {
   if (phys.owners.has(o)) return;
@@ -1821,14 +1860,14 @@ function physOwnerOff(o, quiet) {
   if (!o.ph) return;
   phys.owners.delete(o);
   if (o.ph.kind === 'tree') {
-    if (o.gone) { o.ph.groups.clear(); o.ph.sim.fill(0); o.ph.data.fill(0); o.ph.tex.needsUpdate = true; return; } // a broken tree keeps its own mesh
+    if (o.gone) { o.ph.groups.clear(); o.ph.sim.fill(0); o.ph.data.fill(0); ownerUpload(o); return; } // a broken tree keeps its own mesh
     if (o.custom) { plantGroup.remove(o.custom.bark, o.custom.leaf); o.custom.bark.geometry.dispose(); o.custom.leaf.geometry.dispose(); o.custom = null; }
     brokenTrees = brokenTrees.filter((r) => r !== o); o.ph = null;
     if (!quiet) { plantNear.cx = 1e9; refreshPlants(player.x, player.z, true); }
   } else if (o.ph.kind === 'root') {
     for (const m of o.mesh || []) { plantGroup.remove(m); m.geometry.dispose(); m.material.dispose(); } o.mesh = null; o.ph = null; rootDirty = true;
   } else if (o.ph.kind === 'plant') {
-    if (o.gone) { o.ph.groups.clear(); o.ph.sim.fill(0); inheritDisp(o); o.ph.tex.needsUpdate = true; return; } // drawn without what broke off, for good
+    if (o.gone) { o.ph.groups.clear(); o.ph.sim.fill(0); inheritDisp(o); ownerUpload(o); return; } // drawn without what broke off, for good
     for (const m of o.mesh || []) { worldGroup.remove(m); m.material.dispose(); } o.mesh = null; o.ph = null;
     const M = o._px?.M; if (M) for (const [nm, k] of o._bi || []) near.b[nm].show(k, M);
   } else {
@@ -1836,31 +1875,82 @@ function physOwnerOff(o, quiet) {
     o.ph = null; if (!quiet) { logDirty = true; rootWork(0); }
   }
 }
-function nodePatch(sh, o) { // add the displacement of the segment each vertex belongs to, in world space
+// Each segment of a simulated plant is drawn as a rigid piece: its rest base a goes to a', and it turns by q (from its
+// parent's turn, then the least turn that takes its axis to where the solver has it). One texel triple per node: (a,
+// flag), (a', 0), q. A vertex p (world) goes to a' + q(p - a); its normal turns with it. Nothing stretches across a
+// joint however far a limb droops (a displacement alone left long slivers between pieces that turned).
+const ROD_GLSL = `uniform highp sampler2D uNodeTex; uniform float uNodeW; attribute float aNode;
+  vec3 rodQ(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
+  void rodXf(out vec3 ra, out vec3 rb, out vec4 rq, out float rf) {
+    int nd = int(aNode + 0.5), wd = int(uNodeW), x = (nd - (nd / wd) * wd) * 3, y = nd / wd;
+    vec4 t0 = texelFetch(uNodeTex, ivec2(x, y), 0); ra = t0.xyz; rf = t0.w; rb = texelFetch(uNodeTex, ivec2(x + 1, y), 0).xyz; rq = texelFetch(uNodeTex, ivec2(x + 2, y), 0);
+  }
+`;
+function rodPatch(sh, o, inst) {
   sh.uniforms.uNodeTex = { value: o.tex }; sh.uniforms.uNodeW = { value: o.W };
-  sh.vertexShader = 'uniform highp sampler2D uNodeTex; uniform float uNodeW; attribute float aNode;\n' + sh.vertexShader.replace('#include <project_vertex>', `
+  const M = inst ? `mat3 rM = mat3(modelMatrix);
+#ifdef USE_INSTANCING
+      rM = rM * mat3(instanceMatrix);
+#endif
+` : 'mat3 rM = mat3(modelMatrix);\n';
+  sh.vertexShader = ROD_GLSL + sh.vertexShader
+    .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+      { vec3 ra, rb; vec4 rq; float rf; rodXf(ra, rb, rq, rf);
+      ${M}      objectNormal = inverse(rM) * rodQ(rq, rM * objectNormal); }
+`)
+    .replace('#include <project_vertex>', `
     vec4 mvPosition = vec4(transformed, 1.0);
-    #ifdef USE_INSTANCING
+${inst ? `#ifdef USE_INSTANCING
       mvPosition = instanceMatrix * mvPosition;
-    #endif
+#endif
+` : ''}
     mvPosition = modelMatrix * mvPosition;
-    { int nd = int(aNode + 0.5), wd = int(uNodeW); mvPosition.xyz += texelFetch(uNodeTex, ivec2(nd - (nd / wd) * wd, nd / wd), 0).xyz; }
+    { vec3 ra, rb; vec4 rq; float rf; rodXf(ra, rb, rq, rf); mvPosition.xyz = rf > 1.5 ? rb : rb + rodQ(rq, mvPosition.xyz - ra); }
+    __GUARD__
     mvPosition = viewMatrix * mvPosition;
     gl_Position = projectionMatrix * mvPosition;`);
 }
-function nodePatch2(sh, o, guard) { // proxy-bound vertices: displacement interpolated along their segment
-  sh.uniforms.uNodeTex = { value: o.tex }; sh.uniforms.uNodeW = { value: o.W };
+function nodePatch(sh, o) { rodPatch(sh, o, true); sh.vertexShader = sh.vertexShader.replace('__GUARD__', ''); }
+function nodePatch2(sh, o, guard) { // proxy plants (their instance matrix is the mesh's own); leaves keep clear of the body
   if (guard) Object.assign(sh.uniforms, BODYCAP);
-  sh.vertexShader = 'uniform highp sampler2D uNodeTex; uniform float uNodeW; attribute float aNode; attribute float aNodeB; attribute float aT;\n' + (guard ? BODYCAP_GLSL : '') + sh.vertexShader.replace('#include <project_vertex>', `
-    vec4 mvPosition = vec4(transformed, 1.0);
-    mvPosition = modelMatrix * mvPosition;
-    { int wd = int(uNodeW), nd = int(aNode + 0.5), nb = int(aNodeB + 0.5);
-      vec4 et = texelFetch(uNodeTex, ivec2(nd - (nd / wd) * wd, nd / wd), 0); vec3 e = et.xyz, b = aNodeB < -0.5 ? vec3(0.0) : texelFetch(uNodeTex, ivec2(nb - (nb / wd) * wd, nb / wd), 0).xyz;
-      mvPosition.xyz += mix(b, e, aT); if (et.w > 1.5) mvPosition.xyz = vec3(0.0, -1e5, 0.0); }
-    ${guard ? 'mvPosition.xyz += bodyGuard(mvPosition.xyz, modelMatrix[3].y);' : ''}
-    mvPosition = viewMatrix * mvPosition;
-    gl_Position = projectionMatrix * mvPosition;`);
+  rodPatch(sh, o, false);
+  sh.vertexShader = (guard ? BODYCAP_GLSL : '') + sh.vertexShader.replace('__GUARD__', guard ? 'mvPosition.xyz += bodyGuard(mvPosition.xyz, modelMatrix[3].y);' : '');
 }
+// the rigid placement of every segment from the solver's displacements (D: end displacement per node, w: 1 carried, 2 gone)
+const _rq = new THREE.Quaternion(), _rq2 = new THREE.Quaternion(), _rv = new THREE.Vector3(), _rv2 = new THREE.Vector3();
+function ownerUpload(o) {
+  const ph = o.ph, D = ph.data, G = ph.gdata, P = ownerP(o), ws = ownerWs(o), n = Math.min(P.n, ws.length / 7);
+  const X = ph.xf || (ph.xf = { a2: new Float32Array(P.n * 3), q: new Float32Array(P.n * 4) }), A2 = X.a2, Q = X.q;
+  for (const i of parentsFirst(P)) {
+    if (i >= n) continue;
+    const k = i * 7, p = P.par[i], f = D[i * 4 + 3], moved = ph.sim[i] || f === 1 || f === 2;
+    if (p >= 0 && p < n) { // carried by the parent: its turn about the parent's base
+      _rq.set(Q[p * 4], Q[p * 4 + 1], Q[p * 4 + 2], Q[p * 4 + 3]);
+      _rv.set(ws[k] - ws[p * 7], ws[k + 1] - ws[p * 7 + 1], ws[k + 2] - ws[p * 7 + 2]).applyQuaternion(_rq);
+      A2[i * 3] = A2[p * 3] + _rv.x; A2[i * 3 + 1] = A2[p * 3 + 1] + _rv.y; A2[i * 3 + 2] = A2[p * 3 + 2] + _rv.z;
+    } else { _rq.set(0, 0, 0, 1); A2[i * 3] = ws[k]; A2[i * 3 + 1] = ws[k + 1]; A2[i * 3 + 2] = ws[k + 2]; }
+    if (ph.sim[i] || (f === 1 && !(p >= 0 && p < n))) { // the solver has its end: turn the carried axis onto it
+      _rv.set(ws[k + 3] - ws[k], ws[k + 4] - ws[k + 1], ws[k + 5] - ws[k + 2]).applyQuaternion(_rq);
+      _rv2.set(ws[k + 3] + D[i * 4] - A2[i * 3], ws[k + 4] + D[i * 4 + 1] - A2[i * 3 + 1], ws[k + 5] + D[i * 4 + 2] - A2[i * 3 + 2]);
+      const l1 = _rv.length(), l2 = _rv2.length();
+      if (l1 > 1e-6 && l2 > 1e-6) { _rq2.setFromUnitVectors(_rv.divideScalar(l1), _rv2.divideScalar(l2)); _rq.premultiply(_rq2); }
+    }
+    Q[i * 4] = _rq.x; Q[i * 4 + 1] = _rq.y; Q[i * 4 + 2] = _rq.z; Q[i * 4 + 3] = _rq.w;
+    const g = (Math.floor(i / ph.W) * ph.W * 3 + (i % ph.W) * 3) * 4;
+    G[g] = ws[k]; G[g + 1] = ws[k + 1]; G[g + 2] = ws[k + 2]; G[g + 3] = f === 2 ? 2 : moved ? 1 : 0;
+    G[g + 4] = A2[i * 3]; G[g + 5] = A2[i * 3 + 1]; G[g + 6] = A2[i * 3 + 2]; G[g + 7] = 0;
+    G[g + 8] = _rq.x; G[g + 9] = _rq.y; G[g + 10] = _rq.z; G[g + 11] = _rq.w;
+  }
+  for (let i = n; i < ph.n; i++) { const g = (Math.floor(i / ph.W) * ph.W * 3 + (i % ph.W) * 3) * 4; G.fill(0, g, g + 12); G[g + 11] = 1; } // (a root's sentinel: unmoved)
+  ph.tex.needsUpdate = true;
+}
+function parentsFirst(P) { // node ids in an order where every parent comes before its children (not every graph is stored so)
+  if (P._pf) return P._pf;
+  const kids = plantKids(P), out = [], st = []; for (let i = 0; i < P.n; i++) if (!(P.par[i] >= 0)) st.push(i);
+  while (st.length) { const i = st.pop(); out.push(i); for (const c of kids[i]) st.push(c); }
+  return (P._pf = Int32Array.from(out));
+}
+const ownerWs = (o) => o.ph.kind === 'tree' ? treeSegs(o) : o.ph.kind === 'log' ? o.m.segs : o.ph.kind === 'root' ? o.m.ws : plantProxy(o).ws;
 function ownerMats(o, tree, conifer) { // per object: the same programs, its own displacement texture
   ownerTex(o, tree ? 'tree' : 'log');
   if (o.ph.mats) return o.ph.mats;
@@ -2011,7 +2101,7 @@ function physState(st) {
     const [key, G] = e, o = G.owner; if (!o.ph) continue;
     const D = o.ph.data;
     G.nodes.forEach((i, j) => { D[i * 4] = res.disp[j * 3]; D[i * 4 + 1] = res.disp[j * 3 + 1]; D[i * 4 + 2] = res.disp[j * 3 + 2]; });
-    inheritDisp(o); o.ph.tex.needsUpdate = true; G.asleep = res.sleep; G.hinged = res.hinged;
+    inheritDisp(o); ownerUpload(o); G.asleep = res.sleep; G.hinged = res.hinged;
     for (const j of res.breaks) breaks.push([G, G.nodes[j]]);
   }
   for (const [G, node] of breaks) { // overstrained: snapped

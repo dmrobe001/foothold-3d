@@ -299,6 +299,56 @@ end could hardly leave the ground.
 - Forest walk: 0–4 free objects awake at a time, 3–9 ms of physics (main thread, the development container).
 - Lever (Node): 785 N on the short end does nothing, 1400 N tips it to the ground.
 
+## Meshes that follow what breaks (fourth pass)
+
+Thin lines after breaks had three causes, each measured on a forest walk (25 s, scripted, main thread):
+
+**Broken-off pieces were thrown by the solver.** A position-based solver turns every correction into velocity: an
+overlap of 5 cm removed in one 1/240 s substep is a 12 m/s throw. Pieces that broke off inside other branches, the
+ground or their own tree were flung (one dry 6 kg piece: 33 m/s nine frames after it broke; thousands of vertices
+ended more than 60 m away). Objects put to sleep with joints still stretched (a gap of 16 cm on a hanging limb) were
+thrown the same way when they woke. Now a contact may cancel an approach in full, but pushes apart only from a budget
+of DEP = 2 m/s × h per body per substep, shared by all its contacts (a long piece sampled at many points along the
+ground gets no more than a short one). Joints may close a gap that is opening in full, but an old gap only at DEP; a
+bend left from before is undone at no more than 20 rad/s beyond the bodies' own relative turning. A joint that gave
+way (a splinter) damps the swing across it more strongly (80/s, others 25/s). As a last guard nothing moves faster
+than 20 m/s or turns faster than 40 rad/s. The cap is on how far a contact moves things, not on the overlap: soil is a
+spring here, and capping the overlap let heavy logs sink through it.
+
+**A joint that snapped inside a free object never split its mesh.** The triangles that bridged its two parts stretched
+after them however far they went. They are now removed when the joint breaks.
+
+**Shrubs and seedlings sent broken-off vertices 100 km down**, so any triangle shared between a kept and a broken part
+drew a line to the horizon. Their meshes now drop those triangles, as trees and roots already did.
+
+**Every segment is drawn as a rigid piece.** Before, each vertex was shifted by its segment's end displacement, so a
+limb that turned through a large angle tore away from its parent. Now each segment's base is carried by its parent's
+motion (rotation about the parent's base) and the segment turns by the least rotation that takes its carried axis onto
+where the solver has its end: a vertex p goes to a' + q(p − a), and its normal turns with it. A piece that breaks off
+starts where it was drawn, not at its rest shape.
+
+Two more sources of throws, found by replaying a fresh fallen tree that was thrown as it woke: the allowance to cancel
+an approach was given again to every sample of one overlap (now one budget per body), and friction was bounded by the
+overlap's depth rather than the push it got (a 42 cm overlap allowed large slides). Every rod touching a free body now
+shares one budget of DEP per step (sixty twig contacts from all sides had added up to 13–20 m/s). A fresh log's branch
+rods never meet that log's own parts (they are the same wood, drawn twice until it wakes). A body already deep in a
+free object (a log waking around your legs) pushes it out at walking pace.
+
+**One connected piece of a shrub's mesh stays on one chain of its segments.** Vertices were bound to the nearest proxy
+segment, so a leaf or frond could straddle two sibling segments and tear when they parted.
+
+**Measured (forest walk, 1500 frames sampled every 6, scripted, main thread):**
+
+| | before | after |
+|---|---|---|
+| plant triangle edges stretched > 15 cm (all samples) | 1,269 (up to 1.3 m) | 2 (up to 0.23 m); a second walk 17 (up to 0.40 m) |
+| free-piece triangle edges > 15 cm longer than when it broke | 94,076 (up to 93 m) | 0 (up to 0.04 m) |
+| free-piece vertices more than 60 m from you | 3,854 | 0 |
+| fastest part of a fresh fallen tree as it wakes | 13–24 m/s | 1–5 m/s |
+
+Lever, drop and roll tests unchanged (785 N does not move the lever, 1400 N tips it); gym 40/40; thicket stations at
+most 12 ms of physics.
+
 ## Push
 
 The Break button is now Push. Held, it presses on whatever your hands reach in the direction you look, ramping to 300 N
