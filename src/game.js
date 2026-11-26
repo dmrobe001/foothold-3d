@@ -2081,7 +2081,7 @@ function modalUpload(o) { // the per-segment turn texture (layout as in rodPatch
 }
 function modalActivate(dt) { // every plant with a segment within reach of the body (or of a falling piece) becomes modal; quiet ones far off stop
   if ((modal.t += dt) < 0.2) return; modal.t = 0;
-  const C = bodyCapsules(), box = capBox(C, 1.0), bx = player.x, bz = player.z, now = performance.now();
+  const C = bodyCapsules(), box = capBox(C, 1.8), bx = player.x, bz = player.z, now = performance.now();
   const near = (ws) => { for (let k = 0; k < ws.length; k += 7) { const r = ws[k + 6]; if (Math.max(ws[k], ws[k + 3]) + r >= box[0] && Math.min(ws[k], ws[k + 3]) - r <= box[1] && Math.max(ws[k + 1], ws[k + 4]) + r >= box[2] && Math.min(ws[k + 1], ws[k + 4]) - r <= box[3] && Math.max(ws[k + 2], ws[k + 5]) + r >= box[4] && Math.min(ws[k + 2], ws[k + 5]) - r <= box[5]) return true; } return false; };
   const want = (o, kind, ws) => { if (!near(ws)) return; modalOn(o, kind).near = now; };
   const ci = Math.floor((bx + HALF) / 16), cj = Math.floor((bz + HALF) / 16);
@@ -2095,13 +2095,13 @@ function modalActivate(dt) { // every plant with a segment within reach of the b
   if (pushState.on && pushState.rod && !pushState.rod.owner.md) modalOn(pushState.rod.owner, pushState.rod.kind);
   for (const o of [...modal.owners]) { const M = o.md.M; if (now - o.md.near < 3000 || M.awake.some((a) => a) || M.hinge.some((h) => h) || o.gone) continue; modalOff(o); }
 }
-const BODY_PUSH = 200; // the most a body part can push a branch aside with (N); beyond that it is you that yields
+const BODY_PUSH = 200, BODY_TOTAL = 300; // the most a body part can push a branch aside with (N); beyond that it is you that yields
 function modalStep(dt, caps) {
   const n = caps.length / 7, F = [0, 0, 0], CF = new Float32Array(n * 3), CP = new Float32Array(n * 7), CD = new Float32Array(n * 4), prev = phys.prevCaps && phys.prevCaps.length === caps.length ? phys.prevCaps : caps;
   const capV = new Float32Array(n * 3); for (let c = 0; c < n; c++) for (let d = 0; d < 3; d++) capV[c * 3 + d] = (caps[c * 7 + d] + caps[c * 7 + 3 + d] - prev[c * 7 + d] - prev[c * 7 + 3 + d]) / 2 / Math.max(dt, 1e-3);
   const box = capBox(caps, 0.05), pieces = [];
   for (const f of falls.values()) if (f.awake && (f.x - player.x) ** 2 + (f.z - player.z) ** 2 < 900) pieces.push(freeCaps(f)); // falling pieces push branches aside too (they feel nothing back yet)
-  let awake = 0, hits = 0;
+  let awake = 0, hits = 0; const bud1 = { left: BODY_TOTAL }, bud2 = { left: BODY_TOTAL }; // the whole body pushes with at most BODY_TOTAL
   for (const o of [...modal.owners]) {
     if (!o.md || !o.ph) { modalLost(o); continue; }
     const md = o.md, M = md.M, P = ownerP(o), ws = ownerWs(o), X = md.X;
@@ -2109,8 +2109,9 @@ function modalStep(dt, caps) {
     const aw = MD.step(M, dt); awake += aw;
     let moved = aw > 0;
     if (moved) MD.pose(M, P, ws, X, o.gone);
-    let h = MD.contact(M, P, ws, X, caps, capV, BODY_PUSH, null, null, null, box); // a first pass moves the branches; after posing, a second sees what a large bend left (a turn
-    if (h) { MD.pose(M, P, ws, X, o.gone); h = MD.contact(M, P, ws, X, caps, capV, BODY_PUSH, CF, CP, CD, box); } hits += h; // delivers less than a straight push) and what the body must take
+    let h = MD.contact(M, P, ws, X, caps, capV, BODY_PUSH, null, null, null, box, bud1); // passes until the branches clear: moving a parent turns what hangs off it, so the
+    for (let pass = 0; h && pass < 2; pass++) { MD.pose(M, P, ws, X, o.gone); h = MD.contact(M, P, ws, X, caps, capV, BODY_PUSH, null, null, null, box, { left: BODY_TOTAL }); } // linear share is only close
+    if (h) { MD.pose(M, P, ws, X, o.gone); h = MD.contact(M, P, ws, X, caps, capV, BODY_PUSH, CF, CP, CD, box, bud2); } hits += h; // the last pass: what the body feels and must take
     for (const pc of pieces) if (MD.contact(M, P, ws, X, pc, null, 150, null, null, null, capBox(pc, 0.05))) moved = true;
     if (h) moved = true;
     for (const br of MD.breaks(M, PH.BREAK_R ?? 0.015)) { // the load at a branch's base beat its wood: small and dry snaps off, anything else gives way and hangs
@@ -3098,6 +3099,11 @@ function ceilingAt(x, z, feet, along) {
     logUnder = -Infinity; if (topOf(o, x, z) === -Infinity) continue;
     if (logBottom > feet + CLEAR4 - 0.05 && logUnder < c) c = logUnder; // a stem lower than crawling height is something to go over
   }
+  if (body.plan) for (const g of body.plan.ceil) { // stiff plant segments overhead (planScan): their underside where they pass over (x, z)
+    const vx = g.B[0] - g.A[0], vz = g.B[2] - g.A[2], l2 = vx * vx + vz * vz, t = l2 > 1e-8 ? clamp(((x - g.A[0]) * vx + (z - g.A[2]) * vz) / l2, 0, 1) : 0;
+    if (Math.hypot(g.A[0] + vx * t - x, g.A[2] + vz * t - z) > g.r + 0.12) continue;
+    const y = g.A[1] + (g.B[1] - g.A[1]) * t - g.r; if (y > feet + CLEAR4 - 0.05 && y < c) c = y;
+  }
   return c;
 }
 function footSupport(x, z) { // the highest footing under a foot-sized ring (and what it is: footKind)
@@ -3171,6 +3177,38 @@ function resetRig(feetY) { // stand at the player's x, z: on the ground (not a s
 }
 
 // ---- woody stems: anything rooted taller than a leg is something your feet walk around, not through
+// ---- solid by default: the plants in your path, read before the body gets there. Every plant segment the body would pass
+// through in the next 1.6 m is asked how hard it would have to be pushed to clear the body (the modal model's compliance at
+// that point, through every branch to its anchor). What gives under an easy push (PUSH_OK) is walked through and bends;
+// what does not is an obstacle: overhead (its underside above 1.2 m) it is ducked under, otherwise it is stepped round.
+// Nothing found: the push-back stops you, as before.
+const PUSH_OK = 150, PLAN_R = 0.26, PLAN_AHEAD = 1.6;
+function planScan(px, pz, ux, uz) {
+  const feet = rig.feet, out = { ceil: [], side: [], push: 0, stiff: 0 }, ex = ux * PLAN_AHEAD, ez = uz * PLAN_AHEAD;
+  const bx0 = Math.min(px, px + ex) - 0.6, bx1 = Math.max(px, px + ex) + 0.6, bz0 = Math.min(pz, pz + ez) - 0.6, bz1 = Math.max(pz, pz + ez) + 0.6, y0 = feet + 0.1, y1 = feet + 2.0;
+  const q = new THREE.Quaternion(), v = new THREE.Vector3();
+  for (const o of modal.owners) {
+    const md = o.md; if (!md || !o.ph) continue; const M = md.M, X = md.X, ws = ownerWs(o), n = Math.min(M.n, ws.length / 7);
+    for (let i = 0; i < n; i++) {
+      if (M.nodeB[i] < 0) continue; const k = i * 7, r = ws[k + 6];
+      const A = [X.a2[i * 3], X.a2[i * 3 + 1], X.a2[i * 3 + 2]];
+      q.set(X.q[i * 4], X.q[i * 4 + 1], X.q[i * 4 + 2], X.q[i * 4 + 3]); v.set(ws[k + 3] - ws[k], ws[k + 4] - ws[k + 1], ws[k + 5] - ws[k + 2]).applyQuaternion(q);
+      const B = [A[0] + v.x, A[1] + v.y, A[2] + v.z];
+      if (Math.max(A[0], B[0]) < bx0 || Math.min(A[0], B[0]) > bx1 || Math.max(A[2], B[2]) < bz0 || Math.min(A[2], B[2]) > bz1 || Math.max(A[1], B[1]) < y0 || Math.min(A[1], B[1]) > y1) continue;
+      for (let d = 0.25; d <= PLAN_AHEAD + 1e-6; d += 0.15) {
+        const cx = px + ux * d, cz = pz + uz * d, h = segSeg(A, B, [cx, feet + 0.3, cz], [cx, feet + 1.7, cz]);
+        if (h.d >= PLAN_R + r) continue;
+        const C = MD.compliance(M, i, h.s), need = PLAN_R + r - h.d + 0.05, F = C > 0 ? need / C : Infinity;
+        if (F <= PUSH_OK) { out.push++; break; }
+        const P = [A[0] + (B[0] - A[0]) * h.s, A[1] + (B[1] - A[1]) * h.s, A[2] + (B[2] - A[2]) * h.s]; out.stiff++;
+        const key = (md.keys || (md.keys = new Map())).get(i) || md.keys.set(i, {}).get(i);
+        if (P[1] - feet > 1.2) out.ceil.push({ A, B, r }); else out.side.push({ it: key, x: P[0], z: P[2], r: r + 0.04 });
+        break;
+      }
+    }
+  }
+  return out;
+}
 function stemObstacles(x, z) {
   const out = [], ci = Math.floor((x + HALF) / NC), cj = Math.floor((z + HALF) / NC);
   for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
@@ -3192,6 +3230,7 @@ function steerAround(px, pz, dx, dz) { // bend the step around stems ahead; the 
   let lat = 0;
   const obs = stemObstacles(px, pz);
   for (const t of nearbyTrunks(px, pz)) obs.push({ it: t, x: t.x, z: t.z, r: t.r - 0.22 }); // tree trunks: start sidestepping early
+  if (body.plan) for (const o of body.plan.side) obs.push(o); // plant segments too stiff to push aside (planScan)
   for (const o of obs) {
     const ox = o.x - px, oz = o.z - pz, f = ox * ux + oz * uz, s = ox * rx + oz * rz, clear = o.r + 0.28;
     if (f < -0.1 || f > 1.8 || Math.abs(s) > clear + 0.25) { body.stems.delete(o.it); continue; }
@@ -3436,6 +3475,7 @@ function movePlayer(dt) {
       }
     }
     const step = Math.hypot(dx, dz); body.want = step > 0 ? [dx, dz] : null;
+    body.plan = step > 0 ? planScan(px, pz, dx / step, dz / step) : null; // what is in the way, and what to do about each
     let vault = null;
     overPlan = null;
     if (step > 0 && rig.vy === 0) { // something low and thin ahead, or overhead within reach: over it, or under?
@@ -4644,7 +4684,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); physStep(dt); refreshNear(player.x, player.z); },
-  physics: { modal: () => modal, clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
+  physics: { MD, modal: () => modal, clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
   branches: { crunchSegs, crunchStack, branchLoad, get crunchList() { return crunchList; }, logBuf: () => logBuf, logLeafBuf: () => logLeafBuf, logBranches, plantVariant, target: () => breakTargetAt, pick() { const r = running; running = true; breakTarget(); running = r; return breakTargetAt; }, push: pushState, pushStart, pushStop, pushUpdate, breakBranch, treeSegs, plantCells: () => plantCells, brokenTrees: () => brokenTrees, limbSolids, logBranchCells: () => branchLogCells },
   plants: { lib: plantLib, roots: () => rootMeshObj, rootQueue: () => rootQueue, rootCells: () => rootCells, PL },
   gym: { get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },

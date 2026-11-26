@@ -451,6 +451,39 @@ takes the overlap; this is what the movement planner is for). One mode per branc
 pushed near the base (by about 2× from beam theory). No wind. The rod solver and its worker code are still in the source,
 unused.
 
+## Solid by default: plants read before the body gets there
+
+`planScan` (game.js) looks along the next 1.6 m of your path, every frame you move, for plant segments the body would pass
+through (a body column 0.26 m in radius, 0.3–1.7 m above the feet). Each is asked, through the modal model, how hard it
+would have to be pushed to clear the body: the compliance at that point through every branch to its anchor
+(`MD.compliance`). Under 150 N it is walked through and bends; otherwise it is an obstacle: overhead (above 1.2 m) it joins
+the stems you duck under (`ceilingAt`), lower it joins the stems you step round (`steerAround`). If nothing works, the
+push-back stops you. Plants are made live 1.8 m around you so the scan can ask them.
+
+Contact changes that came with it:
+- the whole body pushes with at most 300 N in a frame (each part at most 200 N; a light contact always gets 30 N, so
+  a twig is not left unmoved because a stem used the budget);
+- a branch at its limit passes its share of a push to the others in the chain;
+- each segment can also bend at its own base (a local bend, springing back over about 0.3 s without ringing) for what one
+  bend of the whole branch cannot clear;
+- four contact passes a frame: moving a parent turns what hangs off it, so the linear share is only close.
+
+**Measured (gym, five parallel walks each, scripted, main thread):**
+
+| | rods | modal + planner |
+|---|---|---|
+| sapling thicket: clips over 1 cm per scan | 0.21 | 0.33 |
+| single sapling: clips per scan | 0.04 | 0.05 |
+| distance made, thicket / sapling | 11.1 / 11.2 m | 10.9 / 11.2 m |
+| whole step, thicket / sapling | 3.2 / 1.1 ms | 1.7 / 1.0 ms |
+| per walk: joints hanging, pieces off (thicket / sapling) | — | 7, 1 / 1, 1 |
+
+Forest walk: 7.3 ms a step on average (rods 8.8), worst 39 ms (rods 85). Gym 40/40.
+
+What remains is almost all thin side twigs (under 6 mm) against the torso and arms, by one to two centimetres: the
+contact is solved before the next frame's motion, and the chain's shares converge over a few passes. Ducking and
+stepping round come only from stiff stems; nothing yet chooses to push a stiff stem with the hands.
+
 ## Push
 
 The Break button is now Push. Held, it presses on whatever your hands reach in the direction you look, ramping to 300 N

@@ -32,7 +32,7 @@ export function build(P, ws, o) {
   const nb = br.length, s0 = new Float32Array(n), s1 = new Float32Array(n);
   const M = { n, nb, nodeB, s0, s1, att: new Int32Array(nb), first: new Int32Array(nb), last: new Int32Array(nb), L: new Float32Array(nb), k: new Float32Array(nb), m: new Float32Array(nb),
     mOwn: new Float32Array(nb), mTot: new Float32Array(nb), mG: new Float32Array(nb), w: new Float32Array(nb), z: new Float32Array(nb), rB: new Float32Array(nb), lim: new Float32Array(nb), dry: new Uint8Array(nb),
-    d0: new Float32Array(nb * 3), u: new Float32Array(nb * 3), v: new Float32Array(nb * 3), Q: new Float32Array(nb * 3), hinge: new Uint8Array(nb), mom: new Float32Array(nb), gone: new Uint8Array(nb), awake: new Uint8Array(nb), quiet: new Float32Array(nb), touched: new Uint8Array(nb), kids: [] };
+    d0: new Float32Array(nb * 3), u: new Float32Array(nb * 3), v: new Float32Array(nb * 3), Q: new Float32Array(nb * 3), hinge: new Uint8Array(nb), mom: new Float32Array(nb), rho: new Float32Array(n * 3), rhoT: new Uint8Array(n), rhoOn: 0, lq: new Float32Array(n * 4), gone: new Uint8Array(nb), awake: new Uint8Array(nb), quiet: new Float32Array(nb), touched: new Uint8Array(nb), kids: [] };
   const rho = o.rho ?? 800;
   br.forEach((B, b) => {
     const f = B.nodes[0], l = B.nodes[B.nodes.length - 1]; M.first[b] = f; M.last[b] = l; M.att[b] = B.att;
@@ -73,7 +73,12 @@ export function step(M, dt) {
     if (ux * ux + uy * uy + uz * uz < 1e-12) continue;
     Q[pb * 3] += ux; Q[pb * 3 + 1] += uy; Q[pb * 3 + 2] += uz;
   }
-  let awake = 0;
+  if (M.rhoOn) { // local bends spring back (overdamped: the branch's own mode carries the ringing)
+    const f = Math.exp(-dt / 0.3); let on = 0;
+    for (let i = 0; i < M.n; i++) { const o = i * 3; if (!M.rho[o] && !M.rho[o + 1] && !M.rho[o + 2]) continue; if (!M.rhoT[i]) { M.rho[o] *= f; M.rho[o + 1] *= f; M.rho[o + 2] *= f; if (Math.abs(M.rho[o]) + Math.abs(M.rho[o + 1]) + Math.abs(M.rho[o + 2]) < 1e-3) M.rho[o] = M.rho[o + 1] = M.rho[o + 2] = 0; } M.rhoT[i] = 0; on++; }
+    M.rhoOn = on;
+  }
+  let awake = M.rhoOn ? 1 : 0;
   for (let b = 0; b < nb; b++) {
     const o = b * 3;
     if (M.gone[b]) { Q[o] = Q[o + 1] = Q[o + 2] = 0; continue; }
@@ -106,16 +111,22 @@ export function pose(M, P, ws, X, gone) {
     let qx = 0, qy = 0, qz = 0, qw = 1;
     if (p >= 0 && p < n) { qx = Q[p * 4]; qy = Q[p * 4 + 1]; qz = Q[p * 4 + 2]; qw = Q[p * 4 + 3]; qrot(Q, p * 4, ws[k] - ws[p * 7], ws[k + 1] - ws[p * 7 + 1], ws[k + 2] - ws[p * 7 + 2], _t); A2[i * 3] = A2[p * 3] + _t[0]; A2[i * 3 + 1] = A2[p * 3 + 1] + _t[1]; A2[i * 3 + 2] = A2[p * 3 + 2] + _t[2]; }
     else { A2[i * 3] = ws[k]; A2[i * 3 + 1] = ws[k + 1]; A2[i * 3 + 2] = ws[k + 2]; }
+    let lx = 0, ly = 0, lz = 0, lw = 1; // the local bends of this branch up to here (each segment's own, carried along the branch)
+    if (b >= 0 && !M.gone[b]) { const pp = P.par[i], LQ = M.lq; if (pp >= 0 && pp < n && M.nodeB[pp] === b) { lx = LQ[pp * 4]; ly = LQ[pp * 4 + 1]; lz = LQ[pp * 4 + 2]; lw = LQ[pp * 4 + 3]; }
+      const ro = i * 3, rx = M.rho[ro], ry = M.rho[ro + 1], rz = M.rho[ro + 2], ra = Math.hypot(rx, ry, rz);
+      if (ra > 1e-6) { const sh = Math.sin(ra / 2) / ra, ax2 = rx * sh, ay2 = ry * sh, az2 = rz * sh, aw2 = Math.cos(ra / 2); const nx2 = lw * ax2 + lx * aw2 + ly * az2 - lz * ay2, ny2 = lw * ay2 - lx * az2 + ly * aw2 + lz * ax2, nz2 = lw * az2 + lx * ay2 - ly * ax2 + lz * aw2, nw2 = lw * aw2 - lx * ax2 - ly * ay2 - lz * az2; lx = nx2; ly = ny2; lz = nz2; lw = nw2; }
+      LQ[i * 4] = lx; LQ[i * 4 + 1] = ly; LQ[i * 4 + 2] = lz; LQ[i * 4 + 3] = lw; }
     if (b >= 0 && !M.gone[b]) { // its own bend: the slope of the branch's deflection where it sits, turned with whatever carries the branch
       const o = b * 3, ux = M.u[o], uy = M.u[o + 1], uz = M.u[o + 2], ul = Math.hypot(ux, uy, uz);
       if (ul > 1e-7) {
         const a = M.att[b]; let bx = 0, by = 0, bz = 0, bw = 1; if (a >= 0) { bx = Q[a * 4]; by = Q[a * 4 + 1]; bz = Q[a * 4 + 2]; bw = Q[a * 4 + 3]; }
         const th = Math.min(1.5, ul / M.L[b] * dphi((M.s0[i] + M.s1[i]) / 2)), dx = M.d0[o], dy = M.d0[o + 1], dz = M.d0[o + 2];
         ax[0] = dy * uz - dz * uy; ax[1] = dz * ux - dx * uz; ax[2] = dx * uy - dy * ux; const al = Math.hypot(ax[0], ax[1], ax[2]) || 1;
-        const sh = Math.sin(th / 2) / al, rx = ax[0] * sh, ry = ax[1] * sh, rz = ax[2] * sh, rw = Math.cos(th / 2); // the bend, in rest axes
-        qx = bw * rx + bx * rw + by * rz - bz * ry; qy = bw * ry - bx * rz + by * rw + bz * rx; qz = bw * rz + bx * ry - by * rx + bz * rw; qw = bw * rw - bx * rx - by * ry - bz * rz; // carried: q_att · r
-      } else if (M.att[b] >= 0) { const a = M.att[b]; qx = Q[a * 4]; qy = Q[a * 4 + 1]; qz = Q[a * 4 + 2]; qw = Q[a * 4 + 3]; }
-      else { qx = qy = qz = 0; qw = 1; }
+        const sh = Math.sin(th / 2) / al; let rx = ax[0] * sh, ry = ax[1] * sh, rz = ax[2] * sh, rw = Math.cos(th / 2); // the bend, in rest axes
+        { const tx = lw * rx + lx * rw + ly * rz - lz * ry, ty = lw * ry - lx * rz + ly * rw + lz * rx, tz = lw * rz + lx * ry - ly * rx + lz * rw, tw = lw * rw - lx * rx - ly * ry - lz * rz; rx = tx; ry = ty; rz = tz; rw = tw; } // after the local bends
+        qx = bw * rx + bx * rw + by * rz - bz * ry; qy = bw * ry - bx * rz + by * rw + bz * rx; qz = bw * rz + bx * ry - by * rx + bz * rw; qw = bw * rw - bx * rx - by * ry - bz * rz; // carried: q_att · local · r
+      } else { let bx = 0, by = 0, bz = 0, bw = 1; if (M.att[b] >= 0) { const a = M.att[b]; bx = Q[a * 4]; by = Q[a * 4 + 1]; bz = Q[a * 4 + 2]; bw = Q[a * 4 + 3]; }
+        qx = bw * lx + bx * lw + by * lz - bz * ly; qy = bw * ly - bx * lz + by * lw + bz * lx; qz = bw * lz + bx * ly - by * lx + bz * lw; qw = bw * lw - bx * lx - by * ly - bz * lz; }
     }
     Q[i * 4] = qx; Q[i * 4 + 1] = qy; Q[i * 4 + 2] = qz; Q[i * 4 + 3] = qw;
     qrot(Q, i * 4, ws[k + 3] - ws[k], ws[k + 4] - ws[k + 1], ws[k + 5] - ws[k + 2], _t);
@@ -141,7 +152,7 @@ function segSeg(p0x, p0y, p0z, p1x, p1y, p1z, q0x, q0y, q0z, q1x, q1y, q1z) {
 // a push of at most Fm can bend it (the stiffness felt at that point is k/φ²); whatever overlap is left is the capsule's to
 // take (outD: per capsule xyz, and its length in w). The force on each capsule (outF xyz) and the hardest contact point
 // (outP: point, normal, force) are what the body feels. capV: each capsule's velocity (it carries the branch at that pace).
-export function contact(M, P, ws, X, caps, capV, Fm, outF, outP, outD, box) {
+export function contact(M, P, ws, X, caps, capV, Fm, outF, outP, outD, box, budget) { // budget: { left } newtons shared by every contact this pass (a body pushes with so much in all)
   const n = Math.min(P.n, M.n), A2 = X.a2, Q = X.q;
   let hits = 0;
   for (let i = 0; i < n; i++) {
@@ -164,20 +175,37 @@ export function contact(M, P, ws, X, caps, capV, Fm, outF, outP, outD, box) {
       if (!(C > 0)) continue;
       let xNow = 0; // how far this point is already held out along the push, by all of them
       for (let q = 0; q < ch.length; q += 3) { const bb = ch[q], o = bb * 3, at = M.att[bb]; if (at >= 0) qinv(Q, at * 4, nx, ny, nz, _t); else { _t[0] = nx; _t[1] = ny; _t[2] = nz; } xNow += phi(ch[q + 1]) * Math.max(0, M.u[o] * _t[0] + M.u[o + 1] * _t[1] + M.u[o + 2] * _t[2]); }
-      const xNew = Math.min(xNow + pen, Math.max(xNow, Fm * C)), dX = xNew - xNow, F = Math.min(Fm, xNew / C), ci = c / 7;
+      const Fc = budget ? Math.min(Fm, Math.max(30, budget.left)) : Fm, xNew = Math.min(xNow + pen, Math.max(xNow, Fc * C)), dX = xNew - xNow, F = Math.min(Fc, xNew / C), ci = c / 7; if (budget) budget.left -= F;
       let done = 0;
-      for (let q = 0; q < ch.length; q += 3) {
-        const bb = ch[q], sq = ch[q + 1], o = bb * 3, at = M.att[bb], ph = phi(sq); if (at >= 0) qinv(Q, at * 4, nx, ny, nz, _t); else { _t[0] = nx; _t[1] = ny; _t[2] = nz; }
-        const dx = M.d0[o], dy = M.d0[o + 1], dz = M.d0[o + 2], al = _t[0] * dx + _t[1] * dy + _t[2] * dz; let ex = _t[0] - al * dx, ey = _t[1] - al * dy, ez = _t[2] - al * dz; const el = Math.hypot(ex, ey, ez); if (el < 1e-6) continue; ex /= el; ey /= el; ez /= el;
-        const du = dX * ch[q + 2] / C / ph, ub = M.u[o] * ex + M.u[o + 1] * ey + M.u[o + 2] * ez; M.u[o] += ex * du; M.u[o + 1] += ey * du; M.u[o + 2] += ez * du;
-        { const ul = Math.hypot(M.u[o], M.u[o + 1], M.u[o + 2]), um = M.L[bb] * (M.hinge[bb] ? 1.5 : 1); if (ul > um) { const f = um / ul; M.u[o] *= f; M.u[o + 1] *= f; M.u[o + 2] *= f; } }
-        done += ph * Math.max(0, M.u[o] * ex + M.u[o + 1] * ey + M.u[o + 2] * ez - ub); // what it actually moved (a branch at its limit moves no further)
-        M.awake[bb] = 1; M.touched[bb] = 1; M.quiet[bb] = 0; M.mom[bb] = Math.max(M.mom[bb], F * sq * M.L[bb]);
-        if (capV) { const cv = (capV[ci * 3] * -nx + capV[ci * 3 + 1] * -ny + capV[ci * 3 + 2] * -nz) * ch[q + 2] / C / ph, vn = M.v[o] * ex + M.v[o + 1] * ey + M.v[o + 2] * ez; if (cv > vn) { M.v[o] += (cv - vn) * ex; M.v[o + 1] += (cv - vn) * ey; M.v[o + 2] += (cv - vn) * ez; } } // it moves at the capsule's pace (no faster)
+      for (let pass = 0, Cp = C, want = dX; pass < 2 && want > 1e-5 && Cp > 0; pass++) { // a branch at its limit passes its share on to the rest
+        let Cn = 0, got = 0;
+        for (let q = 0; q < ch.length; q += 3) {
+          const bb = ch[q], sq = ch[q + 1], o = bb * 3, at = M.att[bb], ph = phi(sq); if (ch[q + 2] <= 0) continue; if (at >= 0) qinv(Q, at * 4, nx, ny, nz, _t); else { _t[0] = nx; _t[1] = ny; _t[2] = nz; }
+          const dx = M.d0[o], dy = M.d0[o + 1], dz = M.d0[o + 2], al = _t[0] * dx + _t[1] * dy + _t[2] * dz; let ex = _t[0] - al * dx, ey = _t[1] - al * dy, ez = _t[2] - al * dz; const el = Math.hypot(ex, ey, ez); if (el < 1e-6) continue; ex /= el; ey /= el; ez /= el;
+          const du = want * ch[q + 2] / Cp / ph, ub = M.u[o] * ex + M.u[o + 1] * ey + M.u[o + 2] * ez; M.u[o] += ex * du; M.u[o + 1] += ey * du; M.u[o + 2] += ez * du;
+          const um = M.L[bb] * (M.hinge[bb] ? 1.5 : 1), ul = Math.hypot(M.u[o], M.u[o + 1], M.u[o + 2]); let capped = false; if (ul > um) { const f = um / ul; M.u[o] *= f; M.u[o + 1] *= f; M.u[o + 2] *= f; capped = true; }
+          const moved = ph * Math.max(0, M.u[o] * ex + M.u[o + 1] * ey + M.u[o + 2] * ez - ub); got += moved; // what it actually moved (a branch at its limit moves no further)
+          if (capped) ch[q + 2] = -ch[q + 2]; else Cn += ch[q + 2];
+          M.awake[bb] = 1; M.touched[bb] = 1; M.quiet[bb] = 0; M.mom[bb] = Math.max(M.mom[bb], F * sq * M.L[bb]);
+          if (capV && pass === 0) { const cv = (capV[ci * 3] * -nx + capV[ci * 3 + 1] * -ny + capV[ci * 3 + 2] * -nz) * ch[q + 2] / Cp / ph, vn = M.v[o] * ex + M.v[o + 1] * ey + M.v[o + 2] * ez; if (cv > vn) { M.v[o] += (cv - vn) * ex; M.v[o + 1] += (cv - vn) * ey; M.v[o + 2] += (cv - vn) * ez; } } // it moves at the capsule's pace (no faster)
+        }
+        done += got; want -= got; Cp = Cn;
       }
       if (outF) { outF[ci * 3] -= nx * F; outF[ci * 3 + 1] -= ny * F; outF[ci * 3 + 2] -= nz * F; }
       if (outP && F >= outP[ci * 7 + 6]) { outP.set([caps[c] + (caps[c + 3] - caps[c]) * h[2] + nx * R, caps[c + 1] + (caps[c + 4] - caps[c + 1]) * h[2] + ny * R, caps[c + 2] + (caps[c + 5] - caps[c + 2]) * h[2] + nz * R, -nx, -ny, -nz, F], ci * 7); }
-      const left = pen - Math.min(dX, done); if (outD && left > 1e-5) { outD[ci * 4] -= nx * left; outD[ci * 4 + 1] -= ny * left; outD[ci * 4 + 2] -= nz * left; outD[ci * 4 + 3] = Math.hypot(outD[ci * 4], outD[ci * 4 + 1], outD[ci * 4 + 2]); }
+      let loc = 0; const short = pen - Math.min(dX, done);
+      if (short > 2e-3 && dX > 0) { // what one bend of the whole branch could not clear: this segment bends at its own base (a thin branch wraps round you)
+        const seg = Math.hypot(ws[k + 3] - ws[k], ws[k + 4] - ws[k + 1], ws[k + 5] - ws[k + 2]), arm = Math.max(0.04, h[1] * seg), at = M.att[b];
+        qinv(Q, i * 4, nx, ny, nz, _t); const n0 = _t[0], n1 = _t[1], n2 = _t[2]; // the push in this segment's own (current) frame
+        const sx = (ws[k + 3] - ws[k]) / (seg || 1), sy = (ws[k + 4] - ws[k + 1]) / (seg || 1), sz = (ws[k + 5] - ws[k + 2]) / (seg || 1);
+        let axx = sy * n2 - sz * n1, axy = sz * n0 - sx * n2, axz = sx * n1 - sy * n0; const axl = Math.hypot(axx, axy, axz);
+        if (axl > 1e-4) { const ang = Math.min(0.6, short / arm); axx /= axl; axy /= axl; axz /= axl;
+          // into the branch's rest axes (where rho lives): the segment's current turn relative to the branch's carrier, approximately the local frame
+          let cx = axx * ang, cy = axy * ang, cz = axz * ang; if (at >= 0) { qrot(Q, i * 4, cx, cy, cz, _t); qinv(Q, at * 4, _t[0], _t[1], _t[2], _t); cx = _t[0]; cy = _t[1]; cz = _t[2]; }
+          const ro = i * 3; M.rho[ro] += cx; M.rho[ro + 1] += cy; M.rho[ro + 2] += cz; const ra = Math.hypot(M.rho[ro], M.rho[ro + 1], M.rho[ro + 2]); if (ra > 1.2) { M.rho[ro] *= 1.2 / ra; M.rho[ro + 1] *= 1.2 / ra; M.rho[ro + 2] *= 1.2 / ra; }
+          M.rhoT[i] = 1; M.rhoOn = Math.max(M.rhoOn, 1); loc = Math.min(short, ang * arm); }
+      }
+      const left = pen - Math.min(dX, done) - loc; if (outD && left > 1e-5) { outD[ci * 4] -= nx * left; outD[ci * 4 + 1] -= ny * left; outD[ci * 4 + 2] -= nz * left; outD[ci * 4 + 3] = Math.hypot(outD[ci * 4], outD[ci * 4 + 1], outD[ci * 4 + 2]); }
       hits++;
     }
   }
@@ -206,4 +234,16 @@ export function breaks(M, breakR) {
 // a node and everything it carries gone: those segments are no longer simulated (a branch cut part way keeps the rest)
 export function remove(M, P, node) {
   for (let i = 0; i < M.n; i++) { let q = i, cut = false; while (q >= 0) { if (q === node) { cut = true; break; } q = P.par[q]; } if (!cut) continue; const b = M.nodeB[i]; if (b >= 0 && M.first[b] === i) { M.gone[b] = 1; M.awake[b] = 0; } M.nodeB[i] = -1; }
+}
+
+// how soft a point is: the compliance (m/N) felt at node i's segment, at fraction t along it, through every branch from there
+// to the anchor (springs in series, φ(s)²/k each); 0 for a node that is not simulated (rigid)
+export function compliance(M, i, t) {
+  let b = M.nodeB[i]; if (b < 0) return 0;
+  let C = 0, ss = M.s0[i] + (M.s1[i] - M.s0[i]) * t;
+  for (let d = 0; b >= 0 && d < 8; d++) {
+    if (M.gone[b]) break; C += phi(Math.max(0.02, ss)) ** 2 / (M.k[b] * (M.hinge[b] ? 0.01 : 1));
+    const a = M.att[b]; if (a < 0) break; ss = M.s1[a]; b = M.nodeB[a];
+  }
+  return C;
 }
