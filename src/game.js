@@ -3975,28 +3975,34 @@ function foothold(tx, tz) {
 }
 function footholdBase(tx, tz) {
   const s0 = supportAt(tx, tz), w = body.want, wl = w ? Math.hypot(w[0], w[1]) : 0, narrowTop = (x, z, s) => wl && stepOverAt(x, z, s, w[0] / wl, w[1] / wl) !== null;
-  const toeRoom = (x, z, s) => { if (!wl) return true; for (const d of [0.06, 0.12, 0.18]) if (supportAt(x + w[0] / wl * d, z + w[1] / wl * d) - s > 0.12) return false; return true; }; // room before an edge to lift the foot over it
-  const narrow = (x, z, s) => narrowTop(x, z, s) || !toeRoom(x, z, s);
+  const toeRoom = (x, z, s) => { if (!wl) return true; const fx = w[0] / wl, fz = w[1] / wl; // room before an edge or a face to lift the foot (and the knee ahead of it): nothing solid at shin height across the foot's width
+    for (const d of [0.06, 0.12, 0.18, 0.24]) for (const e of [-0.06, 0, 0.06]) if (colBlocked(x + fx * d - fz * e, z + fz * d + fx * e, s + 0.12, s + 0.55)) return false; return true; };
+  const heelRoom = (x, z, s) => { if (!wl) return true; const fx = w[0] / wl, fz = w[1] / wl; // and behind the heel, landing beyond something stepped over (the shin comes down past it)
+    for (const d of [0.06, 0.12, 0.18]) for (const e of [-0.06, 0.06]) if (colBlocked(x - fx * d - fz * e, z - fz * d + fx * e, s + 0.12, s + 0.55)) return false; return true; };
+  const narrow = (x, z, s) => narrowTop(x, z, s) || !toeRoom(x, z, s) || !heelRoom(x, z, s);
   if (Math.abs(s0 - rig.feet) < 0.45 && legRoom(tx, tz, s0) && !narrow(tx, tz, s0)) return [tx, tz, s0];
   const c = [];
   for (const r of [0.12, 0.25]) for (let k = 0; k < 8; k++) { const a = k * 0.785; c.push([tx + Math.cos(a) * r, tz + Math.sin(a) * r]); }
   for (const k of [0.3, 0.55, 0.8, 1]) c.push([lerp(tx, player.x, k), lerp(tz, player.z, k)]);
   for (let k = 0; k < 6; k++) { const a = (k / 6) * 6.283; c.push([player.x + Math.cos(a) * FOOT, player.z + Math.sin(a) * FOOT]); }
-  let best = null, bd = Infinity, fb = [tx, tz, s0], fe = Math.abs(s0 - rig.feet);
+  let best = null, bd = Infinity, room = null, bd2 = Infinity, fb = [tx, tz, s0], fe = Math.abs(s0 - rig.feet);
   for (const [x, z] of c) {
     const s = supportAt(x, z), e = Math.abs(s - rig.feet), d = Math.hypot(x - tx, z - tz);
     if (e < 0.45 && d < bd && legRoom(x, z, s) && !narrow(x, z, s)) { bd = d; best = [x, z, s]; }
+    if (e < 0.45 && d < bd2 && legRoom(x, z, s) && !narrowTop(x, z, s)) { bd2 = d; room = [x, z, s]; } // second best: room for the leg, if not before an edge
     if (e < fe) { fe = e; fb = [x, z, s]; }
   }
-  return best || fb;
+  return best || room || fb;
 }
 function startSwing(ft, tx0, tz0, dur) {
   const [tx, tz, ty] = foothold(tx0, tz0);
   Object.assign(ft, { sx: ft.x, sz: ft.z, sy: ft.y, tx, tz, ty, t: 0, dur, ln: null, stack: lastStack, dv: 0, onKind: supKind === 'soil' ? 'ground' : supKind });
-  let top = Math.max(ft.sy, ft.ty); // lift enough to clear what lies between the old and new footholds
-  for (const q of [0.2, 0.35, 0.5, 0.65, 0.8]) top = Math.max(top, supportAt(lerp(ft.sx, tx, q), lerp(ft.sz, tz, q)));
-  ft.lift = RIG.lift + (top - Math.max(ft.sy, ft.ty));
-  ft.rise = ft.ty - ft.sy;
+  swingLift(ft);
+}
+function swingLift(ft) { // lift enough to clear what lies between the old and new footholds, sampled every 6 cm (a thin wall is 0.2 m)
+  let top = Math.max(ft.sy, ft.ty); const n = Math.max(5, Math.ceil(Math.hypot(ft.tx - ft.sx, ft.tz - ft.sz) / 0.06));
+  for (let k = 1; k < n; k++) top = Math.max(top, supportAt(lerp(ft.sx, ft.tx, k / n), lerp(ft.sz, ft.tz, k / n)));
+  ft.lift = Math.max(ft.t > 0 ? ft.lift : 0, RIG.lift + (top - Math.max(ft.sy, ft.ty))); ft.rise = ft.ty - ft.sy;
 }
 // Head height for ducking. Head top above the feet = pelvis + crouch + (spine + neck)·cos(lean) + 0.17 (head above the
 // neck joint). Given the lowest stem underside over where the head is and is about to be, the deficit is shared: the
@@ -4193,9 +4199,11 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
   // `duty` of the cycle (walk 0.4: always one foot down; run 0.62: brief flight). A swing aims the foot so its stance
   // is centred under the hip: it lands (1 - duty) * stepLen ahead of the hip. On hands: quadStep.
   const runK = clamp((spd - 1.6) / 2.6, 0, 1);
-  const stepLen = lerp(RIG.stepWalk, RIG.stepRun, runK) * (1 - 0.5 * steep) * (1 - 0.4 * body.duck), duty = lerp(0.4, 0.62, runK);
+  let stepLen = lerp(RIG.stepWalk, RIG.stepRun, runK) * (1 - 0.5 * steep) * (1 - 0.4 * body.duck), duty = lerp(0.4, 0.62, runK);
   const byaw = body.yaw ?? player.yaw, hx = Math.cos(byaw), hz = -Math.sin(byaw); // the body's own right (sideways, it lies along the way)
   const shim = body.shimmy > 0;
+  // stepping sideways (not a shimmy, which sets its own): a side-step is short, about the hips' width past closed feet
+  const lat = shim ? 0 : Math.abs(ux * hx + uz * hz); stepLen *= lerp(1, 0.4, smoothstep(0.3, 0.9, lat));
   // each foot either side of the body itself (not of the way it is going: walking backwards or sideways, those differ)
   const ideal = (ft) => [player.x + hx * ft.side * (shim ? 0.14 : RIG.hipW), player.z + hz * ft.side * (shim ? 0.14 : RIG.hipW)];
   const landAhead = (1 - duty) * stepLen;
@@ -4244,7 +4252,7 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
     }
   }
   for (const ft of body.feet) if (ft.t < 1) {
-    if (!four && !ft.ln && ft.t < 0.7 && spd > 0.05) { [ft.tx, ft.tz, ft.ty] = foothold(...aim(ft, ft.dur * (1 - ft.t))); ft.stack = lastStack; }
+    if (!four && !ft.ln && ft.t < 0.7 && spd > 0.05) { [ft.tx, ft.tz, ft.ty] = foothold(...aim(ft, ft.dur * (1 - ft.t))); ft.stack = lastStack; swingLift(ft); } // re-aimed: the lift is for the new path (it never drops mid-swing)
     ft.t = Math.min(1, ft.t + dt / ft.dur);
     const over = !four && ft.lift > RIG.lift + 0.15, tt = over ? clamp((ft.t - 0.3) / 0.7, 0, 1) : ft.t; // a step over something: the foot rises first, then goes over it
     const e = tt * tt * (3 - 2 * tt), l = (over ? smoothstep(0, 0.3, ft.t) * (1 - smoothstep(0.8, 1, ft.t)) : Math.sin(Math.PI * ft.t)) * ft.lift, n = ft.ln || [0, 1, 0]; // (over: up, held while it crosses, down)
@@ -4922,7 +4930,7 @@ window.foothold = {
   physics: { MD, modal: () => modal, clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
   branches: { crunchSegs, crunchStack, branchLoad, get crunchList() { return crunchList; }, logBuf: () => logBuf, logLeafBuf: () => logLeafBuf, logBranches, plantVariant, target: () => breakTargetAt, pick() { const r = running; running = true; breakTarget(); running = r; return breakTargetAt; }, push: pushState, pushStart, pushStop, pushUpdate, breakBranch, treeSegs, plantCells: () => plantCells, brokenTrees: () => brokenTrees, limbSolids, logBranchCells: () => branchLogCells },
   plants: { lib: plantLib, roots: () => rootMeshObj, rootQueue: () => rootQueue, rootCells: () => rootCells, PL },
-  debug: { gapAhead: (x, z, ux, uz) => gapAhead(x, z, ux, uz, rig.feet), shimmyFits: (x, z, ux, uz) => shimmyFits(x, z, ux, uz, rig.feet), rig: () => rig, stepOverAt: (x, z, s, ux, uz) => stepOverAt(x, z, s, ux, uz), footSupport: (x, z) => footSupport(x, z), bodyBlocked: (x, z, ux, uz) => { const r = bodyBlocked(x, z, ux, uz, rig.feet); return r ? colWhy : ''; } },
+  debug: { supportAt: (x, z) => supportAt(x, z), gapAhead: (x, z, ux, uz) => gapAhead(x, z, ux, uz, rig.feet), shimmyFits: (x, z, ux, uz) => shimmyFits(x, z, ux, uz, rig.feet), rig: () => rig, stepOverAt: (x, z, s, ux, uz) => stepOverAt(x, z, s, ux, uz), footSupport: (x, z) => footSupport(x, z), bodyBlocked: (x, z, ux, uz) => { const r = bodyBlocked(x, z, ux, uz, rig.feet); return r ? colWhy : ''; } },
   gym: { pen: () => gymPen(), progress: () => gymProgress(), get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },
   loco: { stemAt, stemUnder, assess, grade, holdsNear, placeContact, stability, quadAllows, limbAt, GAIT4, TRACTION, get need() { return body.need; }, get q() { return body.q; } }, col: { topOf, supportAt, ceilingAt, duckPosture, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },

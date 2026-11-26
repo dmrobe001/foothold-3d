@@ -163,3 +163,16 @@ barrier. Forest walk unchanged (37.5 m).
   crosses along it (the legs lift forward over it), letting go 0.5 m beyond. A foothold keeps 0.18 m of toe room before a
   raised edge, so the foot can lift over it. From 0, 0.3, −0.5 and 0.7 rad: facing within 0.01 rad of square over the top;
   a shin within 2–4 cm of the wall, 12 cm at 0.7 rad (the leading foot comes down onto the top: open).
+- **Side-steps are short.** Moving across the way you face (not a shimmy), the stride shortens to 0.4 of a walking one.
+  A full stride left each foot 0.7 m behind, so the trailing foot ended up on the wrong side and the no-crossing rule then
+  shoved the other foot out, into a wall's corner (sliding along station 12's face and round its end: 8–11 cm, now 0–2);
+  sideways left, legs 7 cm into each other, now 0.
+- **Swings clear what they pass over, all the way.** A swing in the air is re-aimed every frame to follow the body, but
+  its lift was set once at the start: a step begun short of a wall was carried over it at 10 cm. The lift is now recomputed
+  on re-aiming (it never drops mid-swing), from the footing every 6 cm along the path (five samples had missed a 0.2 m wall
+  on a long step). A foothold also needs room behind the heel when it lands beyond a raised edge, and toe room is now a
+  shin-height test against solids across the foot's width (the single line had read a tall wall as no edge and slipped
+  past a corner by 5 mm). The 0.4 m wall from 0, 0.3, −0.5, 0.7 rad: 3, 4, 4, 0 cm (was 4, 14, 5, 15).
+- Station 12 approached at an angle: you slide along its face and walk round the end of the station's walls (5.7 m out),
+  which the rules allow (go round). Stopping in front of it 0.2 m off centre still puts a thigh 6 cm into the mouth (open).
+  Gym 18/30.
