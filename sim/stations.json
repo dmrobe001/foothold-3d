@@ -1,0 +1,1086 @@
+[
+ {
+  "i": 1,
+  "name": "Headroom 1.85 m",
+  "mode": "walk",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "hands": false
+  },
+  "boxes": [
+   {
+    "x": -3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 0,
+    "f": 0,
+    "w": 0.92,
+    "h": 0.75,
+    "l": 1.5,
+    "y": 1.85,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 2,
+  "name": "Headroom 1.65 m",
+  "mode": "stooped walk",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "hands": false
+  },
+  "boxes": [
+   {
+    "x": -3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 0,
+    "f": 0,
+    "w": 0.92,
+    "h": 0.9500000000000002,
+    "l": 1.5,
+    "y": 1.65,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 3,
+  "name": "Headroom 1.25 m",
+  "mode": "crouch walk",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "hands": false
+  },
+  "boxes": [
+   {
+    "x": -3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 0,
+    "f": 0,
+    "w": 0.92,
+    "h": 1.35,
+    "l": 1.5,
+    "y": 1.25,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 4,
+  "name": "Headroom 1.0 m",
+  "mode": "deep crouch",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "hands": false
+  },
+  "boxes": [
+   {
+    "x": -3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 0,
+    "f": 0,
+    "w": 0.92,
+    "h": 1.6,
+    "l": 1.5,
+    "y": 1,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 5,
+  "name": "Headroom 0.9 m",
+  "mode": "monkey crawl",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "hands": true
+  },
+  "boxes": [
+   {
+    "x": -3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 0,
+    "f": 0,
+    "w": 0.92,
+    "h": 1.7000000000000002,
+    "l": 1.5,
+    "y": 0.9,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 6,
+  "name": "Headroom 0.8 m",
+  "mode": "bear crawl",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "hands": true
+  },
+  "boxes": [
+   {
+    "x": -3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 0,
+    "f": 0,
+    "w": 0.92,
+    "h": 1.8,
+    "l": 1.5,
+    "y": 0.8,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 7,
+  "name": "Headroom 0.65 m",
+  "mode": "hands and knees",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "hands": true
+  },
+  "boxes": [
+   {
+    "x": -3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 0,
+    "f": 0,
+    "w": 0.92,
+    "h": 1.9500000000000002,
+    "l": 1.5,
+    "y": 0.65,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 8,
+  "name": "Headroom 0.45 m",
+  "mode": "army crawl",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "hands": true
+  },
+  "boxes": [
+   {
+    "x": -3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 0,
+    "f": 0,
+    "w": 0.92,
+    "h": 2.15,
+    "l": 1.5,
+    "y": 0.45,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 9,
+  "name": "Headroom 0.35 m",
+  "mode": "nothing fits: stop",
+  "expect": {
+   "solid": true,
+   "stop": true
+  },
+  "boxes": [
+   {
+    "x": -3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 3.2,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 0,
+    "f": 0,
+    "w": 0.92,
+    "h": 2.25,
+    "l": 1.5,
+    "y": 0.35,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 10,
+  "name": "Gap 0.6 m wide",
+  "mode": "walk",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "hands": false
+  },
+  "boxes": [
+   {
+    "x": -3.05,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 3.05,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 11,
+  "name": "Gap 0.45 m wide",
+  "mode": "shimmy sideways",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "hands": false
+  },
+  "boxes": [
+   {
+    "x": -2.975,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 2.975,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 12,
+  "name": "Gap 0.45 m wide, 1.2 m tall",
+  "mode": "nothing fits (too low to shimmy, too narrow to crouch): stop",
+  "expect": {
+   "solid": true,
+   "stop": true
+  },
+  "boxes": [
+   {
+    "x": -2.975,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 2.975,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 0,
+    "f": 0,
+    "w": 0.47000000000000003,
+    "h": 1.4000000000000001,
+    "l": 1.5,
+    "y": 1.2,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 13,
+  "name": "Gap 0.35 m wide",
+  "mode": "nothing fits: stop",
+  "expect": {
+   "solid": true,
+   "stop": true
+  },
+  "boxes": [
+   {
+    "x": -2.925,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 2.925,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 14,
+  "name": "Gap 0.55 m wide, 0.5 m tall",
+  "mode": "army crawl",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "hands": true
+  },
+  "boxes": [
+   {
+    "x": -3.025,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 3.025,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 0,
+    "f": 0,
+    "w": 0.5700000000000001,
+    "h": 2.1,
+    "l": 1.5,
+    "y": 0.5,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 15,
+  "name": "Sloped roof",
+  "mode": "stooped walk, leaning right (the roof is higher on the right)",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "lean": "right"
+  },
+  "boxes": [
+   {
+    "x": -3.35,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 3.35,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 1.5,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 0,
+    "f": 0,
+    "w": 1.22,
+    "h": 1.2,
+    "l": 1.5,
+    "y": 1.55,
+    "roll": 15,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 16,
+  "name": "Wall 0.4 m",
+  "mode": "step over",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "hands": false
+  },
+  "boxes": [
+   {
+    "x": 0,
+    "f": 0,
+    "w": 12,
+    "h": 0.4,
+    "l": 0.2,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 17,
+  "name": "Wall 0.7 m",
+  "mode": "high step over",
+  "expect": {
+   "solid": true,
+   "cross": true
+  },
+  "boxes": [
+   {
+    "x": 0,
+    "f": 0,
+    "w": 12,
+    "h": 0.7,
+    "l": 0.2,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 18,
+  "name": "Wall 0.85 m",
+  "mode": "straddle over",
+  "expect": {
+   "solid": true,
+   "cross": true
+  },
+  "boxes": [
+   {
+    "x": 0,
+    "f": 0,
+    "w": 12,
+    "h": 0.85,
+    "l": 0.2,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 19,
+  "name": "Wall 1.1 m",
+  "mode": "vault (hands on top)",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "vault": true
+  },
+  "boxes": [
+   {
+    "x": 0,
+    "f": 0,
+    "w": 12,
+    "h": 1.1,
+    "l": 0.2,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 20,
+  "name": "Wall 1.25 m",
+  "mode": "roll over (belly on top)",
+  "expect": {
+   "solid": true,
+   "cross": true
+  },
+  "boxes": [
+   {
+    "x": 0,
+    "f": 0,
+    "w": 12,
+    "h": 1.25,
+    "l": 0.2,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 21,
+  "name": "Wall 1.4 m",
+  "mode": "straddle-mount (climb astride, swing over)",
+  "expect": {
+   "solid": true,
+   "cross": true
+  },
+  "boxes": [
+   {
+    "x": 0,
+    "f": 0,
+    "w": 12,
+    "h": 1.4,
+    "l": 0.2,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 22,
+  "name": "Wall 1.8 m",
+  "mode": "nothing fits (no holds): stop",
+  "expect": {
+   "solid": true,
+   "stop": true
+  },
+  "boxes": [
+   {
+    "x": 0,
+    "f": 0,
+    "w": 12,
+    "h": 1.8,
+    "l": 0.2,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 23,
+  "name": "Wall 1.25 m in a 1.2 m opening",
+  "mode": "straddle-mount (too narrow to roll over)",
+  "expect": {
+   "solid": true,
+   "cross": true
+  },
+  "boxes": [
+   {
+    "x": 0,
+    "f": 0,
+    "w": 12,
+    "h": 1.25,
+    "l": 0.2,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": -3.35,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 0.2,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 3.35,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 0.2,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 24,
+  "name": "Wall 0.85 m in a 0.6 m opening",
+  "mode": "nothing fits (too high to step, too narrow to straddle): stop",
+  "expect": {
+   "solid": true,
+   "stop": true
+  },
+  "boxes": [
+   {
+    "x": 0,
+    "f": 0,
+    "w": 12,
+    "h": 0.85,
+    "l": 0.2,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": -3.05,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 0.2,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 3.05,
+    "f": 0,
+    "w": 5.5,
+    "h": 2.6,
+    "l": 0.2,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 25,
+  "name": "Wall 1.0 m under a slab, 0.45 m between",
+  "mode": "window: slide through on the top",
+  "expect": {
+   "solid": true,
+   "cross": true
+  },
+  "boxes": [
+   {
+    "x": 0,
+    "f": 0,
+    "w": 12,
+    "h": 1,
+    "l": 0.2,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 0,
+    "f": 0,
+    "w": 12,
+    "h": 2.6,
+    "l": 0.6,
+    "y": 1.45,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 26,
+  "name": "Rail at 0.5 m",
+  "mode": "step over",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "hands": false
+  },
+  "boxes": [],
+  "rails": [
+   {
+    "a": [
+     -6,
+     0,
+     0.45
+    ],
+    "b": [
+     6,
+     0,
+     0.45
+    ],
+    "r": 0.05
+   }
+  ]
+ },
+ {
+  "i": 27,
+  "name": "Rail at 1.0 m (0.9 m under)",
+  "mode": "vault over, or monkey crawl under",
+  "expect": {
+   "solid": true,
+   "cross": true
+  },
+  "boxes": [],
+  "rails": [
+   {
+    "a": [
+     -6,
+     0,
+     0.9500000000000001
+    ],
+    "b": [
+     6,
+     0,
+     0.9500000000000001
+    ],
+    "r": 0.05
+   }
+  ]
+ },
+ {
+  "i": 28,
+  "name": "Block 1.0 m high, 1.2 m deep",
+  "mode": "climb onto, walk off",
+  "expect": {
+   "solid": true,
+   "cross": true,
+   "height": 0.95
+  },
+  "boxes": [
+   {
+    "x": 0,
+    "f": 0.6,
+    "w": 12,
+    "h": 1,
+    "l": 1.2,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 29,
+  "name": "Wall 0.6 m, ground 0.3 m lower beyond",
+  "mode": "step over (and down)",
+  "expect": {
+   "solid": true,
+   "cross": true
+  },
+  "boxes": [
+   {
+    "x": 0,
+    "f": -3.5,
+    "w": 12,
+    "h": 0.3,
+    "l": 7,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 0,
+    "f": -0.1,
+    "w": 12,
+    "h": 0.6,
+    "l": 0.2,
+    "y": 0.3,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ },
+ {
+  "i": 30,
+  "name": "Wall 0.6 m, ground 0.8 m lower beyond",
+  "mode": "straddle over and slide off (too far down to step)",
+  "expect": {
+   "solid": true,
+   "cross": true
+  },
+  "boxes": [
+   {
+    "x": 0,
+    "f": -3.5,
+    "w": 12,
+    "h": 0.8,
+    "l": 7,
+    "y": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   },
+   {
+    "x": 0,
+    "f": -0.1,
+    "w": 12,
+    "h": 0.6,
+    "l": 0.2,
+    "y": 0.8,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0
+   }
+  ],
+  "rails": []
+ }
+]

@@ -1,0 +1,42 @@
+[
+ {
+  "name": "walk",
+  "label": "Walk 2 m (unseeded)",
+  "task": "reach",
+  "station": null,
+  "seconds": 4.96,
+  "work": 1304.7,
+  "deepest_mm": 5.4,
+  "result": "pelvis x  1.85 y  0.03 z 0.91 head 1.64"
+ },
+ {
+  "name": "station17-seed0",
+  "label": "0.7 m wall, unseeded",
+  "task": "over",
+  "station": 17,
+  "seconds": 10.04,
+  "work": 1478.9,
+  "deepest_mm": 4.6,
+  "result": "pelvis x  0.91 y -0.06 z 0.96 head 1.61"
+ },
+ {
+  "name": "station19-seed0",
+  "label": "1.1 m wall, unseeded",
+  "task": "over",
+  "station": 19,
+  "seconds": 10.04,
+  "work": 1735.2,
+  "deepest_mm": 6.8,
+  "result": "pelvis x  0.71 y -0.06 z 0.97 head 1.73"
+ },
+ {
+  "name": "vault-19-track1-seed0",
+  "label": "1.1 m wall, seeded by the game vault",
+  "task": "track",
+  "station": 19,
+  "seconds": 4.44,
+  "work": 3928.5,
+  "deepest_mm": 49.5,
+  "result": "pelvis x  0.23 y -0.16 z 0.79 head 1.55"
+ }
+]
