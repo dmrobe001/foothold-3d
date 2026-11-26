@@ -163,11 +163,56 @@ What remains is 3 mm twigs touching the body near their base, where the contact 
 worker) a frame of latency. Cost: about 50 simulated nodes in ordinary forest (under 2 ms per step); the thicket wakes
 about 800 and costs 4 ms on the main thread here, 10–20 ms on the worker with the renderer competing for the same CPU.
 
+## One contact rule for everything
+
+Before this, roots, wad roots and loose wood followed different rules from branches. Roots were a static mesh; only those
+over 2 cm thick and 3.5 cm proud of the ground were registered at all, and then only as walking surfaces. Wad roots
+were baked into the terrain tiles and had no collision. Sticks on the ground were walking surfaces only. And even for
+branches the body never gave way: contact always moved the rod by the whole overlap, however stiff.
+
+Now every object near the body is one of three things, and contact with the body follows one rule for all three:
+
+| object | what it is | the overlap is shared by |
+|---|---|---|
+| anything attached: branches, saplings, shrub and fern stems (proxy skeletons), roots out of the soil, wad roots | a rod (`PhysicsCore` group) | stiffness: the rod takes kb / (kb + k_eff), the body part the rest |
+| anything loose: sticks, twigs and limbs on the ground, broken-off pieces | a free rigid body (woken when touched) | mass: the piece takes m_b / (m_b + m); pressed into the ground it lies on, the ground refuses and the body takes that part |
+| anything fixed: standing and fallen stems, rocks, stumps | rigid | nothing moves it: the body part takes it all (the same rule with k = ∞) |
+
+k_eff is the rod's cantilever stiffness at the contact, 3EI/ℓ³ with ℓ from its anchor. kb is how readily the body part
+gives way (N/m): arm 650–900, chest and head 2600, swinging leg 1400, planted leg 30000. m_b is the mass behind it
+(kg): arm 2–3, swinging leg 8, planted leg 60, trunk 45. These are guesses.
+
+The body part gives way inside the solver step, as each contact is resolved, so later substeps see it moved and the
+rod only ever takes its share. Before this, four substeps against a body that moved once per frame handed the rod the
+whole overlap anyway. The body's share (`capD`) then moves the posture directly, with no spring: hands, chest lean and
+sway, crouch, the swinging foot (over more than round), and a planted leg's knee. Rigid contacts are checked again
+against the freshly solved pose in the same frame.
+
+**Roots.** A root system is a graph like a crown (`treeRoots`, for standing trees and for wads, which are now built as
+root graphs near you and hidden in the tile mesh within 24 m). Buried segments are held by the soil. An exposed run that
+dives back in is pinned where it enters, so an arch is held at both ends. Exposed roots are footing too: the same beam
+check as a branch, with the anchor wherever the soil (or the plate) holds it, not the stem.
+
+**Breaking is the same everywhere.** A joint past its strain limit separates and what it carried falls as a piece:
+branches, roots, wad roots, shrub stems. Before this, a broken root or shrub stem stayed on with its joint free.
+Segments no body could bend measurably (tip stiffness above 2 MN/m) are held where they are, as soil holds a root,
+because two solver iterations cannot make a chain that stiff. Without that, a millimetre of numerical give at a 17 cm
+joint read as breaking strain.
+
+**Measured** (`clipScan`, now covering roots, wad roots, loose wood and rocks too, main-thread solver):
+- Exposed root 14 cm thick: the feet step up onto it; it moves 2 mm; no overlaps.
+- Exposed root 1.2 cm thick, held at both ends: it moves 0 mm; the swinging foot is lifted 19 cm over it; no overlaps.
+- Wad, climbing over: the thick roots do not move; thinner ones bend past their limit, snap and fall as pieces. Before
+  the in-step give, an 8 cm root moved 68 cm.
+- Standing stem against the arm: 0 overlaps (5 before the same-frame check).
+- Forest, 60 s: 13 overlaps in 1200 samples across all eight categories, mostly the first frame after touching a
+  stick, before the solver has it.
+
 ## Not yet
 
-- Twigs touching near their base can stay a few centimetres inside the body (see above).
-- Rocks do not push the limbs.
+- The body's share of a rod contact arrives one frame late (the solver runs on a worker): a few centimetres for a frame.
+- Twigs touching near their base can stay a few centimetres inside the body.
+- A planted leg takes its share at the knee only; it does not step aside.
 - Shadows of a bending branch stay at its rest pose.
-- The movement planner does not yet choose between pushing, ducking and going round from stiffness. Feedback shoves
-  the body but does not steer it.
+- The movement planner does not yet choose between pushing, ducking and going round from stiffness.
 - Stepping uses rest-pose branch positions, not where the simulated rod currently is.

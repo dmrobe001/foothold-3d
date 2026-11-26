@@ -434,7 +434,7 @@ export function growRoots(spec) {
 // segment at each end so they dive into the soil. keep(i) can drop segments (a root wad keeps what tore out with it).
 // Root sections are flattened (wider than tall), as surface roots are. col: soil staining, darker near the ground.
 export function rootMesh(P, place, { keep = null, all = false, flat = 0.72 } = {}) {
-  const pos = [], nor = [], uv = [], col = [], idx = [], solids = [];
+  const pos = [], nor = [], uv = [], col = [], idx = [], solids = [], node = []; // node: the segment whose end each ring sits at (P.n: a fixed point)
   for (const ax of P.axes) {
     const ids = Array.from(ax.nodes).filter((i) => !keep || keep(i)); if (!ids.length) continue;
     const W = ids.map((i) => [place(P.p0[i * 3], P.p0[i * 3 + 1], P.p0[i * 3 + 2], P.r0[i]), place(P.p1[i * 3], P.p1[i * 3 + 1], P.p1[i * 3 + 2], P.r1[i])]);
@@ -448,8 +448,8 @@ export function rootMesh(P, place, { keep = null, all = false, flat = 0.72 } = {
       if (!out[k]) { k++; continue; }
       let e = k; while (e + 1 < ids.length && out[e + 1]) e++;
       const s0 = Math.max(0, k - 1), s1 = Math.min(ids.length - 1, e + 1); // one buried segment either side
-      const pts = [W[s0][0]], rad = [P.r0[ids[s0]]];
-      for (let j = s0; j <= s1; j++) { pts.push(W[j][1]); rad.push(P.r1[ids[j]]); }
+      const pts = [W[s0][0]], rad = [P.r0[ids[s0]]], rn = [P.par[ids[s0]] >= 0 && (!keep || keep(P.par[ids[s0]])) ? P.par[ids[s0]] : P.n];
+      for (let j = s0; j <= s1; j++) { pts.push(W[j][1]); rad.push(P.r1[ids[j]]); rn.push(ids[j]); }
       const sides = rad[0] > 0.06 ? 6 : rad[0] > 0.025 ? 4 : 3, base = pos.length / 3;
       for (let j = 0; j < pts.length; j++) {
         const A = pts[Math.max(0, j - 1)], B = pts[Math.min(pts.length - 1, j + 1)];
@@ -459,7 +459,7 @@ export function rootMesh(P, place, { keep = null, all = false, flat = 0.72 } = {
           const dn = [hz[0] * c + vt[0] * sn * flat, hz[1] * c + vt[1] * sn * flat, hz[2] * c + vt[2] * sn * flat];
           const nn = norm([hz[0] * c + vt[0] * sn / flat, hz[1] * c + vt[1] * sn / flat, hz[2] * c + vt[2] * sn / flat]);
           const y = pts[j][1] + dn[1] * rad[j];
-          pos.push(pts[j][0] + dn[0] * rad[j], y, pts[j][2] + dn[2] * rad[j]); nor.push(...nn); uv.push(s / sides, j * 0.35);
+          pos.push(pts[j][0] + dn[0] * rad[j], y, pts[j][2] + dn[2] * rad[j]); nor.push(...nn); uv.push(s / sides, j * 0.35); node.push(rn[j]);
           const stain = clamp((y - pts[j][3]) / 0.12, 0, 1); col.push(0.62 + 0.38 * stain, 0.6 + 0.4 * stain, 0.58 + 0.42 * stain);
         }
       }
@@ -467,7 +467,7 @@ export function rootMesh(P, place, { keep = null, all = false, flat = 0.72 } = {
       k = e + 1;
     }
   }
-  return { pos, nor, uv, col, idx, solids };
+  return { pos, nor, uv, col, idx, solids, node };
 }
 
 // ---- mechanics: what breaks, and where
@@ -484,11 +484,11 @@ export function subtree(P, k) {
 // limb is weakest at its collar, where it rots first. Returns the joint most over its limit (or the closest to it).
 // Ignores the limb's own weight and dynamic loads, which the caller folds into F.
 const HEALTH = [1, 0.45, 0.3, 0.2]; // LIVE, DEAD, STUB, BURIED
-export function breakCheck(P, i, u, F, s = 1, dead = false) { // dead: treat all of it as dead wood (a fallen tree's branches)
+export function breakCheck(P, i, u, F, s = 1, dead = false, held = null) { // dead: treat all of it as dead wood (a fallen tree's branches); held(j): j is anchored (default: the stem, ord 0)
   const MOR = ARCH[P.sp].wood.MOR * 1e6;
   const q = [0, 1, 2].map((k) => (P.p0[i * 3 + k] + (P.p1[i * 3 + k] - P.p0[i * 3 + k]) * u) * s);
   let best = { node: -1, ratio: 0 }, j = i;
-  while (j >= 0 && P.ord[j] >= 1) {
+  while (j >= 0 && (held ? !held(j) : P.ord[j] >= 1)) {
     const r = [0, 1, 2].map((k) => q[k] - P.p0[j * 3 + k] * s), M = len3(cross(r, F)), rad = P.r0[j] * s;
     const collar = P.st[j] === DEAD && (P.par[j] < 0 || P.ord[P.par[j]] < P.ord[j]) ? 0.6 : 1;
     const st = dead ? Math.max(DEAD, P.st[j]) : P.st[j], ratio = M / ((Math.PI * rad ** 3) / 4) / (MOR * HEALTH[st] * (dead && (P.par[j] < 0 || P.ord[P.par[j]] < P.ord[j]) ? 0.6 : collar));

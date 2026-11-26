@@ -20,7 +20,7 @@ export class PhysicsCore {
   add(g) { // g: { id, n, par Int32, u, s0 (n*3), x0 (n*3), r, L, k, w, lim }
     const n = g.n;
     g.x = Float32Array.from(g.x0); g.xp = Float32Array.from(g.x0); g.v = new Float32Array(n * 3); g.S = new Float32Array(n * 3); g.T = new Float32Array(n * 3);
-    g.broken = new Uint8Array(n); g.quiet = 2; g.touch = new Uint8Array(n); g.ell = new Float32Array(n); // quiet: starts at rest, simulated only once something can reach it
+    g.broken = new Uint8Array(n); if (!g.pin) g.pin = new Uint8Array(n); g.quiet = 2; g.touch = new Uint8Array(n); g.ell = new Float32Array(n); // quiet: starts at rest, simulated only once something can reach it
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (let i = 0; i < n; i++) {
       const p = g.par[i]; g.ell[i] = (p >= 0 ? g.ell[p] - g.L[p] * (1 - g.u[i]) : 0) + g.L[i];
@@ -49,8 +49,9 @@ export class PhysicsCore {
     this.frameBody(b); this.bodies.set(b.id, b);
   }
   removeBody(id) { this.bodies.delete(id); }
-  step(dt, caps, prev) { // caps: the body now; prev: where it was last step (swept over the substeps, so nothing tunnels)
+  step(dt, caps, prev, kb, mb) { // caps: the body now; prev: where it was last step (swept over the substeps, so nothing tunnels)
     const now = () => (typeof performance !== 'undefined' ? performance : Date).now(), t0 = now();
+    this.kb = kb && kb.length === caps.length / 7 ? kb : null; this.mb = mb && mb.length === caps.length / 7 ? mb : null; const CD = (this.CD = new Float32Array(caps.length / 7 * 4));
     const F = [0, 0, 0], CF = new Float32Array(caps.length / 7 * 3), CP = new Float32Array(caps.length / 7 * 7), SUB = 4, ITER = 2, h = Math.min(dt, 1 / 30) / SUB;
     const groups = [...this.groups.values()], bodies = [...this.bodies.values()].filter((b) => !b.settled);
     let nodes = 0;
@@ -61,6 +62,8 @@ export class PhysicsCore {
       for (const b of bodies) { this.integrate(b, h); this.worldCaps(b); nb += b.wc.length; }
       const all = new Float32Array(caps.length + nb), owner = new Int32Array(all.length / 7).fill(-1);
       if (prev && prev.length === caps.length) { const f = (s + 1) / SUB; for (let k = 0; k < caps.length; k++) all[k] = prev[k] + (caps[k] - prev[k]) * f; } else all.set(caps, 0);
+      for (let c = 0; c < caps.length; c += 7) { const j = c / 7 * 4; for (let e = 0; e < 6; e++) all[c + e] += CD[j + e % 3]; } // where the body has already given way this step
+      this.all = all;
       let off = caps.length;
       bodies.forEach((b, k) => { all.set(b.wc, off); owner.fill(k, off / 7, (off + b.wc.length) / 7); off += b.wc.length; b.J[0] = b.J[1] = b.J[2] = 0; b.Tq[0] = b.Tq[1] = b.Tq[2] = 0; });
       for (const g of groups) {
@@ -71,7 +74,7 @@ export class PhysicsCore {
         this.clear(g, all, near, owner); // last word to contact: nothing ends a substep inside the body
         for (let i = 0; i < g.n * 3; i++) g.v[i] = (g.x[i] - g.xp[i]) / h * 0.985;
       }
-      for (const b of bodies) { this.applyImpulse(b); this.contactEnv(b, h); }
+      for (const b of bodies) { this.bodyVsBody(b, all, caps.length, prev, caps, dt); this.applyImpulse(b); this.contactEnv(b, h); }
     }
     for (let k = 0; k < 3; k++) F[k] /= SUB; for (let k = 0; k < CF.length; k++) CF[k] /= SUB; // summed over substeps: the time-averaged push
     const out = [];
@@ -80,7 +83,7 @@ export class PhysicsCore {
       let maxD = 0, maxV = 0, touched = false;
       for (let i = 0; i < g.n; i++) {
         if (g.touch[i]) touched = true;
-        if (!g.broken[i] && this.strain(g, i) > g.lim[i]) { g.broken[i] = 1; breaks.push(i); }
+        if (!g.broken[i] && !g.pin[i] && this.strain(g, i) > g.lim[i]) { g.broken[i] = 1; breaks.push(i); }
         const k = i * 3;
         maxD = Math.max(maxD, Math.abs(g.x[k] - g.x0[k]) + Math.abs(g.x[k + 1] - g.x0[k + 1]) + Math.abs(g.x[k + 2] - g.x0[k + 2]));
         maxV = Math.max(maxV, Math.abs(g.v[k]) + Math.abs(g.v[k + 1]) + Math.abs(g.v[k + 2]));
@@ -100,7 +103,7 @@ export class PhysicsCore {
       if (b.settled) this.bodies.delete(b.id);
     }
     const hits = this.bodyHits || 0; this.bodyHits = 0;
-    return { groups: out, bodies: bout, force: F, capF: CF, capP: CP, nodes, hits, ms: now() - t0 };
+    return { groups: out, bodies: bout, force: F, capF: CF, capP: CP, capD: CD, nodes, hits, ms: now() - t0 };
   }
   nearCaps(g, caps, from) { // capsule offsets that could reach this group
     const near = [], b = g.box;
@@ -139,6 +142,28 @@ export class PhysicsCore {
         o[k + e] = b.p[0] + R[0] * x + R[1] * y + R[2] * z; o[k + e + 1] = b.p[1] + R[3] * x + R[4] * y + R[5] * z; o[k + e + 2] = b.p[2] + R[6] * x + R[7] * y + R[8] * z;
       }
       o[k + 6] = c[k + 6];
+    }
+  }
+  // The body (kinematic: far heavier than anything loose) against a free piece: the piece is moved out of the capsule
+  // and, if the two are closing, given the capsule's velocity along the contact normal at the contact point.
+  bodyVsBody(b, all, nc, prev, caps, dt) {
+    const wc = b.wc;
+    for (let k = 0; k < wc.length; k += 7) for (let c = 0; c < nc; c += 7) {
+      if (!this.segCap(wc[k], wc[k + 1], wc[k + 2], wc[k + 3], wc[k + 4], wc[k + 5], all, c, wc[k + 6])) continue;
+      const H = this.hit, nx = H.nx, ny = H.ny, nz = H.nz, mb = this.mb ? this.mb[c / 7] : 1e6, so = mb / (mb + b.m); // shared by mass: a twig flies, a heavy limb stops the leg
+      const onGround = ny < 0 && Math.hypot(b.v[0], b.v[1], b.v[2]) < 0.5 && b.still >= 0, down = onGround ? ny : 0; // pressed into the ground it lies on: the ground refuses, so the body takes that part
+      const mvx = nx * H.pen * so, mvy = (ny - down) * H.pen * so, mvz = nz * H.pen * so;
+      b.p[0] += mvx; b.p[1] += mvy; b.p[2] += mvz;
+      for (let q = 0; q < wc.length; q += 7) for (const e of [0, 3]) { wc[q + e] += mvx; wc[q + e + 1] += mvy; wc[q + e + 2] += mvz; }
+      if (this.CD) { const bx = nx * H.pen - mvx, by = ny * H.pen - mvy, bz = nz * H.pen - mvz, j4 = c / 7 * 4, D = this.CD; if (Math.abs(bx) + Math.abs(by) + Math.abs(bz) > 1e-6) { D[j4] -= bx; D[j4 + 1] -= by; D[j4 + 2] -= bz; D[j4 + 3] = Math.hypot(D[j4], D[j4 + 1], D[j4 + 2]); for (const e of [0, 3]) { all[c + e] -= bx; all[c + e + 1] -= by; all[c + e + 2] -= bz; } } }
+      let vcx = 0, vcy = 0, vcz = 0; // the capsule's velocity (its sweep this step)
+      if (prev && prev.length === caps.length && dt > 0) { vcx = (caps[c] + caps[c + 3] - prev[c] - prev[c + 3]) / (2 * dt); vcy = (caps[c + 1] + caps[c + 4] - prev[c + 1] - prev[c + 4]) / (2 * dt); vcz = (caps[c + 2] + caps[c + 5] - prev[c + 2] - prev[c + 5]) / (2 * dt); }
+      const rx = H.px - b.p[0], ry = H.py - b.p[1], rz = H.pz - b.p[2], w = b.w;
+      const vx = b.v[0] + w[1] * rz - w[2] * ry, vy = b.v[1] + w[2] * rx - w[0] * rz, vz = b.v[2] + w[0] * ry - w[1] * rx;
+      const vn = (vx - vcx) * nx + (vy - vcy) * ny + (vz - vcz) * nz; if (vn >= 0) continue;
+      const j = -vn * b.m * so * 0.7, jx = nx * j, jy = ny * j, jz = nz * j;
+      b.J[0] += jx; b.J[1] += jy; b.J[2] += jz; b.Tq[0] += ry * jz - rz * jy; b.Tq[1] += rz * jx - rx * jz; b.Tq[2] += rx * jy - ry * jx;
+      b.still = 0;
     }
   }
   applyImpulse(b) { // what the branches it pushed through did to it this substep
@@ -234,8 +259,8 @@ export class PhysicsCore {
         const R = caps[c + 6]; // boxes first: most segments are nowhere near most capsules
         if (Math.min(caps[c], caps[c + 3]) - R > hx || Math.max(caps[c], caps[c + 3]) + R < lx || Math.min(caps[c + 1], caps[c + 4]) - R > hy || Math.max(caps[c + 1], caps[c + 4]) + R < ly || Math.min(caps[c + 2], caps[c + 5]) - R > hz || Math.max(caps[c + 2], caps[c + 5]) + R < lz) continue;
         if (!this.segCap(S[k], S[k + 1], S[k + 2], x[k], x[k + 1], x[k + 2], caps, c, r)) continue;
-        const hit = this.hit, b1 = hit.t, b0 = p >= 0 ? (1 - hit.t) * g.u[i] : 0, den = b0 * b0 + b1 * b1 || 1;
-        const k1 = Math.min(hit.pen * b1 / den, 0.3), k0 = Math.min(hit.pen * b0 / den, 0.3);
+        const hit = this.hit, b1 = g.pin[i] ? 0 : hit.t, b0 = p >= 0 ? (1 - hit.t) * g.u[i] : 0, den = b0 * b0 + b1 * b1 || 1;
+        const sh = this.share(g, i, hit, c, owner), shp = p >= 0 ? this.shareAt(g, p, c, owner) : 0, k1 = Math.min(hit.pen * sh * b1 / den, 0.3), k0 = Math.min(hit.pen * shp * b0 / den, 0.3);
         x[k] += hit.nx * k1; x[k + 1] += hit.ny * k1; x[k + 2] += hit.nz * k1; g.touch[i] = 1;
         if (p >= 0) { x[q] += hit.nx * k0; x[q + 1] += hit.ny * k0; x[q + 2] += hit.nz * k0; }
         const ob = owner ? owner[c / 7] : -1;
@@ -250,9 +275,31 @@ export class PhysicsCore {
           }
         }
       }
+      if (g.pin[i]) { x[k] = g.x0[k]; x[k + 1] = g.x0[k + 1]; x[k + 2] = g.x0[k + 2]; continue; } // held in the soil
       const dx = x[k] - S[k], dy = x[k + 1] - S[k + 1], dz = x[k + 2] - S[k + 2], l = Math.hypot(dx, dy, dz) || 1, s = g.L[i] / l;
       x[k] = S[k] + dx * s; x[k + 1] = S[k + 1] + dy * s; x[k + 2] = S[k + 2] + dz * s;
     }
+  }
+  // One rule for every contact between the body and a rod: the overlap is shared by stiffness. The rod at the contact
+  // point is a cantilever, k_eff = 3EI/ℓ³ (ℓ from its anchor); the body part has its own stiffness (kb, per capsule:
+  // an arm gives easily, a planted leg hardly). The rod takes kb / (kb + k_eff) of the overlap and the body the rest,
+  // which is recorded (CD) as how far that body part must move. A twig moves; a thick root or limb moves the leg.
+  shareAt(g, p, c, owner) { // the parent's own share at its end (a contact on a child also pushes the parent's end)
+    if (owner && owner[c / 7] >= 0) return 1;
+    if (g.pin[p]) return 0;
+    const keff = g.k[p] * g.L[p] ** 3 / Math.max(0.05, g.ell[p]) ** 3, kb = this.kb ? this.kb[c / 7] : 1e9;
+    return kb / (kb + keff);
+  }
+  share(g, i, hit, c, owner) {
+    if (owner && owner[c / 7] >= 0) return 1; // a falling piece: it gets an impulse instead (applyImpulse)
+    const ell = Math.max(0.05, g.ell[i] - g.L[i] * (1 - hit.t)), keff = g.pin[i] ? 1e9 : g.k[i] * g.L[i] ** 3 / ell ** 3, kb = this.kb ? this.kb[c / 7] : 1e9;
+    const sh = kb / (kb + keff), need = (1 - sh) * hit.pen, D = this.CD, j = c / 7 * 4, A = this.all;
+    if (D && need > 1e-6) { // the body part gives way now, within the step: later contacts see it moved, so the rod only ever takes its share
+      const mx = -hit.nx * need, my = -hit.ny * need, mz = -hit.nz * need;
+      D[j] += mx; D[j + 1] += my; D[j + 2] += mz; D[j + 3] = Math.hypot(D[j], D[j + 1], D[j + 2]);
+      if (A) for (const e of [0, 3]) { A[c + e] += mx; A[c + e + 1] += my; A[c + e + 2] += mz; }
+    }
+    return sh;
   }
   clear(g, caps, near, owner) { // contact only, twice over, for segments touching the body (bend and length had their turn)
     const x = g.x, S = g.S;
@@ -263,8 +310,8 @@ export class PhysicsCore {
       for (const c of near) {
         if (owner && owner[c / 7] >= 0) continue;
         if (!this.segCap(S[k], S[k + 1], S[k + 2], x[k], x[k + 1], x[k + 2], caps, c, g.r[i])) continue;
-        const hit = this.hit, b1 = hit.t, b0 = p >= 0 ? (1 - hit.t) * g.u[i] : 0, den = b0 * b0 + b1 * b1 || 1;
-        const k1 = hit.pen * b1 / den, k0 = hit.pen * b0 / den;
+        const hit = this.hit, b1 = g.pin[i] ? 0 : hit.t, b0 = p >= 0 ? (1 - hit.t) * g.u[i] : 0, den = b0 * b0 + b1 * b1 || 1;
+        const sh = this.share(g, i, hit, c, owner), shp = p >= 0 ? this.shareAt(g, p, c, owner) : 0, k1 = hit.pen * sh * b1 / den, k0 = hit.pen * shp * b0 / den;
         x[k] += hit.nx * k1; x[k + 1] += hit.ny * k1; x[k + 2] += hit.nz * k1;
         if (p >= 0) { x[q] += hit.nx * k0; x[q + 1] += hit.ny * k0; x[q + 2] += hit.nz * k0; g.touch[p] = 1; }
       }
@@ -308,6 +355,6 @@ onmessage = (e) => {
   else if (m.type === 'remove') core.remove(m.id);
   else if (m.type === 'reset') { core.groups.clear(); core.bodies.clear(); }
   else if (m.type === 'body') core.addBody(m.b);
-  else if (m.type === 'step') { const r = core.step(m.dt, m.caps, m.prev); postMessage({ type: 'state', ...r }, r.groups.map((g) => g.disp.buffer)); }
+  else if (m.type === 'step') { const r = core.step(m.dt, m.caps, m.prev, m.kb, m.mb); postMessage({ type: 'state', ...r }, r.groups.map((g) => g.disp.buffer)); }
 };`;
 }
