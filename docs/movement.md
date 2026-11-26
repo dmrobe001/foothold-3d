@@ -146,3 +146,20 @@ barrier. Forest walk unchanged (37.5 m).
   approaches stop clean; off centre by 0.1 and 0.2 m, a leg is 3 and 16 cm into the mouth's corner (open).
 - **The rail at 0.5 m** had become a 0.4 m roof (its underside) once the body's height stayed on the ground beside it;
   anything lower than the lowest crawl is now something to go over, not under.
+
+## Leaning and squaring up (from play)
+
+- **Leaning picks a side only if it helps.** Upright, and leaning 0.15 or 0.3 m either way, are each scored by how much
+  ducking they still need (a lean costs a little); a lean counts only if the head can go there (no wall at shoulder-to-head
+  height on that side), and upright wins unless leaning saves more than 2 cm. Before, it leaned the same way everywhere,
+  into the wall when you hugged the high side (a wall reads as no ceiling). Sloped roof, measured: hugging the high side
+  0.20 rad (it steps to 0.32 m, as close as the body fits, with a little room left that way), 0.2 m in 0.21, middle and
+  low side 0.43 toward the high side.
+- **Step across rather than shimmy.** Where facing the way fits a little to one side (up to 0.4 m), the body steps across
+  to it; it shimmies only when nothing facing the way fits nearby. (Hugging a wall into a tunnel had set off a shimmy that
+  scraped the roof's corner.) Held at an angle against a wall, this slides you along it, round its end if it has one.
+- **Squaring up to a barrier you step over** (`crossPlan`): within a metre of a thin top ahead, its near edge is found where
+  two lines 0.3 m either side of yours meet it, and the way across is square to that edge; the body turns to face it and
+  crosses along it (the legs lift forward over it), letting go 0.5 m beyond. A foothold keeps 0.18 m of toe room before a
+  raised edge, so the foot can lift over it. From 0, 0.3, −0.5 and 0.7 rad: facing within 0.01 rad of square over the top;
+  a shin within 2–4 cm of the wall, 12 cm at 0.7 rad (the leading foot comes down onto the top: open).
