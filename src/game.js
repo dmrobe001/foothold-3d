@@ -1270,10 +1270,10 @@ function pieceMeshes(o, G, parent) {
 // bodies: each vertex stored in its body's frame, drawn at x_b + q_b · v from a per-body transform texture. At rest it
 // is solid to walk on where it lies; a foot on it presses it with your weight.
 const falls = new Map(); let fallId = 1; // every free object, by id (awake ones have .awake)
-const WOOD_FREE = { green: (sp) => ({ E: PL.ARCH[sp].wood.E, MOR: PL.ARCH[sp].wood.MOR, rho: 800, dead: false }), dead: (sp) => ({ E: PL.ARCH[sp].wood.E * 0.9, MOR: PL.ARCH[sp].wood.MOR, rho: 550, dead: true }),
+const WOOD_FREE = { green: (sp) => ({ E: PL.ARCH[sp].wood.E, MOR: PL.ARCH[sp].wood.MOR, rho: 800, dead: false }), dead: (sp) => ({ E: PL.ARCH[sp].wood.E * 1.25, MOR: PL.ARCH[sp].wood.MOR * 1.3, rho: 550, dead: true }), // dry: stiffer, stronger, brittle
   // decay fd 0..1 (years down over the time a stem that size takes to rot): lighter, weaker, softer [rough: brown and white
   // rots take most of the strength well before most of the mass]
-  rotted: (sp, fd) => ({ E: PL.ARCH[sp].wood.E * 0.9 * (1 - 0.6 * fd), MOR: PL.ARCH[sp].wood.MOR * (1 - 0.8 * fd), rho: 550 * (1 - 0.45 * fd), dead: true }) };
+  rotted: (sp, fd) => ({ E: PL.ARCH[sp].wood.E * 1.25 * (1 - 0.6 * fd), MOR: PL.ARCH[sp].wood.MOR * 1.3 * (1 - 0.8 * fd), rho: 550 * (1 - 0.45 * fd), dead: true }) };
 function freePatch(sh, o) {
   sh.uniforms.uFreeTex = { value: o.tex };
   sh.vertexShader = 'uniform highp sampler2D uFreeTex; attribute float aBody;\n' + sh.vertexShader
@@ -1365,7 +1365,8 @@ function spawnFall(o) {
   const barkMat = new THREE.MeshLambertMaterial({ map: tex.bark }); barkMat.color.setRGB(o.tint[0] * 1.6, o.tint[1] * 1.6, o.tint[2] * 1.6);
   const meshes = [{ ...G.piece, seg: G.piece.node.map(segOf), mat: barkMat, key: 'B' }];
   if (o.leaves && G.leaf.idx.length) meshes.push({ ...G.leaf, seg: G.leaf.node.map(segOf), mat: o.conifer ? mats.needleStill : mats.leafStill, key: o.conifer ? 'N' : 'L' });
-  spawnFree(segs, o.wood || WOOD_FREE.green(o.sp ?? 0), meshes);
+  let dead = 0; for (let i = 0; i < P.n; i++) if (gone[i] && P.st[i] !== PL.LIVE) dead++;
+  spawnFree(segs, o.wood || (dead * 2 > segs.length ? WOOD_FREE.dead(o.sp ?? 0) : WOOD_FREE.green(o.sp ?? 0)), meshes);
 }
 // Fallen stems near you are free objects, asleep: drawn and stood on as before, solid to other objects. Whatever wakes
 // one (your weight on it, a push, a hit, your legs) brings it alive: it gets its own moving mesh, its instance in the
@@ -1396,7 +1397,7 @@ function logWake(dt) {
         bmap.set(i, segs.length); segs.push({ a, b: b2, r: rr, par });
       }
     }
-    const o = spawnFree(segs, WOOD_FREE.rotted(p._t.sp, p._fd || 0), [], { sleep: true, twig: rb ? 0.015 : undefined, tag: { piece: p, blog: rb, bmap } }); if (!o) { p._free = undefined; continue; }
+    const o = spawnFree(segs, WOOD_FREE.rotted(p._t.sp, p._fd || 0), [], { sleep: true, tag: { piece: p, blog: rb, bmap } }); if (!o) { p._free = undefined; continue; }
     p._free = o.id; o.awake = false;
     for (const so of p._solids) { // stood on: your weight presses the part of it under your foot
       const vx = p.x1 - p.x0, vz = p.z1 - p.z0, t = clamp(((so.x - p.x0) * vx + (so.z - p.z0) * vz) / (vx * vx + vz * vz || 1), 0, 0.999);
@@ -1728,19 +1729,20 @@ function physActivate(dt) {
   for (const w of list) {
     const G = phys.groups.get(physKey(w.owner));
     let nodes = w.set;
-    if (G && !G.asleep && w.owner.ph) { // still moving: keep what is displaced (and its path back), let go of what is back at rest
+    if (G && G.hinged) { nodes = new Set(w.set); for (const i of G.nodes) nodes.add(i); } // something in it gave way and hangs: it keeps its shape (and its nodes) from now on
+    else if (G && !G.asleep && w.owner.ph) { // still moving: keep what is displaced (and its path back), let go of what is back at rest
       nodes = new Set(w.set); const D = w.owner.ph.data;
       for (const i of G.nodes) {
         if (nodes.has(i) || Math.abs(D[i * 4]) + Math.abs(D[i * 4 + 1]) + Math.abs(D[i * 4 + 2]) < 0.015) continue;
         for (let q = i; q >= 0 && G.nodeSet.has(q) && !nodes.has(q); q = w.P.par[q]) nodes.add(q);
       }
     }
-    if (total + nodes.size > cap) continue; total += nodes.size; keep.add(physKey(w.owner));
+    if (total + nodes.size > cap && !G?.hinged) continue; total += nodes.size; keep.add(physKey(w.owner));
     const arr = [...nodes].filter((i) => !w.owner.gone?.[i]).sort((a, b) => a - b);
     if (G && G.nodes.length === arr.length && G.nodes.every((v, k) => v === arr[k])) continue; // unchanged
     physAddGroup({ owner: w.owner, kind: w.kind, nodes: arr, ws: w.ws, P: w.P, key: physKey(w.owner), carry: G ? G.id : undefined });
   }
-  for (const [key, g] of phys.groups) if (!keep.has(key) && g.asleep) physRemoveGroup(key);
+  for (const [key, g] of phys.groups) if (!keep.has(key) && g.asleep && !g.hinged) physRemoveGroup(key);
 }
 let ownerIds = 0;
 const physKey = (o) => 'o' + (o._pid || (o._pid = ++ownerIds));
@@ -1749,7 +1751,7 @@ function physAddGroup(w) {
   const wood = kind === 'plant' ? PLANT_WOOD[owner[0]] : PL.ARCH[kind === 'tree' ? owner.v.sp : owner.t.sp].wood;
   const pins = kind === 'root' ? owner.m.pin : null;
   const E = wood.E * 1e9, MOR = wood.MOR * 1e6, local = new Map(nodes.map((i, j) => [i, j]));
-  const g = { id: phys.nextId++, n, ids: Int32Array.from(nodes), carry: w.carry, pin: Uint8Array.from(nodes, (i) => pins ? pins[i] : 0), par: new Int32Array(n), u: new Float32Array(n), s0: new Float32Array(n * 3), x0: new Float32Array(n * 3), r: new Float32Array(n), L: new Float32Array(n), k: new Float32Array(n), w: new Float32Array(n), lim: new Float32Array(n) };
+  const g = { id: phys.nextId++, n, ids: Int32Array.from(nodes), carry: w.carry, pin: Uint8Array.from(nodes, (i) => pins ? pins[i] : 0), dry: new Uint8Array(n), par: new Int32Array(n), u: new Float32Array(n), s0: new Float32Array(n * 3), x0: new Float32Array(n * 3), r: new Float32Array(n), L: new Float32Array(n), k: new Float32Array(n), w: new Float32Array(n), lim: new Float32Array(n) };
   const deadAll = kind === 'log' && owner.m.T > 1;
   nodes.forEach((i, j) => {
     const k = i * 7; g.s0.set([ws[k], ws[k + 1], ws[k + 2]], j * 3); g.x0.set([ws[k + 3], ws[k + 4], ws[k + 5]], j * 3);
@@ -1759,9 +1761,10 @@ function physAddGroup(w) {
       const q = P.par[i] * 7, vx = ws[q + 3] - ws[q], vy = ws[q + 4] - ws[q + 1], vz = ws[q + 5] - ws[q + 2];
       g.u[j] = clamp(((ws[k] - ws[q]) * vx + (ws[k + 1] - ws[q + 1]) * vy + (ws[k + 2] - ws[q + 2]) * vz) / (vx * vx + vy * vy + vz * vz || 1), 0, 1);
     }
-    const dead = deadAll || P.st[i] !== PL.LIVE, I = Math.PI * r ** 4 / 4;
-    g.r[j] = r; g.L[j] = L; g.k[j] = 3 * E * I / L ** 3; g.w[j] = 1 / (800 * Math.PI * r * r * L + (P.ord[i] >= 2 ? 0.02 : 0.005));
-    g.lim[j] = MOR / E * (dead ? 1.0 : kind === 'plant' ? 6 : 2.5); // green wood fails at roughly 1-2 % strain, about 2.5x its proportional limit MOR/E [rough]; soft stems bend much further
+    const dead = (deadAll || P.st[i] !== PL.LIVE) && kind !== 'root' && kind !== 'plant', I = Math.PI * r ** 4 / 4, Ed = dead ? E * 1.25 : E; // dry wood is stiffer, stronger and more brittle than green
+    g.dry[j] = dead ? 1 : 0;
+    g.r[j] = r; g.L[j] = L; g.k[j] = 3 * Ed * I / L ** 3; g.w[j] = 1 / (800 * Math.PI * r * r * L + (P.ord[i] >= 2 ? 0.02 : 0.005));
+    g.lim[j] = MOR * (dead ? 1.3 : 1) / Ed * (dead ? 1.0 : kind === 'plant' ? 6 : 2.5); // green wood fails at roughly 1-2 % strain, about 2.5x its proportional limit MOR/E [rough]; soft stems bend much further
   });
   // Segments no body could bend measurably (tip stiffness 3EI/ℓ³ from the group's anchor above K_RIGID) are held where
   // they are, as soil holds a root: a few solver iterations cannot make a chain that stiff, and a millimetre of numerical
@@ -2008,7 +2011,7 @@ function physState(st) {
     const [key, G] = e, o = G.owner; if (!o.ph) continue;
     const D = o.ph.data;
     G.nodes.forEach((i, j) => { D[i * 4] = res.disp[j * 3]; D[i * 4 + 1] = res.disp[j * 3 + 1]; D[i * 4 + 2] = res.disp[j * 3 + 2]; });
-    inheritDisp(o); o.ph.tex.needsUpdate = true; G.asleep = res.sleep;
+    inheritDisp(o); o.ph.tex.needsUpdate = true; G.asleep = res.sleep; G.hinged = res.hinged;
     for (const j of res.breaks) breaks.push([G, G.nodes[j]]);
   }
   for (const [G, node] of breaks) { // overstrained: snapped
@@ -3469,7 +3472,7 @@ function plantBothFeet() {
 // of your weight at that point, PL.breakCheck), a long flexible live one bends out from under the foot, and the foot
 // drops to the next, until something holds (sagging a little, by its bending stiffness) or the ground does.
 // Candidates are the branch segments of standing and fallen trees near you, in their rest pose.
-const CRUNCH = { foot: 0.06, minR: 0.004, step: 0.45, sagMax: 0.12, bendAway: 0.25, load: 1.15 };
+const CRUNCH = { foot: 0.06, minR: 0.002, step: 0.45, sagMax: 0.12, bendAway: 0.25, load: 1.15 };
 let crunchList = null;
 function crunchSegs() {
   const L = crunchList;

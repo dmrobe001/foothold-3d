@@ -269,6 +269,36 @@ moves with it. Fresh fallen trees that still carry their branches (as rods ancho
 - **Force at the right part:** a thin pole is several jointed bodies; your weight is now applied to the body under your
   foot. It used to go to the first body whatever the foot stood on, which threw a pole into the air.
 
+### Breaks that hang on, quick sleep, no size thresholds (third pass)
+
+**What breaks off.** A joint past its limit snaps clean off only if it is dry (dead wood) and under 1.5 cm in radius
+(`BREAK_R`). Anything green or thicker gives way like a greenstick fracture and hangs on by a splinter:
+- branch rods: the joint keeps a hundredth of its bending stiffness, and everything beyond it now feels gravity
+  (attached rods otherwise carry their sag in their rest shape), so it droops and hangs;
+- free objects: the joint's correction is split into twist about the branch, kept at a fifth of its stiffness, and
+  bend, which keeps 1/10,000 (nearly free).
+Dry wood is stiffer (E × 1.25), stronger (MOR × 1.3) and brittle (fails at 1.0 × MOR/E, green at 2.5 ×), before decay.
+
+**Sleep, aggressively.** Branch rods untouched for half a second and still (under 5 cm/s) stop being simulated, keeping
+their displacement. One that has a joint hanging on is never dropped or shrunk (it would spring back to its unbroken
+shape). A free object sleeps after half a second without moving 2 cm; more than 2 m from your body and slower than
+0.3 m/s, after 0.3 s; after 8 s regardless; never while a force (a foot, a push) acts on it.
+
+**No thickness thresholds for contact.** Every part of a free object meets the ground, fixed things, other objects, its
+own other parts (candidates from a 0.5 m grid of their boxes) and your body. Fresh fallen trees keep their branches as
+jointed bodies down to 4 mm, as broken-off pieces do. (Thresholds that remain: twigs under 4 mm ride rigidly on their
+parent, and the walking surface only counts parts 1.2 cm and thicker.)
+
+**Rebounds** are damped only after an impact (approach faster than 0.3 m/s); lifting off is free. Before this, a lever's
+end could hardly leave the ground.
+
+**Measured:**
+- A green maple limb broken 6 m up: one object, 0 clean breaks, 5 of 9 joints hanging on, asleep after 7 s.
+- Walking through the gym's sapling and thicket stations: 0–4 small dry pieces snapped off each, 1–5 plants left with a
+  joint hanging on; physics at most 10 ms.
+- Forest walk: 0–4 free objects awake at a time, 3–9 ms of physics (main thread, the development container).
+- Lever (Node): 785 N on the short end does nothing, 1400 N tips it to the ground.
+
 ## Push
 
 The Break button is now Push. Held, it presses on whatever your hands reach in the direction you look, ramping to 300 N
@@ -281,7 +311,7 @@ the body leaned back 0.28 rad.
 ## Not yet
 
 - Small pieces resting on springy branches can fidget for a while before they sleep (two integrators meeting).
-- An awake fresh fallen tree's twigs under 1 cm do not meet the body (its branch rods are retired when it comes alive).
+- Plants with a joint hanging on keep their simulation group for as long as you are in the area (they would otherwise spring back whole).
 - A planted leg still yields only at the knee, so a shin can stay a few centimetres into a log that rolls against it.
 - The body's share of a rod contact arrives one frame late (the solver runs on a worker).
 - Twigs touching near their base can stay a few centimetres inside the body.

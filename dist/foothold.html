@@ -1822,14 +1822,14 @@ const PH = (() => {
 // Gravity is left out for attached branches: their rest shape already includes their sag.
 // Reaction on the body: each touching segment pushes back with the branch's cantilever stiffness out to the contact
 // point, k_eff = 3 E I / ℓ³ (ℓ: arc length from the group's anchor), times how far that point is from rest.
-// rolling resistance coefficients (soft forest floor; bark on bark) and sliding friction; soil and litter under a segment: stiffness per contact point SOIL · r · length (N/m: 50 kN/m under a 0.8 m section of a 30 cm log, a few hundred under a twig); bark on bark: compliance WOOD (m/N)
-const SOIL = 4e5, WOOD = 2e-6, CRR_SOIL = 0.25, CRR_WOOD = 0.08, MU_SOIL = 0.8, MU_WOOD = 0.7, SLOP = 0.008;
+// a joint snaps clean off only if dry and under BREAK_R (m); rolling resistance coefficients (soft forest floor; bark on bark) and sliding friction; soil and litter under a segment: stiffness per contact point SOIL · r · length (N/m: 50 kN/m under a 0.8 m section of a 30 cm log, a few hundred under a twig); bark on bark: compliance WOOD (m/N)
+const BREAK_R = 0.015, SOIL = 4e5, WOOD = 2e-6, CRR_SOIL = 0.25, CRR_WOOD = 0.08, MU_SOIL = 0.8, MU_WOOD = 0.7, SLOP = 0.008;
 class PhysicsCore {
   constructor() { this.groups = new Map(); this.free = new Map(); }
   add(g) { // g: { id, n, par Int32, u, s0 (n*3), x0 (n*3), r, L, k, w, lim }
     const n = g.n;
     g.x = Float32Array.from(g.x0); g.xp = Float32Array.from(g.x0); g.v = new Float32Array(n * 3); g.S = new Float32Array(n * 3); g.T = new Float32Array(n * 3);
-    g.broken = new Uint8Array(n); if (!g.pin) g.pin = new Uint8Array(n); g.quiet = 2; g.touch = new Uint8Array(n); g.ell = new Float32Array(n); // quiet: starts at rest, simulated only once something can reach it
+    g.broken = new Uint8Array(n); g.hinge = new Uint8Array(n); g.grav = new Uint8Array(n); g.maxV = 0; if (!g.pin) g.pin = new Uint8Array(n); if (!g.dry) g.dry = new Uint8Array(n); g.quiet = 2; g.touch = new Uint8Array(n); g.ell = new Float32Array(n); // quiet: starts at rest, simulated only once something can reach it
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (let i = 0; i < n; i++) {
       const p = g.par[i]; g.ell[i] = (p >= 0 ? g.ell[p] - g.L[p] * (1 - g.u[i]) : 0) + g.L[i];
@@ -1842,10 +1842,10 @@ class PhysicsCore {
       const at = new Map(); for (let j = 0; j < old.n; j++) at.set(old.ids[j], j);
       for (let i = 0; i < n; i++) {
         const j = at.get(g.ids[i]), k = i * 3;
-        if (j !== undefined) { for (let c = 0; c < 3; c++) { g.x[k + c] = old.x[j * 3 + c]; g.xp[k + c] = old.x[j * 3 + c]; g.v[k + c] = old.v[j * 3 + c]; } g.broken[i] = old.broken[j]; }
+        if (j !== undefined) { for (let c = 0; c < 3; c++) { g.x[k + c] = old.x[j * 3 + c]; g.xp[k + c] = old.x[j * 3 + c]; g.v[k + c] = old.v[j * 3 + c]; } g.broken[i] = old.broken[j]; g.hinge[i] = old.hinge[j]; g.grav[i] = old.grav[j]; }
         else { const p = g.par[i]; if (p >= 0) for (let c = 0; c < 3; c++) { g.x[k + c] = g.x0[k + c] + g.x[p * 3 + c] - g.x0[p * 3 + c]; g.xp[k + c] = g.x[k + c]; } } // new: carried along by its parent
       }
-      g.quiet = old.quiet; this.groups.delete(old.id);
+      g.quiet = old.quiet; g.hingedAny = old.hingedAny; this.groups.delete(old.id);
     }
     this.groups.set(g.id, g);
   }
@@ -1872,8 +1872,9 @@ class PhysicsCore {
       for (const f of awake) for (let c = 0; c < f.nc; c++) { all.set(f.wc.subarray(c * 7, c * 7 + 7), off); owner[off / 7] = fref.length / 2; fref.push(f, c); off += 7; } // fref: (free, capsule) pairs
       for (const g of groups) {
         const near = nf ? g.nearP.concat(this.nearCaps(g, all, caps.length)) : g.nearP;
-        if (!(g.quiet < 1.5 || near.length || gf.some((q) => q.gid === g.id))) continue;
+        if (!(g.quiet < 0.5 || g.maxV > 0.05 || near.length || gf.some((q) => q.gid === g.id))) continue; // asleep: untouched for half a second and still
         for (const q of gf) if (q.gid === g.id && q.j < g.n) { for (let d = 0; d < 3; d++) g.v[q.j * 3 + d] += q.F[d] * h * g.w[q.j]; g.quiet = 0; } // a point force on a branch (a push)
+        for (let i = 0; i < g.n; i++) if (g.grav[i]) g.v[i * 3 + 1] -= 9.81 * h; // beyond a joint that gave way, the branch hangs under its own weight
         for (let i = 0; i < g.n * 3; i++) { g.xp[i] = g.x[i]; g.x[i] += g.v[i] * h; }
         for (let it = 0; it < ITER; it++) this.solve(g, h, all, near, it === 0 ? F : null, owner, null, it === ITER - 1, CF, CP);
         this.clear(g, all, near, owner);
@@ -1881,6 +1882,7 @@ class PhysicsCore {
       }
       // free objects: XPBD wants many small substeps and one pass each
       const hf = h / FSUB;
+      for (const f of awake) this.fSelfPairs(f);
       for (let fs = 0; fs < FSUB; fs++) {
         if (!fs) for (const f of frees) if (f.sleep) this.fBody(f, all, caps.length, hf); // the body bumping a sleeping thing wakes it
         for (const f of awake) this.fIntegrate(f, hf);
@@ -1893,29 +1895,37 @@ class PhysicsCore {
     for (let k = 0; k < 3; k++) F[k] /= SUB; for (let k = 0; k < CF.length; k++) CF[k] /= SUB; // summed over substeps: the time-averaged push
     const out = [];
     for (const g of groups) {
-      const breaks = [];
+      const breaks = []; let hinged = false;
       let maxD = 0, maxV = 0, touched = false;
       for (let i = 0; i < g.n; i++) {
         if (g.touch[i]) touched = true;
-        if (!g.broken[i] && !g.pin[i] && this.strain(g, i) > g.lim[i]) { g.broken[i] = 1; breaks.push(i); }
+        if (!g.broken[i] && !g.pin[i] && !g.hinge[i] && this.strain(g, i) > g.lim[i]) {
+          if (g.dry[i] && g.r[i] < BREAK_R) { g.broken[i] = 1; breaks.push(i); } // small and dry: snaps clean off
+          else { g.hinge[i] = 1; hinged = true; const sub = new Uint8Array(g.n); sub[i] = 1; g.grav[i] = 1; for (let j = i + 1; j < g.n; j++) if (g.par[j] >= 0 && sub[g.par[j]]) { sub[j] = 1; g.grav[j] = 1; } } // green or thick: it gives way but hangs on
+        }
         const k = i * 3;
         maxD = Math.max(maxD, Math.abs(g.x[k] - g.x0[k]) + Math.abs(g.x[k + 1] - g.x0[k + 1]) + Math.abs(g.x[k + 2] - g.x0[k + 2]));
         maxV = Math.max(maxV, Math.abs(g.v[k]) + Math.abs(g.v[k + 1]) + Math.abs(g.v[k + 2]));
       }
       g.quiet = touched ? 0 : g.quiet + dt;
       const disp = new Float32Array(g.n * 3); for (let i = 0; i < g.n * 3; i++) disp[i] = g.x[i] - g.x0[i];
-      out.push({ id: g.id, disp, breaks, touched, sleep: g.quiet > 1.5 && maxD < 0.006 && maxV < 0.02 });
+      g.maxV = maxV; if (!g.hingedAny && hinged) g.hingedAny = true;
+      out.push({ id: g.id, disp, breaks, touched, hinged: !!g.hingedAny, sleep: g.quiet > 0.5 && maxV < 0.05 && (maxD < 0.006 || g.hingedAny) });
     }
-    const fout = [];
+    const fout = [], BB = [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity]; // the body's box
+    for (let c = 0; c < caps.length; c += 7) for (const e of [0, 3]) for (let d = 0; d < 3; d++) { BB[d * 2] = Math.min(BB[d * 2], caps[c + e + d]); BB[d * 2 + 1] = Math.max(BB[d * 2 + 1], caps[c + e + d]); }
     for (const f of frees) {
-      f.ext.length = 0;
+      const pushed = f.ext.length > 0; f.ext.length = 0;
       if (f.sleep && !f.report) continue;
-      if (!f.sleep) { // asleep once no part has gone anywhere for a second (it may fidget in place), or after 20 s; still solid for everything else
+      if (!f.sleep) { // asleep once no part has gone anywhere for half a second (it may fidget in place); away from you, sooner; after 8 s regardless
         f.age += dt; f.still += dt;
+        const B = f.box, far = caps.length > 0 && !pushed && (B[0] > BB[1] + 2 || B[1] < BB[0] - 2 || B[2] > BB[3] + 2 || B[3] < BB[2] - 2 || B[4] > BB[5] + 2 || B[5] < BB[4] - 2);
+        let mv = 0; for (let i = 0; i < f.nb * 3; i++) mv = Math.max(mv, Math.abs(f.v[i]));
+        if (far && mv < 0.3) f.farStill = (f.farStill || 0) + dt; else f.farStill = 0;
         if (!f.snap) { f.snap = Float32Array.from(f.bx); f.snapq = Float32Array.from(f.bq); f.still = 0; }
         let moved = 0; for (let b = 0; b < f.nb; b++) { moved = Math.max(moved, Math.hypot(f.bx[b * 3] - f.snap[b * 3], f.bx[b * 3 + 1] - f.snap[b * 3 + 1], f.bx[b * 3 + 2] - f.snap[b * 3 + 2]), 0.25 * (1 - Math.abs(f.bq[b * 4] * f.snapq[b * 4] + f.bq[b * 4 + 1] * f.snapq[b * 4 + 1] + f.bq[b * 4 + 2] * f.snapq[b * 4 + 2] + f.bq[b * 4 + 3] * f.snapq[b * 4 + 3])) * 100); }
-        if (moved > 0.02) f.snap = null; // still going: look again from here
-        else if (f.still > 1 || f.age > 20) { f.sleep = true; f.snap = null; f.v.fill(0); f.w.fill(0); f.report = true; }
+        if (pushed || (moved > 0.02 && f.farStill < 0.3)) { if (moved > 0.02 || pushed) f.snap = null; } // still going (or something presses on it): look again from here
+        else if (f.still > 0.5 || f.farStill >= 0.3 || f.age > 8) { f.sleep = true; f.snap = null; f.v.fill(0); f.w.fill(0); f.report = true; }
       }
       fout.push({ id: f.id, x: Float32Array.from(f.bx), q: Float32Array.from(f.bq), sleep: f.sleep, breaks: f.breaks.splice(0) });
       if (f.sleep) f.report = false;
@@ -1936,11 +1946,11 @@ class PhysicsCore {
   //      limit), mu, hf, statics }
   addFree(f) {
     const nb = f.nb; f.v = new Float32Array(nb * 3); f.w = new Float32Array(nb * 3); f.xp = new Float32Array(nb * 3); f.qp = new Float32Array(nb * 4);
-    f.jbr = new Uint8Array(f.nj); f.jl = new Float32Array(f.nj * 3); f.still = 0; f.age = 0; f.sleep = !!f.sleep; f.ext = []; f.breaks = []; f.wc = new Float32Array(f.nc * 7); f.box = [0, 0, 0, 0, 0, 0]; f.Iw = new Float32Array(nb * 9);
+    f.jbr = new Uint8Array(f.nj); f.jh = new Uint8Array(f.nj); f.jl = new Float32Array(f.nj * 3); f.still = 0; f.age = 0; f.sleep = !!f.sleep; f.ext = []; f.breaks = []; f.wc = new Float32Array(f.nc * 7); f.box = [0, 0, 0, 0, 0, 0]; f.Iw = new Float32Array(nb * 9);
     if (f.v0) for (let b = 0; b < nb; b++) for (let k = 0; k < 3; k++) f.v[b * 3 + k] = f.v0[k];
     this.fFrames(f); this.fCaps(f);
     f.cts = []; f.noPair = new Set(); // parts of one object that touch in its rest shape (a fork's two branches at their base) never collide with each other
-    f.thick = []; f.solid = []; for (let c = 0; c < f.nc; c++) { if (f.cr[c] >= 0.02) f.thick.push(c); if (f.cr[c] >= 0.01 || f.nc <= 4) f.solid.push(c); } // only these meet each other within one object (twigs do not jam visibly)
+    f.thick = []; f.solid = []; for (let c = 0; c < f.nc; c++) { f.thick.push(c); f.solid.push(c); } // every part meets everything (self-contact candidates come from a grid: fSelfPairs) // only these meet each other within one object (twigs do not jam visibly)
     const W = f.wc, T = f.thick;
     for (let x = 0; x < T.length; x++) for (let y = x + 1; y < T.length; y++) { const c = T[x], d = T[y]; if (f.cb[c] === f.cb[d]) continue;
       const a = c * 7, k = d * 7, R = W[a + 6] + W[k + 6] + 0.01; // box first
@@ -2051,16 +2061,33 @@ class PhysicsCore {
       let ex = aw * -bx + ax * bw + ay * -bz - az * -by, ey = aw * -by - ax * -bz + ay * bw + az * -bx, ez = aw * -bz + ax * -by - ay * -bx + az * bw; const ew = aw * bw + ax * bx + ay * by + az * bz; // qa ⊗ conj(qb)
       if (ew < 0) { ex = -ex; ey = -ey; ez = -ez; }
       const th = 2 * Math.hypot(ex, ey, ez); if (th < 1e-7) continue;
-      const nx = ex * 2 / th, ny = ey * 2 / th, nz = ez * 2 / th, I = f.Iw;
-      const wA = nx * (I[a * 9] * nx + I[a * 9 + 1] * ny + I[a * 9 + 2] * nz) + ny * (I[a * 9 + 3] * nx + I[a * 9 + 4] * ny + I[a * 9 + 5] * nz) + nz * (I[a * 9 + 6] * nx + I[a * 9 + 7] * ny + I[a * 9 + 8] * nz);
-      const wB = nx * (I[b * 9] * nx + I[b * 9 + 1] * ny + I[b * 9 + 2] * nz) + ny * (I[b * 9 + 3] * nx + I[b * 9 + 4] * ny + I[b * 9 + 5] * nz) + nz * (I[b * 9 + 6] * nx + I[b * 9 + 7] * ny + I[b * 9 + 8] * nz);
-      const l = th / (wA + wB + f.jal[j] / (h * h));
-      f.jl[j * 3] += nx * l / h; f.jl[j * 3 + 1] += ny * l / h; f.jl[j * 3 + 2] += nz * l / h; // angular impulse (a vector): summed over the step, the torque the joint carried (fBreak)
-      this.turn(f, b, nx * l, ny * l, nz * l); this.turn(f, a, -nx * l, -ny * l, -nz * l);
+      const rx = ex * 2, ry = ey * 2, rz = ez * 2; // the rotation still to make, as a vector
+      if (!f.jh[j]) { const l = this.ang(f, a, b, rx / th, ry / th, rz / th, th, f.jal[j], h); f.jl[j * 3] += rx / th * l / h; f.jl[j * 3 + 1] += ry / th * l / h; f.jl[j * 3 + 2] += rz / th * l / h; continue; } // angular impulse (a vector): summed over the step, the torque the joint carried (fBreak)
+      // a joint that gave way: the splinter still resists twisting about the branch (a fifth as stiff) but hardly bending
+      this.rot(f.bq, b * 4, f.jax[j * 3], f.jax[j * 3 + 1], f.jax[j * 3 + 2], t); const tw = rx * t[0] + ry * t[1] + rz * t[2];
+      if (Math.abs(tw) > 1e-7) this.ang(f, a, b, t[0] * Math.sign(tw), t[1] * Math.sign(tw), t[2] * Math.sign(tw), Math.abs(tw), f.jal[j] * 5, h);
+      const bx2 = rx - tw * t[0], by2 = ry - tw * t[1], bz2 = rz - tw * t[2], bl = Math.hypot(bx2, by2, bz2);
+      if (bl > 1e-7) this.ang(f, a, b, bx2 / bl, by2 / bl, bz2 / bl, bl, f.jal[j] * 1e4, h);
     }
   }
+  ang(f, a, b, nx, ny, nz, th, alpha, h) { // turn b toward a (and a toward b) about n by th, against compliance alpha; returns λ
+    const I = f.Iw;
+    const wA = nx * (I[a * 9] * nx + I[a * 9 + 1] * ny + I[a * 9 + 2] * nz) + ny * (I[a * 9 + 3] * nx + I[a * 9 + 4] * ny + I[a * 9 + 5] * nz) + nz * (I[a * 9 + 6] * nx + I[a * 9 + 7] * ny + I[a * 9 + 8] * nz);
+    const wB = nx * (I[b * 9] * nx + I[b * 9 + 1] * ny + I[b * 9 + 2] * nz) + ny * (I[b * 9 + 3] * nx + I[b * 9 + 4] * ny + I[b * 9 + 5] * nz) + nz * (I[b * 9 + 6] * nx + I[b * 9 + 7] * ny + I[b * 9 + 8] * nz);
+    const l = th / (wA + wB + alpha / (h * h));
+    this.turn(f, b, nx * l, ny * l, nz * l); this.turn(f, a, -nx * l, -ny * l, -nz * l);
+    return l;
+  }
+  vAt(f, b, P, nx, ny, nz) { // normal velocity of body b's point P
+    const o = b * 3, rx = P[0] - f.bx[o], ry = P[1] - f.bx[o + 1], rz = P[2] - f.bx[o + 2], w = f.w;
+    return (f.v[o] + w[o + 1] * rz - w[o + 2] * ry) * nx + (f.v[o + 1] + w[o + 2] * rx - w[o] * rz) * ny + (f.v[o + 2] + w[o] * ry - w[o + 1] * rx) * nz;
+  }
   fBreak(f, T) { // a joint whose mean torque over the step (T long) exceeded what the wood can carry snaps
-    for (let j = 0; j < f.nj; j++) { const t = Math.hypot(f.jl[j * 3], f.jl[j * 3 + 1], f.jl[j * 3 + 2]) / T; if (!f.jbr[j] && t > f.jtm[j]) { f.jbr[j] = 1; f.breaks.push(j); } f.jl[j * 3] = f.jl[j * 3 + 1] = f.jl[j * 3 + 2] = 0; }
+    for (let j = 0; j < f.nj; j++) {
+      const t = Math.hypot(f.jl[j * 3], f.jl[j * 3 + 1], f.jl[j * 3 + 2]) / T;
+      if (!f.jbr[j] && !f.jh[j] && t > f.jtm[j]) { if (f.dry && f.jr[j] < BREAK_R) { f.jbr[j] = 1; f.breaks.push(j); } else f.jh[j] = 1; } // small and dry snaps clean off; anything else gives way and hangs on
+      f.jl[j * 3] = f.jl[j * 3 + 1] = f.jl[j * 3 + 2] = 0;
+    }
   }
   turn(f, b, px, py, pz) { // an angular impulse: q += ½ (I⁻¹ p) ⊗ q
     const I = f.Iw, o = b * 9, ax = I[o] * px + I[o + 1] * py + I[o + 2] * pz, ay = I[o + 3] * px + I[o + 4] * py + I[o + 5] * pz, az = I[o + 6] * px + I[o + 7] * py + I[o + 8] * pz;
@@ -2070,31 +2097,30 @@ class PhysicsCore {
   fGround(f, h) {
     this.fCaps(f);
     const wc = f.wc, mu = MU_SOIL;
-    for (let c = 0; c < f.nc; c++) { if (f.cr[c] < 0.01 && f.nc > 4) continue; const k0 = c * 7, ln = Math.hypot(wc[k0 + 3] - wc[k0], wc[k0 + 4] - wc[k0 + 1], wc[k0 + 5] - wc[k0 + 2]), ns = Math.max(2, Math.ceil(ln / 0.5)); for (let si = 0; si <= ns; si++) { const t = si / ns; // a sample every half metre at most: a long log follows the ground's shape
+    for (let c = 0; c < f.nc; c++) { const k0 = c * 7, ln = Math.hypot(wc[k0 + 3] - wc[k0], wc[k0 + 4] - wc[k0 + 1], wc[k0 + 5] - wc[k0 + 2]), ns = Math.max(2, Math.ceil(ln / 0.5)); for (let si = 0; si <= ns; si++) { const t = si / ns; // a sample every half metre at most: a long log follows the ground's shape
       const k = c * 7, r = wc[k + 6], px = wc[k] + (wc[k + 3] - wc[k]) * t, py = wc[k + 1] + (wc[k + 4] - wc[k + 1]) * t, pz = wc[k + 2] + (wc[k + 5] - wc[k + 2]) * t;
       const H = f.hf && this.hfAt(f.hf, px, pz); if (!H) continue;
       const pen = H[0] + r - py; if (pen <= 0) continue;
       const nl = Math.hypot(H[1], 1, H[2]), nx = -H[1] / nl, ny = 1 / nl, nz = -H[2] / nl, P = [px - nx * r, py - ny * r, pz - nz * r];
       const alpha = 1 / (SOIL * Math.max(0.003, r) * Math.max(0.1, ln / ns * 2)); // (per sample: the ground under its share of the length) // soil bears on the area under it: stiffer under a thick, long log than a twig
-      f.touch = true; const jn = this.pos(f, f.cb[c], P, null, -1, P, nx, ny, nz, pen, alpha, h); f.cts.push(f.cb[c], P[0], P[1], P[2], nx, ny, nz, jn / h, CRR_SOIL * r);
+      f.touch = true; const vn0 = this.vAt(f, f.cb[c], P, nx, ny, nz), jn = this.pos(f, f.cb[c], P, null, -1, P, nx, ny, nz, pen, alpha, h); f.cts.push(f.cb[c], P[0], P[1], P[2], nx, ny, nz, jn / h, CRR_SOIL * r, vn0);
       this.fric(f, f.cb[c], P, null, -1, P, nx, ny, nz, pen, mu, h);
     } }
   }
   fStatic(f, h) {
     const S = f.statics; if (!S || !S.length) return;
     this.fCaps(f); const wc = f.wc;
-    for (let c = 0; c < f.nc; c++) { if (f.cr[c] < 0.01 && f.nc > 4) continue; const k = c * 7; for (let s = 0; s < S.length; s += 7) {
+    for (let c = 0; c < f.nc; c++) { const k = c * 7; for (let s = 0; s < S.length; s += 7) {
       if (!this.segCap(wc[k], wc[k + 1], wc[k + 2], wc[k + 3], wc[k + 4], wc[k + 5], S, s, wc[k + 6])) continue;
       const H = this.hit, P = [H.px - H.nx * wc[k + 6], H.py - H.ny * wc[k + 6], H.pz - H.nz * wc[k + 6]];
-      f.touch = true; const ln = this.pos(f, f.cb[c], P, null, -1, P, H.nx, H.ny, H.nz, H.pen, WOOD, h); f.cts.push(f.cb[c], P[0], P[1], P[2], H.nx, H.ny, H.nz, ln / h, CRR_WOOD * wc[k + 6]); this.fric(f, f.cb[c], P, null, -1, P, H.nx, H.ny, H.nz, H.pen, MU_WOOD, h);
+      f.touch = true; const vn0 = this.vAt(f, f.cb[c], P, H.nx, H.ny, H.nz), ln = this.pos(f, f.cb[c], P, null, -1, P, H.nx, H.ny, H.nz, H.pen, WOOD, h); f.cts.push(f.cb[c], P[0], P[1], P[2], H.nx, H.ny, H.nz, ln / h, CRR_WOOD * wc[k + 6], vn0); this.fric(f, f.cb[c], P, null, -1, P, H.nx, H.ny, H.nz, H.pen, MU_WOOD, h);
     } }
   }
   fBody(f, all, nc, h) { // the body: shared by mass (the body's share moves it now, within the step)
     const B = f.box; this.fCaps(f); const wc = f.wc;
     for (let c = 0; c < nc; c += 7) {
       const R = all[c + 6]; if (Math.min(all[c], all[c + 3]) - R > B[1] || Math.max(all[c], all[c + 3]) + R < B[0] || Math.min(all[c + 1], all[c + 4]) - R > B[3] || Math.max(all[c + 1], all[c + 4]) + R < B[2] || Math.min(all[c + 2], all[c + 5]) - R > B[5] || Math.max(all[c + 2], all[c + 5]) + R < B[4]) continue;
-      const L = f.sleep || f.nc > 60 ? f.solid : null, nn = L ? L.length : f.nc; // (a big object meets the body with its parts of 1 cm and up; asleep, only those wake it)
-      for (let si = 0; si < nn; si++) { const s = L ? L[si] : si;
+      for (let s = 0; s < f.nc; s++) {
         const k = s * 7; if (!this.segCap(wc[k], wc[k + 1], wc[k + 2], wc[k + 3], wc[k + 4], wc[k + 5], all, c, wc[k + 6])) continue;
         const H = this.hit, b = f.cb[s], P = [H.px - H.nx * wc[k + 6], H.py - H.ny * wc[k + 6], H.pz - H.nz * wc[k + 6]];
         if (f.sleep) this.wake(f);
@@ -2109,23 +2135,34 @@ class PhysicsCore {
   fPair(f, g, h) { // two objects (or two parts of one, not joined to each other): at the contact point, with friction
     const A = f.box, B = g.box; if (A[0] > B[1] || A[1] < B[0] || A[2] > B[3] || A[3] < B[2] || A[4] > B[5] || A[5] < B[4]) return;
     this.fCaps(f); this.fCaps(g); const fw = f.wc, gw = g.wc, mu = MU_WOOD, self = f === g;
-    const LA = self ? f.thick : f.solid, LB = self ? f.thick : g.solid, na = LA.length, nb2 = LB.length; // (between objects: capsules of 1 cm and up)
+    if (self) { const P = f.pairs || []; for (let q = 0; q < P.length; q += 2) this.fContact(f, P[q], g, P[q + 1], fw, gw, mu, h); return; }
+    const LA = f.solid, LB = g.solid, na = LA.length, nb2 = LB.length;
     for (let ia = 0; ia < na; ia++) { const c = LA[ia], k = c * 7;
       if (!self && (Math.min(fw[k], fw[k + 3]) - fw[k + 6] > B[1] || Math.max(fw[k], fw[k + 3]) + fw[k + 6] < B[0] || Math.min(fw[k + 1], fw[k + 4]) - fw[k + 6] > B[3] || Math.max(fw[k + 1], fw[k + 4]) + fw[k + 6] < B[2] || Math.min(fw[k + 2], fw[k + 5]) - fw[k + 6] > B[5] || Math.max(fw[k + 2], fw[k + 5]) + fw[k + 6] < B[4])) continue; // outside the other's box
-      for (let ib = self ? ia + 1 : 0; ib < nb2; ib++) { const d = LB[ib];
-      if (self && (f.cb[c] === f.cb[d] || f.noPair.has(Math.min(c, d) * f.nc + Math.max(c, d)) || this.joined(f, f.cb[c], f.cb[d]))) continue;
-      const l = d * 7; if (!this.segCap(fw[k], fw[k + 1], fw[k + 2], fw[k + 3], fw[k + 4], fw[k + 5], gw, l, fw[k + 6])) continue;
+      for (let ib = 0; ib < nb2; ib++) this.fContact(f, c, g, LB[ib], fw, gw, mu, h);
+    }
+  }
+  fSelfPairs(f) { // parts of one object that could meet: a 0.5 m grid of their boxes (not joined, not touching at rest)
+    const W = f.wc, cell = new Map(), out = [], seen = new Set(), C = 0.5;
+    for (let c = 0; c < f.nc; c++) { const k = c * 7, r = W[k + 6];
+      const x0 = Math.floor((Math.min(W[k], W[k + 3]) - r) / C), x1 = Math.floor((Math.max(W[k], W[k + 3]) + r) / C), y0 = Math.floor((Math.min(W[k + 1], W[k + 4]) - r) / C), y1 = Math.floor((Math.max(W[k + 1], W[k + 4]) + r) / C), z0 = Math.floor((Math.min(W[k + 2], W[k + 5]) - r) / C), z1 = Math.floor((Math.max(W[k + 2], W[k + 5]) + r) / C);
+      for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) { const key = (x * 73856093) ^ (y * 19349663) ^ (z * 83492791); let a = cell.get(key); if (!a) cell.set(key, (a = [])); for (const d of a) { const id = d * f.nc + c; if (seen.has(id)) continue; seen.add(id); if (f.cb[c] === f.cb[d] || f.noPair.has(id) || this.joined(f, f.cb[c], f.cb[d])) continue; out.push(d, c); } a.push(c); }
+    }
+    f.pairs = out;
+  }
+  fContact(f, c, g, d, fw, gw, mu, h) {
+    { const k = c * 7;
+      const l = d * 7; if (!this.segCap(fw[k], fw[k + 1], fw[k + 2], fw[k + 3], fw[k + 4], fw[k + 5], gw, l, fw[k + 6])) return;
       const H = this.hit, P1 = [H.px - H.nx * fw[k + 6], H.py - H.ny * fw[k + 6], H.pz - H.nz * fw[k + 6]], P2 = [H.qx + H.nx * gw[l + 6], H.qy + H.ny * gw[l + 6], H.qz + H.nz * gw[l + 6]];
-      if (H.pen <= SLOP) continue; H.pen -= SLOP; // a little overlap is tolerated (logs in a pile rest slightly into each other)
+      if (H.pen <= SLOP) return; H.pen -= SLOP; // a little overlap is tolerated (logs in a pile rest slightly into each other)
       if (g.sleep && !f.sleep && H.pen > 0.02) this.wake(g); // woken only by a real push
       if (f.sleep && !g.sleep && H.pen > 0.02) this.wake(f);
       f.touch = g.touch = true; const ln = this.pos(f, f.cb[c], P1, g, g.cb[d], P2, H.nx, H.ny, H.nz, H.pen, WOOD, h); // bark on bark
-      if (!f.sleep) f.cts.push(f.cb[c], P1[0], P1[1], P1[2], H.nx, H.ny, H.nz, ln / h, CRR_WOOD * fw[k + 6]); if (g !== f && !g.sleep) g.cts.push(g.cb[d], P2[0], P2[1], P2[2], -H.nx, -H.ny, -H.nz, ln / h, CRR_WOOD * gw[l + 6]);
+      if (!f.sleep) f.cts.push(f.cb[c], P1[0], P1[1], P1[2], H.nx, H.ny, H.nz, ln / h, CRR_WOOD * fw[k + 6], 0); if (g !== f && !g.sleep) g.cts.push(g.cb[d], P2[0], P2[1], P2[2], -H.nx, -H.ny, -H.nz, ln / h, CRR_WOOD * gw[l + 6], 0);
       this.fric(f, f.cb[c], P1, g, g.cb[d], P2, H.nx, H.ny, H.nz, H.pen, mu, h);
-      this.fCaps(f); if (g !== f) this.fCaps(g);
-    } }
+    }
   }
-  joined(f, a, b) { for (let j = 0; j < f.nj; j++) if (!f.jbr[j] && ((f.ja[j] === a && f.jb[j] === b) || (f.ja[j] === b && f.jb[j] === a))) return true; return false; }
+  joined(f, a, b) { if (!f.jmap) { f.jmap = new Map(); for (let j = 0; j < f.nj; j++) { f.jmap.set(f.ja[j] * f.nb + f.jb[j], j); f.jmap.set(f.jb[j] * f.nb + f.ja[j], j); } } const j = f.jmap.get(a * f.nb + b); return j !== undefined && !f.jbr[j]; }
   fVel(f, h) {
     let fast = false;
     for (let b = 0; b < f.nb; b++) {
@@ -2141,15 +2178,15 @@ class PhysicsCore {
     { const k = 1 - Math.exp(-25 * h), I = f.Iw, w = f.w; // wood damps its own vibration: each joint takes out part of the two bodies' relative spin
       for (let j = 0; j < f.nj; j++) { if (f.jbr[j]) continue; const a = f.ja[j], b = f.jb[j], ia = (I[a * 9] + I[a * 9 + 4] + I[a * 9 + 8]), ib = (I[b * 9] + I[b * 9 + 4] + I[b * 9 + 8]), s = ia + ib || 1;
         for (let d = 0; d < 3; d++) { const rel = (w[b * 3 + d] - w[a * 3 + d]) * k; w[b * 3 + d] -= rel * ib / s; w[a * 3 + d] += rel * ia / s; } } }
-    for (let i = 0; i < f.cts.length; i += 9) { // contacts with the ground and fixed things are dissipative: a rebound keeps 20 % of its speed
+    for (let i = 0; i < f.cts.length; i += 10) { // an impact (approaching faster than 0.3 m/s) on the ground or a fixed thing rebounds with at most 20 % of that speed; lifting off is free
       const b = f.cts[i], o = b * 3, rx = f.cts[i + 1] - f.bx[o], ry = f.cts[i + 2] - f.bx[o + 1], rz = f.cts[i + 3] - f.bx[o + 2], nx = f.cts[i + 4], ny = f.cts[i + 5], nz = f.cts[i + 6], w = f.w;
       const vn = (f.v[o] + w[o + 1] * rz - w[o + 2] * ry) * nx + (f.v[o + 1] + w[o + 2] * rx - w[o] * rz) * ny + (f.v[o + 2] + w[o] * ry - w[o + 1] * rx) * nz;
-      if (vn <= 0) continue;
-      const j = -0.8 * vn / this.wGen(f, b, rx, ry, rz, nx, ny, nz), m = f.bm[b]; f.v[o] += j * nx / m; f.v[o + 1] += j * ny / m; f.v[o + 2] += j * nz / m;
+      const vn0 = f.cts[i + 9]; if (vn <= 0 || !(vn0 < -0.3) || vn <= -0.2 * vn0) continue;
+      const j = -(vn + 0.2 * vn0) / this.wGen(f, b, rx, ry, rz, nx, ny, nz), m = f.bm[b]; f.v[o] += j * nx / m; f.v[o + 1] += j * ny / m; f.v[o + 2] += j * nz / m;
       const tx = (ry * nz - rz * ny) * j, ty = (rz * nx - rx * nz) * j, tz = (rx * ny - ry * nx) * j, I = f.Iw, i9 = b * 9;
       w[o] += I[i9] * tx + I[i9 + 1] * ty + I[i9 + 2] * tz; w[o + 1] += I[i9 + 3] * tx + I[i9 + 4] * ty + I[i9 + 5] * tz; w[o + 2] += I[i9 + 6] * tx + I[i9 + 7] * ty + I[i9 + 8] * tz;
     }
-    for (let i = 0; i < f.cts.length; i += 9) { // rolling resistance: the surface deforms under a rolling thing, a torque Crr·r·N against the roll
+    for (let i = 0; i < f.cts.length; i += 10) { // rolling resistance: the surface deforms under a rolling thing, a torque Crr·r·N against the roll
       const b = f.cts[i], o = b * 3, nx = f.cts[i + 4], ny = f.cts[i + 5], nz = f.cts[i + 6], N = f.cts[i + 7], cr = f.cts[i + 8], w = f.w, I = f.Iw, i9 = b * 9;
       const wn = w[o] * nx + w[o + 1] * ny + w[o + 2] * nz, tx = w[o] - wn * nx, ty = w[o + 1] - wn * ny, tz = w[o + 2] - wn * nz, wt = Math.hypot(tx, ty, tz);
       if (wt < 1e-6 || !(N > 0)) continue;
@@ -2158,7 +2195,7 @@ class PhysicsCore {
       const al = Math.hypot(ax, ay, az) || 1; w[o] -= ax / al * dw; w[o + 1] -= ay / al * dw; w[o + 2] -= az / al * dw;
     }
     f.cts.length = 0;
-    if (!fast && f.touch) { const k = Math.exp(-6 * h); for (let i = 0; i < f.nb * 3; i++) { f.v[i] *= k; f.w[i] *= k; } } // slow and touching something: contact jitter dies
+    if (!fast && f.touch) { const k = Math.exp(-1 * h); for (let i = 0; i < f.nb * 3; i++) { f.v[i] *= k; f.w[i] *= k; } } // slow and touching something: contact jitter dies
     f.touch = false;
   }
   freePush(k, hit, j) { // a rod pushed a free piece: the reaction at the contact point
@@ -2211,8 +2248,8 @@ class PhysicsCore {
       const k = i * 3, p = g.par[i], q = p * 3;
       if (!g.broken[i]) {
         const ex = x[k] - T[k], ey = x[k + 1] - T[k + 1], ez = x[k + 2] - T[k + 2], C = Math.hypot(ex, ey, ez);
-        if (C > 1e-7) { // XPBD bend: Δλ = -C / (Σ w + α/h²), α = 1/k
-          const u = p >= 0 ? g.u[i] : 0, w = g.w[i], wp = p >= 0 ? g.w[p] * u * u : 0, dl = C / (w + wp + 1 / (g.k[i] * h * h)), f = w * dl / C;
+        if (C > 1e-7) { // XPBD bend: Δλ = -C / (Σ w + α/h²), α = 1/k (a joint that gave way keeps a hundredth: a splinter)
+          const u = p >= 0 ? g.u[i] : 0, w = g.w[i], wp = p >= 0 ? g.w[p] * u * u : 0, dl = C / (w + wp + 1 / (g.k[i] * (g.hinge[i] ? 0.01 : 1) * h * h)), f = w * dl / C;
           x[k] -= ex * f; x[k + 1] -= ey * f; x[k + 2] -= ez * f;
           if (p >= 0) { const fp = g.w[p] * u * dl / C; x[q] += ex * fp; x[q + 1] += ey * fp; x[q + 2] += ez * fp; }
         }
@@ -2255,7 +2292,7 @@ class PhysicsCore {
       const k = owner[c / 7], f = this.fref[k * 2], cc = this.fref[k * 2 + 1]; if (!f) return 1;
       const b = f.cb[cc], P = [hit.qx, hit.qy, hit.qz], wo = this.wGen(f, b, P[0] - f.bx[b * 3], P[1] - f.bx[b * 3 + 1], P[2] - f.bx[b * 3 + 2], -hit.nx, -hit.ny, -hit.nz), wr = g.pin[i] ? 0 : g.w[i] * hit.t * hit.t;
       if (wo + wr <= 0) return 0;
-      if (wo > 0) f.cts.push(b, P[0], P[1], P[2], -hit.nx, -hit.ny, -hit.nz, 0, 0), f.touch = true; // the same contact treatment as anything else (rebound damping, rolling resistance)
+      if (wo > 0) f.cts.push(b, P[0], P[1], P[2], -hit.nx, -hit.ny, -hit.nz, 0, 0, 0), f.touch = true; // the same contact treatment as anything else (rebound damping, rolling resistance)
       if (wo > 0) this.vkick(f, b, P, -hit.nx, -hit.ny, -hit.nz, hit.pen * wo / (wo + wr) / wo / (this.hstep || 1 / 240)); // as momentum: it moves out over the step, with the speed that takes
       return wr / (wo + wr);
     }
@@ -2344,15 +2381,16 @@ function makeFree(id, pts, edges, wood, extra = {}) {
   });
   const nc = m, cb = Int32Array.from(seg2body), cl = new Float32Array(nc * 6), cr = new Float32Array(nc);
   edges.forEach((g, e) => { const b = seg2body[e]; for (let d = 0; d < 3; d++) { cl[e * 6 + d] = pts[g.a][d] - bx[b * 3 + d]; cl[e * 6 + 3 + d] = pts[g.b][d] - bx[b * 3 + d]; } cr[e] = Math.max(0.004, g.r); });
-  const J = []; edges.forEach((g, e) => { const p = g.par ?? -1; if (p >= 0 && seg2body[p] !== seg2body[e]) J.push([seg2body[p], seg2body[e], pts[g.a], kap[e], Math.min(edges[p].r, g.r)]); });
+  const J = []; edges.forEach((g, e) => { const p = g.par ?? -1; if (p >= 0 && seg2body[p] !== seg2body[e]) J.push([seg2body[p], seg2body[e], pts[g.a], kap[e], Math.min(edges[p].r, g.r), [0, 1, 2].map((d) => (pts[g.b][d] - pts[g.a][d]) / L[e])]); });
   const nj = J.length, ja = new Int32Array(nj), jb = new Int32Array(nj), jra = new Float32Array(nj * 3), jrb = new Float32Array(nj * 3), jal = new Float32Array(nj), jtm = new Float32Array(nj);
-  J.forEach(([a, b, P, k, rr], j) => { ja[j] = a; jb[j] = b; for (let d = 0; d < 3; d++) { jra[j * 3 + d] = P[d] - bx[a * 3 + d]; jrb[j * 3 + d] = P[d] - bx[b * 3 + d]; } jal[j] = 1 / Math.max(k, 1e-6); jtm[j] = MOR * health * Math.PI * rr ** 3 / 4; });
-  return { id, nb, bx, bq, bm, bI, nc, cb, cl, cr, nj, ja, jb, jra, jrb, jal, jtm, mu: 0.6, mass: bm.reduce((a, b) => a + b, 0), seg2body, ...extra };
+  const jax = new Float32Array(nj * 3), jr = new Float32Array(nj);
+  J.forEach(([a, b, P, k, rr, ax], j) => { ja[j] = a; jb[j] = b; for (let d = 0; d < 3; d++) { jra[j * 3 + d] = P[d] - bx[a * 3 + d]; jrb[j * 3 + d] = P[d] - bx[b * 3 + d]; } jal[j] = 1 / Math.max(k, 1e-6); jtm[j] = MOR * health * Math.PI * rr ** 3 / 4; jax.set(ax, j * 3); jr[j] = rr; });
+  return { id, nb, bx, bq, bm, bI, nc, cb, cl, cr, nj, ja, jb, jra, jrb, jal, jtm, jax, jr, dry: wood.dead ? 1 : 0, mu: 0.6, mass: bm.reduce((a, b) => a + b, 0), seg2body, ...extra };
 }
 
 // the worker's program: the class above plus a message loop
 function workerSource() {
-  return `const SOIL = ${SOIL}, WOOD = ${WOOD}, CRR_SOIL = ${CRR_SOIL}, CRR_WOOD = ${CRR_WOOD}, MU_SOIL = ${MU_SOIL}, MU_WOOD = ${MU_WOOD}, SLOP = ${SLOP};
+  return `const BREAK_R = ${BREAK_R}, SOIL = ${SOIL}, WOOD = ${WOOD}, CRR_SOIL = ${CRR_SOIL}, CRR_WOOD = ${CRR_WOOD}, MU_SOIL = ${MU_SOIL}, MU_WOOD = ${MU_WOOD}, SLOP = ${SLOP};
 ${PhysicsCore.toString()}
 const core = new PhysicsCore();
 onmessage = (e) => {
@@ -3636,10 +3674,10 @@ function pieceMeshes(o, G, parent) {
 // bodies: each vertex stored in its body's frame, drawn at x_b + q_b · v from a per-body transform texture. At rest it
 // is solid to walk on where it lies; a foot on it presses it with your weight.
 const falls = new Map(); let fallId = 1; // every free object, by id (awake ones have .awake)
-const WOOD_FREE = { green: (sp) => ({ E: PL.ARCH[sp].wood.E, MOR: PL.ARCH[sp].wood.MOR, rho: 800, dead: false }), dead: (sp) => ({ E: PL.ARCH[sp].wood.E * 0.9, MOR: PL.ARCH[sp].wood.MOR, rho: 550, dead: true }),
+const WOOD_FREE = { green: (sp) => ({ E: PL.ARCH[sp].wood.E, MOR: PL.ARCH[sp].wood.MOR, rho: 800, dead: false }), dead: (sp) => ({ E: PL.ARCH[sp].wood.E * 1.25, MOR: PL.ARCH[sp].wood.MOR * 1.3, rho: 550, dead: true }), // dry: stiffer, stronger, brittle
   // decay fd 0..1 (years down over the time a stem that size takes to rot): lighter, weaker, softer [rough: brown and white
   // rots take most of the strength well before most of the mass]
-  rotted: (sp, fd) => ({ E: PL.ARCH[sp].wood.E * 0.9 * (1 - 0.6 * fd), MOR: PL.ARCH[sp].wood.MOR * (1 - 0.8 * fd), rho: 550 * (1 - 0.45 * fd), dead: true }) };
+  rotted: (sp, fd) => ({ E: PL.ARCH[sp].wood.E * 1.25 * (1 - 0.6 * fd), MOR: PL.ARCH[sp].wood.MOR * 1.3 * (1 - 0.8 * fd), rho: 550 * (1 - 0.45 * fd), dead: true }) };
 function freePatch(sh, o) {
   sh.uniforms.uFreeTex = { value: o.tex };
   sh.vertexShader = 'uniform highp sampler2D uFreeTex; attribute float aBody;\n' + sh.vertexShader
@@ -3731,7 +3769,8 @@ function spawnFall(o) {
   const barkMat = new THREE.MeshLambertMaterial({ map: tex.bark }); barkMat.color.setRGB(o.tint[0] * 1.6, o.tint[1] * 1.6, o.tint[2] * 1.6);
   const meshes = [{ ...G.piece, seg: G.piece.node.map(segOf), mat: barkMat, key: 'B' }];
   if (o.leaves && G.leaf.idx.length) meshes.push({ ...G.leaf, seg: G.leaf.node.map(segOf), mat: o.conifer ? mats.needleStill : mats.leafStill, key: o.conifer ? 'N' : 'L' });
-  spawnFree(segs, o.wood || WOOD_FREE.green(o.sp ?? 0), meshes);
+  let dead = 0; for (let i = 0; i < P.n; i++) if (gone[i] && P.st[i] !== PL.LIVE) dead++;
+  spawnFree(segs, o.wood || (dead * 2 > segs.length ? WOOD_FREE.dead(o.sp ?? 0) : WOOD_FREE.green(o.sp ?? 0)), meshes);
 }
 // Fallen stems near you are free objects, asleep: drawn and stood on as before, solid to other objects. Whatever wakes
 // one (your weight on it, a push, a hit, your legs) brings it alive: it gets its own moving mesh, its instance in the
@@ -3762,7 +3801,7 @@ function logWake(dt) {
         bmap.set(i, segs.length); segs.push({ a, b: b2, r: rr, par });
       }
     }
-    const o = spawnFree(segs, WOOD_FREE.rotted(p._t.sp, p._fd || 0), [], { sleep: true, twig: rb ? 0.015 : undefined, tag: { piece: p, blog: rb, bmap } }); if (!o) { p._free = undefined; continue; }
+    const o = spawnFree(segs, WOOD_FREE.rotted(p._t.sp, p._fd || 0), [], { sleep: true, tag: { piece: p, blog: rb, bmap } }); if (!o) { p._free = undefined; continue; }
     p._free = o.id; o.awake = false;
     for (const so of p._solids) { // stood on: your weight presses the part of it under your foot
       const vx = p.x1 - p.x0, vz = p.z1 - p.z0, t = clamp(((so.x - p.x0) * vx + (so.z - p.z0) * vz) / (vx * vx + vz * vz || 1), 0, 0.999);
@@ -4094,19 +4133,20 @@ function physActivate(dt) {
   for (const w of list) {
     const G = phys.groups.get(physKey(w.owner));
     let nodes = w.set;
-    if (G && !G.asleep && w.owner.ph) { // still moving: keep what is displaced (and its path back), let go of what is back at rest
+    if (G && G.hinged) { nodes = new Set(w.set); for (const i of G.nodes) nodes.add(i); } // something in it gave way and hangs: it keeps its shape (and its nodes) from now on
+    else if (G && !G.asleep && w.owner.ph) { // still moving: keep what is displaced (and its path back), let go of what is back at rest
       nodes = new Set(w.set); const D = w.owner.ph.data;
       for (const i of G.nodes) {
         if (nodes.has(i) || Math.abs(D[i * 4]) + Math.abs(D[i * 4 + 1]) + Math.abs(D[i * 4 + 2]) < 0.015) continue;
         for (let q = i; q >= 0 && G.nodeSet.has(q) && !nodes.has(q); q = w.P.par[q]) nodes.add(q);
       }
     }
-    if (total + nodes.size > cap) continue; total += nodes.size; keep.add(physKey(w.owner));
+    if (total + nodes.size > cap && !G?.hinged) continue; total += nodes.size; keep.add(physKey(w.owner));
     const arr = [...nodes].filter((i) => !w.owner.gone?.[i]).sort((a, b) => a - b);
     if (G && G.nodes.length === arr.length && G.nodes.every((v, k) => v === arr[k])) continue; // unchanged
     physAddGroup({ owner: w.owner, kind: w.kind, nodes: arr, ws: w.ws, P: w.P, key: physKey(w.owner), carry: G ? G.id : undefined });
   }
-  for (const [key, g] of phys.groups) if (!keep.has(key) && g.asleep) physRemoveGroup(key);
+  for (const [key, g] of phys.groups) if (!keep.has(key) && g.asleep && !g.hinged) physRemoveGroup(key);
 }
 let ownerIds = 0;
 const physKey = (o) => 'o' + (o._pid || (o._pid = ++ownerIds));
@@ -4115,7 +4155,7 @@ function physAddGroup(w) {
   const wood = kind === 'plant' ? PLANT_WOOD[owner[0]] : PL.ARCH[kind === 'tree' ? owner.v.sp : owner.t.sp].wood;
   const pins = kind === 'root' ? owner.m.pin : null;
   const E = wood.E * 1e9, MOR = wood.MOR * 1e6, local = new Map(nodes.map((i, j) => [i, j]));
-  const g = { id: phys.nextId++, n, ids: Int32Array.from(nodes), carry: w.carry, pin: Uint8Array.from(nodes, (i) => pins ? pins[i] : 0), par: new Int32Array(n), u: new Float32Array(n), s0: new Float32Array(n * 3), x0: new Float32Array(n * 3), r: new Float32Array(n), L: new Float32Array(n), k: new Float32Array(n), w: new Float32Array(n), lim: new Float32Array(n) };
+  const g = { id: phys.nextId++, n, ids: Int32Array.from(nodes), carry: w.carry, pin: Uint8Array.from(nodes, (i) => pins ? pins[i] : 0), dry: new Uint8Array(n), par: new Int32Array(n), u: new Float32Array(n), s0: new Float32Array(n * 3), x0: new Float32Array(n * 3), r: new Float32Array(n), L: new Float32Array(n), k: new Float32Array(n), w: new Float32Array(n), lim: new Float32Array(n) };
   const deadAll = kind === 'log' && owner.m.T > 1;
   nodes.forEach((i, j) => {
     const k = i * 7; g.s0.set([ws[k], ws[k + 1], ws[k + 2]], j * 3); g.x0.set([ws[k + 3], ws[k + 4], ws[k + 5]], j * 3);
@@ -4125,9 +4165,10 @@ function physAddGroup(w) {
       const q = P.par[i] * 7, vx = ws[q + 3] - ws[q], vy = ws[q + 4] - ws[q + 1], vz = ws[q + 5] - ws[q + 2];
       g.u[j] = clamp(((ws[k] - ws[q]) * vx + (ws[k + 1] - ws[q + 1]) * vy + (ws[k + 2] - ws[q + 2]) * vz) / (vx * vx + vy * vy + vz * vz || 1), 0, 1);
     }
-    const dead = deadAll || P.st[i] !== PL.LIVE, I = Math.PI * r ** 4 / 4;
-    g.r[j] = r; g.L[j] = L; g.k[j] = 3 * E * I / L ** 3; g.w[j] = 1 / (800 * Math.PI * r * r * L + (P.ord[i] >= 2 ? 0.02 : 0.005));
-    g.lim[j] = MOR / E * (dead ? 1.0 : kind === 'plant' ? 6 : 2.5); // green wood fails at roughly 1-2 % strain, about 2.5x its proportional limit MOR/E [rough]; soft stems bend much further
+    const dead = (deadAll || P.st[i] !== PL.LIVE) && kind !== 'root' && kind !== 'plant', I = Math.PI * r ** 4 / 4, Ed = dead ? E * 1.25 : E; // dry wood is stiffer, stronger and more brittle than green
+    g.dry[j] = dead ? 1 : 0;
+    g.r[j] = r; g.L[j] = L; g.k[j] = 3 * Ed * I / L ** 3; g.w[j] = 1 / (800 * Math.PI * r * r * L + (P.ord[i] >= 2 ? 0.02 : 0.005));
+    g.lim[j] = MOR * (dead ? 1.3 : 1) / Ed * (dead ? 1.0 : kind === 'plant' ? 6 : 2.5); // green wood fails at roughly 1-2 % strain, about 2.5x its proportional limit MOR/E [rough]; soft stems bend much further
   });
   // Segments no body could bend measurably (tip stiffness 3EI/ℓ³ from the group's anchor above K_RIGID) are held where
   // they are, as soil holds a root: a few solver iterations cannot make a chain that stiff, and a millimetre of numerical
@@ -4374,7 +4415,7 @@ function physState(st) {
     const [key, G] = e, o = G.owner; if (!o.ph) continue;
     const D = o.ph.data;
     G.nodes.forEach((i, j) => { D[i * 4] = res.disp[j * 3]; D[i * 4 + 1] = res.disp[j * 3 + 1]; D[i * 4 + 2] = res.disp[j * 3 + 2]; });
-    inheritDisp(o); o.ph.tex.needsUpdate = true; G.asleep = res.sleep;
+    inheritDisp(o); o.ph.tex.needsUpdate = true; G.asleep = res.sleep; G.hinged = res.hinged;
     for (const j of res.breaks) breaks.push([G, G.nodes[j]]);
   }
   for (const [G, node] of breaks) { // overstrained: snapped
@@ -5835,7 +5876,7 @@ function plantBothFeet() {
 // of your weight at that point, PL.breakCheck), a long flexible live one bends out from under the foot, and the foot
 // drops to the next, until something holds (sagging a little, by its bending stiffness) or the ground does.
 // Candidates are the branch segments of standing and fallen trees near you, in their rest pose.
-const CRUNCH = { foot: 0.06, minR: 0.004, step: 0.45, sagMax: 0.12, bendAway: 0.25, load: 1.15 };
+const CRUNCH = { foot: 0.06, minR: 0.002, step: 0.45, sagMax: 0.12, bendAway: 0.25, load: 1.15 };
 let crunchList = null;
 function crunchSegs() {
   const L = crunchList;
