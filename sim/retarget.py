@@ -23,6 +23,35 @@ WEIGHT = dict(pelvis=3, head=1.5, chest=2, hand=1.5, ankle=2, toe=0.15, knee=1, 
 KEY = ('pelvis', 'chest', 'head', 'handL', 'handR', 'kneeL', 'kneeR', 'ankleL', 'ankleR')  # the fit error counts these (the game's elbows and toes are set by hand-picked directions)
 
 
+def point(M, D, k):
+    """World position of the body point standing for game joint k."""
+    b, off = POINTS[k]; bid = M.body(b).id; return D.xpos[bid] + D.xmat[bid].reshape(3, 3) @ np.array(off)
+
+
+def solve_ik(M, D, tgt, weights=None, iters=60, lam=1e-2):
+    """Move D.qpos so the body's points reach the targets {game joint name: xyz} (damped least squares, from the current
+    pose). A joint at its limit, pushed further, is held there and the others take up the motion (active set). Returns
+    which degrees of freedom ended held at a limit."""
+    W = weights or {}
+    jid = [M.actuator_trnid[i, 0] for i in range(M.nu - 2)]
+    lo, hi = M.jnt_range[jid, 0], M.jnt_range[jid, 1]; qadr = M.jnt_qposadr[jid]; dadr = M.jnt_dofadr[jid]
+    jacp = np.zeros((3, M.nv)); frozen = np.zeros(M.nv, bool)
+    for it in range(iters):
+        mujoco.mj_kinematics(M, D); mujoco.mj_comPos(M, D)
+        rows, errs = [], []
+        for k, x in tgt.items():
+            b, off = POINTS[k]; bid = M.body(b).id; p = D.xpos[bid] + D.xmat[bid].reshape(3, 3) @ np.array(off)
+            mujoco.mj_jac(M, D, jacp, None, p, bid); w = W.get(k, WEIGHT.get(k.rstrip('LR'), 1.0))
+            rows.append(jacp * w); errs.append((np.asarray(x) - p) * w)
+        J = np.vstack(rows); J[:, frozen] = 0; e = np.concatenate(errs)
+        dq = J.T @ np.linalg.solve(J @ J.T + lam * np.eye(J.shape[0]), e)
+        mujoco.mj_integratePos(M, D.qpos, dq, 0.7)
+        q = D.qpos[qadr]; at = (q < lo) | (q > hi); frozen[dadr[at]] = True; D.qpos[qadr] = np.clip(q, lo, hi)
+        if np.linalg.norm(dq) < 1e-5: break
+    mujoco.mj_kinematics(M, D)
+    return frozen
+
+
 def fit(name, near_x, iters=60, lam=1e-2):
     ref = json.load(open(os.path.join(HERE, 'refs', f'{name}.json')))
     M = model(None); D = mujoco.MjData(M); set_stand(M, D)
@@ -31,26 +60,14 @@ def fit(name, near_x, iters=60, lam=1e-2):
     jid = [M.actuator_trnid[i, 0] for i in range(M.nu - 2)]  # the servos' joints
     lo, hi = M.jnt_range[jid, 0], M.jnt_range[jid, 1]; qadr = M.jnt_qposadr[jid]
     dadr = M.jnt_dofadr[jid]
-    jacp = np.zeros((3, M.nv)); Q, U, ERR = [], [], []; global LIM, WORST; LIM, WORST = {}, []
+    Q, U, ERR = [], [], []; global LIM, WORST; LIM, WORST = {}, []
     for fr in ref['frames']:
         tgt = {k: to_sim(v) for k, v in fr['J'].items() if k in POINTS}
-        frozen = np.zeros(M.nv, bool)  # active set: a joint at its limit, pushed further, is held there and the others take up the motion
-        for it in range(iters):
-            mujoco.mj_kinematics(M, D); mujoco.mj_comPos(M, D)
-            rows, errs = [], []
-            for k, x in tgt.items():
-                b, off = POINTS[k]; bid = M.body(b).id; R = D.xmat[bid].reshape(3, 3); p = D.xpos[bid] + R @ np.array(off)
-                mujoco.mj_jac(M, D, jacp, None, p, bid); w = WEIGHT.get(k.rstrip('LR'), 1.0)
-                rows.append(jacp * w); errs.append((x - p) * w)
-            J = np.vstack(rows); J[:, frozen] = 0; e = np.concatenate(errs)
-            dq = J.T @ np.linalg.solve(J @ J.T + lam * np.eye(J.shape[0]), e)
-            mujoco.mj_integratePos(M, D.qpos, dq, 0.7)
-            q = D.qpos[qadr]; at = (q < lo) | (q > hi); frozen[dadr[at]] = True; D.qpos[qadr] = np.clip(q, lo, hi)
-            if np.linalg.norm(dq) < 1e-5: break
+        frozen = solve_ik(M, D, tgt, iters=iters, lam=lam)
         mujoco.mj_kinematics(M, D)
         err = max(np.linalg.norm(tgt[k] - (D.xpos[M.body(POINTS[k][0]).id] + D.xmat[M.body(POINTS[k][0]).id].reshape(3, 3) @ np.array(POINTS[k][1]))) for k in KEY)
         Q.append(D.qpos.copy()); U.append(D.qpos[qadr].copy()); ERR.append(err)
-        for j, d in zip(jid, dadr):
+        for j, d in zip(jid, M.jnt_dofadr[jid]):
             if frozen[d]: LIM[M.joint(j).name] = LIM.get(M.joint(j).name, 0) + 1
         WORST.append(max(KEY, key=lambda k: np.linalg.norm(tgt[k] - (D.xpos[M.body(POINTS[k][0]).id] + D.xmat[M.body(POINTS[k][0]).id].reshape(3, 3) @ np.array(POINTS[k][1])))))
     t = np.array([f['t'] for f in ref['frames']])
