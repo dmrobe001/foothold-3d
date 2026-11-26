@@ -104,3 +104,17 @@ frame, which pulled it back toward the view every frame; the shimmy now holds it
 
 Passing now, besides step 1's: the 0.45 m gap (shimmied), and the 0.45 m gap under 1.2 m stops cleanly. Forest walk
 unchanged (37.9 m).
+
+## Step 3: the crawls (17/30)
+
+On hands the posture is one crawl scaled to the headroom: the hips from 0.5 m down to 0.13 m; the knees forward under the
+body in the monkey and bear crawls (0.8–0.9 m), down onto the ground below about 0.65 m (hands and knees); the elbows back
+along the body, tucked and pointing down when flat (the army crawl). Knees and elbows had pointed up, into the roof. The
+lowest crawl is 0.42 m of headroom (was 0.55); on hands the body's footprint is 0.48 m wide, so a 0.5 m gap is crawled.
+A hand is put down, or reaches up to what is overhead while ducking, only where the line from its shoulder is clear.
+
+Passing now: monkey crawl (0.9 m), bear crawl (0.8), hands and knees (0.65), army crawl (0.45), besides steps 1–2.
+
+Not yet: dropping onto the hands at the mouth of the 0.55 m × 0.5 m gap dips the head 7 cm into the roof's face (the
+crawl through it is clean); the 0.4 m wall is stepped over with a thigh 3 cm into it (the limit is 2); every way over a
+barrier. Forest walk unchanged (37.5 m).

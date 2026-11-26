@@ -3374,7 +3374,7 @@ function holdsNear(x, z, sup, ux, uz) {
 //   the path stays steeper than the footing's traction (TRACTION).
 // Then the best hold within reach sets how steep you may go: a hand closed round something (GRIP_SLOPE) or pressed
 // flat (PRESS_SLOPE). With the hands needed you move slowly, and only as fast as the limbs can keep hold (quadAllows).
-const CLEAR4 = 0.55; // lowest headroom (above the feet) crawling, hips and head low
+const CLEAR4 = 0.42; // lowest headroom (above the feet) crawling, hips and head low
 const GAIT4 = { stride: 0.5, swing: 0.13, speed: 1.0, climb: 1.5, homes: [0.72, 0.72, -0.3, -0.3] }; // limbs LH RH LF RF
 const LIMB = [{ hand: true, side: -1 }, { hand: true, side: 1 }, { hand: false, side: -1 }, { hand: false, side: 1 }];
 // The body's footprint must fit, not just its centre: points across the shoulders, and ahead where the legs and arms
@@ -3404,8 +3404,8 @@ function shimmyFits(x, z, ux, uz, feet) {
   return true;
 }
 function bodyBlocked(x, z, ux, uz, feet) {
-  const lo = feet + STEP + 0.02, hi = feet + CLEAR4, rx = -uz, rz = ux;
-  for (const [f, l] of BODY_PROBES) { const px = x + ux * f + rx * l, pz = z + uz * f + rz * l; if (colBlocked(px, pz, lo, hi) && !(f > 0 && ledgeAt(px, pz, ux, uz, feet))) return true; }
+  const lo = feet + STEP + 0.02, hi = feet + CLEAR4, rx = -uz, rz = ux, wk = body.four ? 0.24 / 0.28 : 1; // (on hands, 0.48 m wide: a 0.5 m gap)
+  for (const [f, l0] of BODY_PROBES) { const l = l0 * wk, px = x + ux * f + rx * l, pz = z + uz * f + rz * l; if (colBlocked(px, pz, lo, hi) && !(f > 0 && ledgeAt(px, pz, ux, uz, feet))) return true; }
   return false;
 }
 // a foothold the leg can reach: nothing solid over it, or halfway back to the body, from just above the foot to the hip
@@ -3661,6 +3661,14 @@ function surfaceFrame(dt, ux, uz, moving) {
   q.a = a; q.R = R; q.S0 = [x, q.y, z];
 }
 // a hold for limb i at offset s along the surface frame from the body: the side of a stem there, else the surface
+// a hand put down here must not reach through a solid on the way: the line from the shoulders (above the hips, at the
+// height the headroom lets them be) to the hand, sampled every 10 cm, has no solid at its height
+function reachClear(x, y, z, side = 0) {
+  const yw = body.yaw ?? player.yaw, ox = player.x + Math.cos(yw) * side * 0.19, oz = player.z - Math.sin(yw) * side * 0.19; // from that shoulder
+  const sh = rig.feet + Math.min(1.35, Math.max(0.35, (body.head ?? 2) - 0.2)), n = Math.max(1, Math.ceil(Math.hypot(x - ox, z - oz) / 0.1));
+  for (let k = 1; k <= n; k++) { const t = k / n, px = lerp(ox, x, t), pz = lerp(oz, z, t), py = lerp(sh, y + 0.08, t); if (colBlocked(px, pz, py - 0.06, py + 0.06)) return false; }
+  return true;
+}
 function placeContact(i, s) {
   const q = body.q, L = LIMB[i], Q = V.add(q.S0, q.a, s);
   const st = stemAt(Q[0], Q[2], Q[1] - 0.15, 0.5);
@@ -3670,7 +3678,7 @@ function placeContact(i, s) {
   }
   for (const w of [L.hand ? 0.17 : 0.12, 0.04]) {
     const x = Q[0] + q.R[0] * L.side * w, z = Q[2] + q.R[2] * L.side * w; supportRef = rig.feet; const y = supportAt(x, z), dy = y - Q[1];
-    if (dy > (L.hand ? -0.6 : -0.9) && dy < (L.hand ? 1.2 : 0.6) && !trunkHit(x, z)) return { p: [x, y, z], grip: false };
+    if (dy > (L.hand ? -0.6 : -0.9) && dy < (L.hand ? 1.2 : 0.6) && !trunkHit(x, z) && (!L.hand || reachClear(x, y, z, L.side))) return { p: [x, y, z], grip: false };
   }
   return null;
 }
@@ -3740,15 +3748,21 @@ function quadStep(dt, dx, dz) {
 function quadPose() {
   const q = body.q, ah = Math.hypot(q.a[0], q.a[2]), steepK = smoothstep(0.3, 1.5, Math.abs(q.a[1]) / Math.max(0.05, ah));
   const low = clamp((body.head - CLEAR4) / 0.45, 0, 1); // 0 squeezed flat under something, 1 room to spare
-  const hipH = Math.min(lerp(0.5, 0.22, steepK), Math.max(0.2, body.head - 0.36));
+  // the crawl the headroom allows, as one posture scaled to it (see docs/movement.md): monkey and bear crawls (0.8-0.9 m: hips
+  // up to 0.5 m, knees forward under the body), hands and knees (0.6 m: knees down on the ground), the army crawl (0.4 m: hips
+  // 0.13 m, flat, elbows out and down). Knees and elbows never point up into what is overhead.
+  const H = body.head, hipH = clamp(Math.min(lerp(0.5, 0.22, steepK), H - 0.4), 0.13, 0.5);
+  const kneeDown = smoothstep(0.8, 0.6, H), flat = smoothstep(0.62, 0.45, H);
   const pel = V.add(V.add(V.add(q.S0, q.n, hipH), q.R, q.sway), q.a, -0.05);
   const U = V.nrm(V.add(q.a, q.n, 0.15 * low)), out = (side, k) => V.nrm(V.add(q.R.map((v) => v * side), q.a, k));
+  const knee = (side) => V.nrm(V.add(V.add(out(side * 0.35, 1), q.n, -0.25 - 0.6 * kneeDown), q.a, -0.4 * kneeDown));
+  const elbow = (side) => V.add(V.nrm(V.add(q.R.map((v) => v * side * lerp(0.3, 0.08, flat)), q.a, -0.6)), q.n, lerp(0.4 * clamp((H - 0.7) / 0.25, 0, 1), -0.8, flat)); // back along the body, a little out; flat, tucked and down
   return {
     pelvis: pel, frame: SK.frameFrom(U, q.n.map((v) => -v)), bend: [0.12 * low, 0, 0], neckPitch: (-0.5 - 0.3 * steepK) * low,
     feet: body.feet.map((ft) => V.add([ft.x, ft.y, ft.z], q.n, 0.07)), toes: [out(-0.4, 1), out(0.4, 1)],
     hands: body.hands.map((h) => V.add([h.p.x, h.p.y, h.p.z], q.n, 0.04)),
-    kneePole: [V.add(out(-1, 0.6), q.n, 0.15), V.add(out(1, 0.6), q.n, 0.15)],
-    elbowPole: [V.add(out(-1, -0.5), q.n, 0.4), V.add(out(1, -0.5), q.n, 0.4)],
+    kneePole: [knee(-1), knee(1)],
+    elbowPole: [elbow(-1), elbow(1)],
   };
 }
 // the whole body: the walking posture and the posture on hands, mixed by how much the hands are needed
@@ -4157,7 +4171,7 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
   const dk = (body.mix || 0) < 1 && !overPlan && !vlt ? duckPosture(ux, uz, spd) : null; // going over something, you don't duck under it // until the hands are fully down, the walking posture still ducks (the eye is a blend of both)
   body.duck += ((dk ? dk.amt : 0) - body.duck) * Math.min(1, dt * 8);
   body.duckLean += ((dk ? dk.lean : 0) - body.duckLean) * Math.min(1, dt * 10);
-  body.duckHold = dk && dk.amt > 0.25 ? dk : null;
+  body.duckHold = dk && dk.amt > 0.25 && !body.four && reachClear(dk.x, dk.y - 0.05, dk.z) ? dk : null; // a hand up on what is overhead, if it can reach it without going through something
   [body.crouch, body.vcrouch] = spring(body.crouch, body.vcrouch, dk ? dk.crouch : 0, RIG.kCrouch, dt);
   [body.pelvis.y, body.pvy] = spring(body.pelvis.y, body.pvy, pTarget, RIG.kPelvis, dt);
   // the slowly varying part of pelvis height (terrain) vs the rhythmic part (gait), split by a low-pass "baseline"
