@@ -16,7 +16,7 @@
 // Reaction on the body: each touching segment pushes back with the branch's cantilever stiffness out to the contact
 // point, k_eff = 3 E I / ℓ³ (ℓ: arc length from the group's anchor), times how far that point is from rest.
 // a joint snaps clean off only if dry and under BREAK_R (m); rolling resistance coefficients (soft forest floor; bark on bark) and sliding friction; soil and litter under a segment: stiffness per contact point SOIL · r · length (N/m: 50 kN/m under a 0.8 m section of a 30 cm log, a few hundred under a twig); bark on bark: compliance WOOD (m/N)
-const BREAK_R = 0.015, SOIL = 4e5, WOOD = 2e-6, CRR_SOIL = 0.25, CRR_WOOD = 0.08, MU_SOIL = 0.8, MU_WOOD = 0.7, SLOP = 0.008, DEP = 2, VMAX = 20, WMAX = 40, WDEP = 20; // DEP: the fastest an overlap is pushed out (m/s); deeper ones take a few substeps, not one kick
+const BREAK_R = 0.015, SOIL = 4e5, WOOD = 2e-6, CRR_SOIL = 0.25, CRR_WOOD = 0.08, MU_SOIL = 0.8, MU_WOOD = 0.7, SLOP = 0.008, DEP = 0.5, VMAX = 20, WMAX = 40, WDEP = 20; // DEP: the fastest an overlap is pushed out (m/s); deeper ones take a few substeps, not one kick
 export class PhysicsCore {
   constructor() { this.groups = new Map(); this.free = new Map(); }
   add(g) { // g: { id, n, par Int32, u, s0 (n*3), x0 (n*3), r, L, k, w, lim }
@@ -211,6 +211,16 @@ export class PhysicsCore {
     const tx = (ry * nz - rz * ny) * jj, ty = (rz * nx - rx * nz) * jj, tz = (rx * ny - ry * nx) * jj, I = f.Iw, i9 = b * 9;
     w[o] += I[i9] * tx + I[i9 + 1] * ty + I[i9 + 2] * tz; w[o + 1] += I[i9 + 3] * tx + I[i9 + 4] * ty + I[i9 + 5] * tz; w[o + 2] += I[i9 + 6] * tx + I[i9 + 7] * ty + I[i9 + 8] * tz;
   }
+  gkick(f, b, rx, ry, rz, px, py, pz) { // a kick that moves and turns the body without giving it speed (its previous pose moves with it)
+    if (!f || b < 0 || f.sleep) return;
+    const o = b * 3, j = b * 4, x0 = f.bx[o], y0 = f.bx[o + 1], z0 = f.bx[o + 2], q = f.bq, ax = -q[j], ay = -q[j + 1], az = -q[j + 2], aw = q[j + 3];
+    this.kick(f, b, rx, ry, rz, px, py, pz);
+    f.xp[o] += f.bx[o] - x0; f.xp[o + 1] += f.bx[o + 1] - y0; f.xp[o + 2] += f.bx[o + 2] - z0;
+    const bx = q[j], by = q[j + 1], bz = q[j + 2], bw = q[j + 3]; // turn d = q_new · conj(q_old), applied to the previous orientation too
+    const dx = bw * ax + bx * aw + by * az - bz * ay, dy = bw * ay - bx * az + by * aw + bz * ax, dz = bw * az + bx * ay - by * ax + bz * aw, dw = bw * aw - bx * ax - by * ay - bz * az;
+    const p = f.qp, px2 = p[j], py2 = p[j + 1], pz2 = p[j + 2], pw2 = p[j + 3];
+    p[j] = dw * px2 + dx * pw2 + dy * pz2 - dz * py2; p[j + 1] = dw * py2 - dx * pz2 + dy * pw2 + dz * px2; p[j + 2] = dw * pz2 + dx * py2 - dy * px2 + dz * pw2; p[j + 3] = dw * pw2 - dx * px2 - dy * py2 - dz * pz2; this.qn(p, j);
+  }
   kick(f, b, rx, ry, rz, px, py, pz) { // apply a positional impulse p at offset r: moves and turns the body
     if (!f || b < 0 || f.sleep) return;
     const o = b * 3, m = f.bm[b]; f.bx[o] += px / m; f.bx[o + 1] += py / m; f.bx[o + 2] += pz / m;
@@ -225,18 +235,22 @@ export class PhysicsCore {
     // (both budgets are per body per substep and spent by every contact on it, so many samples of one overlap get them once: the
     // approach part, |v|·h, only ever cancels approach; the push part is DEP·h)
     const a1 = !f1.sleep, a2 = f2 && b2 >= 0 && !f2.sleep, B1 = f1.dep, B2 = a2 ? f2.dep : null, A1 = f1.app, A2 = a2 ? f2.app : null;
-    const bud = Math.min(a1 ? B1[b1] : Infinity, B2 ? B2[b2] : Infinity), ap = Math.min(Math.max(0, -vn) * h, a1 ? A1[b1] : Infinity, A2 ? A2[b2] : Infinity);
-    const l = this.pos(f1, b1, P1, f2, b2, P2, nx, ny, nz, d, alpha, h, ap + bud), ua = Math.min(this.lastMove, ap), ub = this.lastMove - ua;
+    const bud = Math.min(a1 ? B1[b1] : Infinity, B2 ? B2[b2] : Infinity, Math.max(0, DEP - Math.max(0, vn)) * h), ap = Math.min(Math.max(0, -vn) * h, a1 ? A1[b1] : Infinity, A2 ? A2[b2] : Infinity); // (no push at all once they already part at DEP: the cap is a speed, not a per-substep distance that adds up)
+    // only the approach part changes velocity; the overlap they still have is cleared by moving them alone (split impulse, as Box2D and
+    // Bullet do): an overlap that keeps coming back, under a spinning stick's end, must not add speed every substep
+    const l = this.pos(f1, b1, P1, f2, b2, P2, nx, ny, nz, d, alpha, h, ap + bud, ap), ua = Math.min(this.lastMove, ap), ub = this.lastMove - ua;
     if (a1) { A1[b1] -= ua; B1[b1] = Math.max(0, B1[b1] - ub); } if (A2) { A2[b2] -= ua; B2[b2] = Math.max(0, B2[b2] - ub); }
     return l;
   }
-  pos(f1, b1, P1, f2, b2, P2, nx, ny, nz, d, alpha, h, cap = Infinity) { // cap: the most a contact may move them apart in one substep
+  pos(f1, b1, P1, f2, b2, P2, nx, ny, nz, d, alpha, h, cap = Infinity, vpart = Infinity) { // vpart: the part of the move that is motion (the rest moves without becoming speed) // cap: the most a contact may move them apart in one substep
     // (beyond cancelling their approach): a deep overlap is pushed out at DEP, not in one kick that becomes its speed
     const r1x = P1[0] - (b1 >= 0 ? f1.bx[b1 * 3] : 0), r1y = P1[1] - (b1 >= 0 ? f1.bx[b1 * 3 + 1] : 0), r1z = P1[2] - (b1 >= 0 ? f1.bx[b1 * 3 + 2] : 0);
     const r2x = P2[0] - (b2 >= 0 ? f2.bx[b2 * 3] : 0), r2y = P2[1] - (b2 >= 0 ? f2.bx[b2 * 3 + 1] : 0), r2z = P2[2] - (b2 >= 0 ? f2.bx[b2 * 3 + 2] : 0);
     const w1 = this.wGen(f1, b1, r1x, r1y, r1z, nx, ny, nz), w2 = this.wGen(f2, b2, r2x, r2y, r2z, nx, ny, nz), den = w1 + w2 + alpha / (h * h); if (den <= 0) return 0;
     let l = d / den; if (l * (w1 + w2) > cap) l = cap / (w1 + w2); this.lastMove = l * (w1 + w2);
-    this.kick(f1, b1, r1x, r1y, r1z, nx * l, ny * l, nz * l); this.kick(f2, b2, r2x, r2y, r2z, -nx * l, -ny * l, -nz * l);
+    const lv = Math.min(l, vpart / (w1 + w2)), lg = l - lv;
+    this.kick(f1, b1, r1x, r1y, r1z, nx * lv, ny * lv, nz * lv); this.kick(f2, b2, r2x, r2y, r2z, -nx * lv, -ny * lv, -nz * lv);
+    if (lg > 0) { this.gkick(f1, b1, r1x, r1y, r1z, nx * lg, ny * lg, nz * lg); this.gkick(f2, b2, r2x, r2y, r2z, -nx * lg, -ny * lg, -nz * lg); }
     return l;
   }
   // friction at a contact: undo the tangential slip of P1 relative to P2 this substep, up to μ times the normal correction
@@ -338,7 +352,7 @@ export class PhysicsCore {
         const H = this.hit, b = f.cb[s], P = [H.px - H.nx * wc[k + 6], H.py - H.ny * wc[k + 6], H.pz - H.nz * wc[k + 6]];
         if (f.sleep) this.wake(f);
         const wo = this.wGen(f, b, P[0] - f.bx[b * 3], P[1] - f.bx[b * 3 + 1], P[2] - f.bx[b * 3 + 2], H.nx, H.ny, H.nz), wbd = this.mb ? 1 / this.mb[c / 7] : 0, so = wo / (wo + wbd || 1);
-        this.pos(f, b, P, null, -1, P, H.nx, H.ny, H.nz, H.pen * so, 0, h, (DEP + 3) * h); // (a body already deep in it, as when a log wakes around your legs, pushes it out at walking pace, not in one throw)
+        { const vo = Math.max(0, this.vAt(f, b, P, H.nx, H.ny, H.nz)); this.pos(f, b, P, null, -1, P, H.nx, H.ny, H.nz, H.pen * so, 0, h, Math.max(0, DEP + 3 - vo) * h, Math.max(0, 1.5 - vo) * h); } // (it gets at most a walking pace from you as speed; the rest of the overlap just moves it) // (a body already deep in it, as when a log wakes around your legs, pushes it out at walking pace, not in one throw)
         const need = H.pen * (1 - so), D = this.CD, j4 = c / 7 * 4;
         if (D && need > 1e-6) { D[j4] -= H.nx * need; D[j4 + 1] -= H.ny * need; D[j4 + 2] -= H.nz * need; D[j4 + 3] = Math.hypot(D[j4], D[j4 + 1], D[j4 + 2]); for (const e of [0, 3]) { all[c + e] -= H.nx * need; all[c + e + 1] -= H.ny * need; all[c + e + 2] -= H.nz * need; } }
         this.fCaps(f);

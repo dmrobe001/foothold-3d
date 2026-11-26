@@ -349,6 +349,28 @@ segment, so a leaf or frond could straddle two sibling segments and tear when th
 Lever, drop and roll tests unchanged (785 N does not move the lever, 1400 N tips it); gym 40/40; thicket stations at
 most 12 ms of physics.
 
+## Weight (fifth pass)
+
+Loose wood read as toothpicks. Measured on a forest walk (every loose piece: its peak speed, the speed of its centre
+of mass upward, and its peak spin against sqrt(g/L), the rate at which a stick of its length tips under gravity):
+pieces resting still left the ground at 1–2 m/s; a 526 kg, 7.3 m log rose at 5.3 m/s and bounced; small sticks spun
+3–17 × sqrt(g/L). None was given an initial velocity: the solver put the speed in.
+
+We judge size by time scale: a thing that moves or turns faster than sqrt(g/L) for its size reads as smaller (the
+reason film miniatures are shot at high frame rates, slowed by about the square root of their scale).
+
+- **The push-out cap was a distance per substep, not a speed**: an overlap that took several substeps to clear added
+  speed in each. It is now a speed (no push once the contact parts at DEP), and DEP is 0.5 m/s, not 2.
+- **Split impulse** (as Box2D and Bullet do): only the part of a contact's correction that cancels an approach changes
+  velocity; clearing the overlap that remains moves the body and its previous pose together, so it adds no speed. Under
+  a spinning stick's end an overlap kept coming back and fed it a little speed every substep (one 1.6 kg stick reached
+  11 m/s on flat ground).
+- **Your body** gives a loose piece at most a walking pace (1.5 m/s) as speed; the rest of an overlap moves it aside.
+
+Measured after (same walk): the 526 kg log rises at 0.2 m/s at most and does not bounce; a 31 kg piece 0.03 m/s;
+nothing faster than 1.1 m/s; sticks of one body spin under 2 × sqrt(g/L). Thin jointed sticks still reach 5–9 ×
+sqrt(g/L) in a single segment: their joints flex quickly (open). Lever and drop tests unchanged; gym 40/40.
+
 ## Push
 
 The Break button is now Push. Held, it presses on whatever your hands reach in the direction you look, ramping to 300 N
