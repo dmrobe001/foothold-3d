@@ -176,3 +176,41 @@ barrier. Forest walk unchanged (37.5 m).
 - Station 12 approached at an angle: you slide along its face and walk round the end of the station's walls (5.7 m out),
   which the rules allow (go round). Stopping in front of it 0.2 m off centre still puts a thigh 6 cm into the mouth (open).
   Gym 18/30.
+
+## Step 4: ways over a barrier (28/30)
+
+Each way over is a **template**: a script of key poses in the barrier's own frame (along its normal from the near face,
+up from your footing, along it), giving the pelvis and its frame, the spine's bend, and where the feet, hands, knees and
+elbows go. The barrier is measured first (`barrierAt`): its normal (square to the near edge, as for stepping over), top H,
+depth D (a top 0.5 m deep or more is a ledge to climb, not a barrier), the footing beyond L, clearance above the top C, and
+the span along it W at the top's height with nothing above. The rules of the table above pick which ways may apply; each is
+then built from where you stand, solved pose by pose (72 poses over the script; 24 missed clips between them) and kept only
+if no body capsule goes more than 2 cm into a solid and the feet reach the ground at the end. The first that fits, in order
+of effort, is played: it owns the pose and the eye (in the head) until it ends. Every script is also tried mirrored. A way
+over that fits claims a barrier as soon as it is in view (up to 1.7 m), so you don't duck under its overhead part first.
+
+| way | rule | script |
+|---|---|---|
+| high step | H ≤ 0.75, D ≤ 0.4, \|L\| ≤ 0.4 | lead knee up and out to its side, foot over the top; a small hop carries the hips over while the trailing leg lifts out to the side (a hurdler's trail leg); lead foot lands beyond |
+| straddle | H ≤ 0.95, W ≥ 0.8 | side-on, hands on the top; far leg over, sit astride; near leg swings over in front, turn to face across, slide forward off the edge |
+| vault | H ≤ 1.15, C ≥ 0.5 | hands on the top, spring, legs together swung over out to one side, land beyond |
+| roll over | H ≤ 1.3, W ≥ 1.75, C ≥ 0.4 | press up, belly onto the top lying along it, legs off the far side, slide down facing it (then turn round) |
+| straddle-mount | H ≤ 1.45, W ≥ 0.8, C ≥ 0.9 | side-on, hands on the lip; pull up, hook the far leg over, sit astride; then as the straddle |
+| window | H ≤ 1.2, 0.38 ≤ C < 0.6 | head first through the gap, level, belly on the top; over the far edge on the belly, hands down, legs over |
+
+What the body's sizes say (measured in the scripts, not assumed): with 0.9 m legs and these capsule thicknesses, the lead
+foot of a high step can take weight only once the hips are nearly over the wall's far face, and the trailing knee meets the
+near face once the hips come within 0.1 m of it, so between them neither foot can bear weight: hence the hop. The trailing
+foot is on its toes as the hips rise. At 0.7 m this is right at the body's limit, as your table has it; 0.6 m with ground
+0.3 m lower beyond cannot be stepped (the lead leg cannot reach down past the wall), so it is straddled and slid off.
+A hand on a top above the shoulders grips its lip (a forearm from below cannot reach further onto it without crossing the
+edge); everywhere else hands rise above a top before reaching onto it, and leave it upward.
+
+Passing now: high step (0.7 m), straddle (0.85), vault (1.1, and the 1.0 m rail), roll over (1.25), straddle-mount (1.4,
+and 1.25 in a 1.2 m opening), window (1.0 under a slab), straddle and slide off (0.6 with ground 0.3 and 0.8 m lower), and
+stopping at the 1.8 m wall and at 0.85 m in a 0.6 m opening (the vault's swung legs would be 17 cm into its sides). In the
+forest the same planner high-steps and vaults logs (75 s of walking: one of each; 6.1 ms a step).
+
+Not yet: climbing over on holds (no station has holds; the 1.8 m wall stops you); the old vault remains only for what
+`barrierAt` does not measure. The roll ends facing the wall and turns round as you walk on. Still open from before: the head
+dip at station 14's mouth (7 cm) and the forearm climbing onto the block (22 cm).

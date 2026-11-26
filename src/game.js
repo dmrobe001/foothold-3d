@@ -2807,7 +2807,7 @@ function gymPen() {
 }
 // Walk a station straight ahead for `secs` simulated seconds and score it against its intended outcome.
 function gymRun(i, secs = 16) {
-  goStation(i); const s = W.gym.stations[gymAt], e = s.expect || {}; body.lastVault = null; let vaults = 0, wasV = false, rollMax = 0, cam = 9;
+  goStation(i); const s = W.gym.stations[gymAt], e = s.expect || {}; body.lastVault = null; let vaults = 0, wasV = false, rollMax = 0, cam = 9; const overs = []; let wasO = false;
   const [ox, oz] = stationOrigin(gymAt), pieces = W.trees.filter((t) => t.st === 2 && Math.abs(t.x - ox) < 7 && Math.abs(t.z - oz) < 9).flatMap((t) => t.rest.pieces);
   const toStem = (p) => Math.min(9, ...pieces.map((q) => { // camera to stem surface
     const vx = q.x1 - q.x0, vy = q.y1 - q.y0, vz = q.z1 - q.z0, t = clamp(((p.x - q.x0) * vx + (p.y - q.y0) * vy + (p.z - q.z0) * vz) / (vx * vx + vy * vy + vz * vz), 0, 1);
@@ -2818,12 +2818,12 @@ function gymRun(i, secs = 16) {
   for (let k = 0; k < secs * 60; k++) {
     input.keys.clear(); input.keys.add('KeyW'); movePlayer(1 / 60); physStep(1 / 60); refreshNear(player.x, player.z);
     const f = gymProgress(); maxF = Math.max(maxF, f); maxH = Math.max(maxH, rig.feet - g0);
-    if (body.four) hands = true; if (rig.lift && !lifting) lifts++; lifting = !!rig.lift; if (rig.vault && !wasV) vaults++; wasV = !!rig.vault; if (Math.abs(body.roll) > Math.abs(rollMax)) rollMax = body.roll;
+    if (body.four) hands = true; if (rig.lift && !lifting) lifts++; lifting = !!rig.lift; if (rig.vault && !wasV) vaults++; wasV = !!rig.vault; if (rig.over && !wasO) overs.push(rig.over.mode); wasO = !!rig.over; if (Math.abs(body.roll) > Math.abs(rollMax)) rollMax = body.roll;
     cam = Math.min(cam, toStem(body.eye)); duckMax = Math.max(duckMax, body.duck || 0);
     if (e.solid) { const g = gymPen(); if (g.pen > pen) { pen = g.pen; penAt = `${g.what} at f ${gymProgress().toFixed(1)}`; } }
     if (f >= 5) break; // past the goal: stop before reaching the next row of stations
     if (lastEye !== null) eyeJump = Math.max(eyeJump, Math.abs(player.eye - lastEye)); lastEye = player.eye;
-    const J = !rig.vault && body.sol?.J; if (J) for (const nm of ['head', 'neck', 'chest']) { const j = J[nm], c = ceilingAt(j[0], j[2], rig.feet, [0, -1]), gap = c - (j[1] + (nm === 'head' ? 0.11 : 0.06)); if (gap < worst) { worst = gap; worstAt = nm; } }
+    const J = !rig.vault && !rig.over && body.sol?.J; if (J) for (const nm of ['head', 'neck', 'chest']) { const j = J[nm], c = ceilingAt(j[0], j[2], rig.feet, [0, -1]), gap = c - (j[1] + (nm === 'head' ? 0.11 : 0.06)); if (gap < worst) { worst = gap; worstAt = nm; } }
   }
   input.keys.clear();
   const checks = [];
@@ -2835,8 +2835,8 @@ function gymRun(i, secs = 16) {
   if (e.clean) checks.push(['clean', worst >= -0.02 && cam >= 0.12]); // no body in a stem; the camera (near plane 0.1 m) keeps clear
   if (e.hands !== undefined) checks.push([e.hands ? 'on hands' : 'on feet', hands === e.hands]);
   if (e.lean) checks.push([`lean ${e.lean}`, e.lean === 'right' ? rollMax > 0.15 : rollMax < -0.15]);
-  if (e.vault) checks.push([typeof e.vault === 'string' ? `vault ${e.vault}` : 'vault', vaults > 0 && (typeof e.vault !== 'string' || (body.lastVault?.side < 0 ? 'left' : 'right') === e.vault)]);
-  const used = [maxF < 1 ? 'stopped' : 'crossed', vaults ? 'vault' : '', lifts ? 'climbed up' : '', hands ? 'on hands' : '', duckMax > 0.15 ? `ducked ${duckMax.toFixed(2)}` : '', Math.abs(rollMax) > 0.15 ? `leaned ${rollMax > 0 ? 'right' : 'left'}` : ''].filter(Boolean).join(', ');
+  if (e.vault) checks.push([typeof e.vault === 'string' ? `vault ${e.vault}` : 'vault', (vaults > 0 || overs.includes('vault')) && (typeof e.vault !== 'string' || (body.lastVault?.side < 0 ? 'left' : 'right') === e.vault)]);
+  const used = [maxF < 1 ? 'stopped' : 'crossed', ...overs, vaults ? 'old vault' : '', lifts ? 'climbed up' : '', hands ? 'on hands' : '', duckMax > 0.15 ? `ducked ${duckMax.toFixed(2)}` : '', Math.abs(rollMax) > 0.15 ? `leaned ${rollMax > 0 ? 'right' : 'left'}` : ''].filter(Boolean).join(', ');
   return { i: gymAt + 1, name: s.name, mode: s.mode, used, pass: checks.every((c) => c[1]), checks: checks.map(([n, ok]) => `${ok ? '✓' : '✗'} ${n}`).join(' '),
     reached: +maxF.toFixed(2), height: +maxH.toFixed(2), hands, pullups: lifts, vaults, vaultSide: body.lastVault ? (body.lastVault.side < 0 ? 'left' : 'right') + ` at ${body.lastVault.s}` : '', roll: +rollMax.toFixed(2), clearance: +worst.toFixed(2), clearanceAt: worstAt, camera: +cam.toFixed(2), eyeJump: +eyeJump.toFixed(3), plan: s.plan };
 }
@@ -3203,7 +3203,7 @@ const body = {
 };
 const newQuad = () => ({ y: undefined, a: [0, 0, -1], R: [1, 0, 0], n: null, S0: [0, 0, 0], dir: 1, sway: 0, vsway: 0, last: -1, wait: 0, comU: 0.2, stats: { lifts: 0, forced: 0, minM: Infinity, short: 0, steps: 0 } });
 body.q = newQuad();
-const rig = { feet: 0, vy: 0, lift: null, vault: null }; // lift: pulling up onto a ledge; vault: going over a hurdle
+const rig = { feet: 0, vy: 0, lift: null, vault: null, over: null }; // lift: pulling up onto a ledge; vault: going over a hurdle
 body.veer = 1;
 function spring(x, v, target, k, dt, zeta = 1.1) {
   const c = 2 * zeta * Math.sqrt(k), n = Math.ceil(dt / 0.008), h = dt / n;
@@ -3212,7 +3212,7 @@ function spring(x, v, target, k, dt, zeta = 1.1) {
 }
 function resetRig(feetY) { // stand at the player's x, z: on the ground (not a stem hung overhead), or at a given support height
   supportRef = feetY ?? ground(player.x, player.z);
-  rig.feet = feetY ?? footSupport(player.x, player.z); rig.vy = 0; rig.lift = null; rig.vault = null; body.want = null;
+  rig.feet = feetY ?? footSupport(player.x, player.z); rig.vy = 0; rig.lift = null; rig.vault = null; rig.over = null; body.want = null; body.barrier = null; body.overTried = null; overCache = null;
   Object.assign(body, { need: 0, needT: 0, four: false, mix: 0, yaw: player.yaw, head: 2, q: newQuad() }); body.q.n = [0, 1, 0];
   for (const h of body.hands) { h.hold = null; h.sw = null; }
   const rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
@@ -3576,6 +3576,248 @@ function startVault(px, pz, h) {
     ft.ln = n; ft.lift = Math.max(0.2, topY + 0.12 - Math.max(ft.sy, ft.ty));
   }
 }
+// ---- ways over a barrier (docs/movement.md): templates fitted to the barrier's numbers, then checked in full
+// A barrier is measured along its normal from your side: its top H above your footing, its depth D, the footing beyond
+// (L, relative to yours), the clearance C above its top and the span W along it at that height. Each way over is a
+// script of key poses in the barrier's frame (a: along the normal from its near face, y: up from your footing, s: along
+// it, to the right): the pelvis and its frame, the spine's bend, where the feet, hands, knees and elbows go. A way is
+// tried only where the numbers allow it (the rules), and then taken only if the whole script, solved pose by pose,
+// keeps every body capsule out of every solid (a template that fits). The first that fits, in order of effort, is done.
+const OVER_S = RIG.leg - 0.04, OVER_A = 0.06; // pelvis above the feet standing; an ankle above its footing
+function colSpans(x, z) { // the solids in the column at (x, z): [bottom, top] of each (rocks reach the ground)
+  const out = [];
+  for (const o of solids.get(ckey8(x, z)) || []) { logUnder = -Infinity; const t = topOf(o, x, z); if (t === -Infinity) continue; out.push([o.kind === 'box' || (o.kind === 'log' && o.r0 !== undefined) ? logUnder : -Infinity, t]); }
+  return out;
+}
+function barrierTop(x, z, feet) { // the top of what rises from your footing here (not something overhead), above the feet
+  let y = supportAt(x, z); for (const [lo, hi] of colSpans(x, z)) if (lo < feet + 1.2 && hi > y) y = hi; return y - feet;
+}
+function barrierAt(px, pz, ux, uz, reach = 1.1) {
+  const feet = rig.feet, h = (x, z) => barrierTop(x, z, feet), rx = -uz, rz = ux;
+  const edge = (q, x0 = px, z0 = pz, vx = ux, vz = uz) => { const wx = -vz, wz = vx; for (let t = 0; t <= reach; t += 0.02) if (h(x0 + wx * q + vx * t, z0 + wz * q + vz * t) > STEP) return t; return null; };
+  if (edge(0) === null) return null;
+  // the normal: square to the near edge where lines 0.25 m either side of yours meet it
+  const t1 = edge(-0.25), t2 = edge(0.25); let nx = ux, nz = uz;
+  if (t1 !== null && t2 !== null) { const ex = rx * 0.5 + ux * (t2 - t1), ez = rz * 0.5 + uz * (t2 - t1), el = Math.hypot(ex, ez); nx = ez / el; nz = -ex / el; if (nx * ux + nz * uz < 0) { nx = -nx; nz = -nz; } }
+  if (nx * ux + nz * uz < 0.5) return null;
+  const sx = -nz, sz = nx, dist = edge(0, px, pz, nx, nz); if (dist === null) return null;
+  const O = [px + nx * dist, pz + nz * dist], at = (a, s) => [O[0] + nx * a + sx * s, O[1] + nz * a + sz * s];
+  let H = 0, D = 0;
+  for (const s of [-0.2, 0, 0.2]) { let a = 0; for (; a < 0.6; a += 0.02) { const v = h(...at(a + 0.01, s)); if (v <= 0.3) break; H = Math.max(H, v); } D = Math.max(D, a); }
+  if (D >= 0.5) return null; // something deep enough to stand on: a ledge to climb onto, not a barrier
+  const L = Math.min(footSupport(...at(D + 0.35, 0)), footSupport(...at(D + 0.5, 0))) - feet;
+  let C = Infinity; // headroom above the top, over it and a little either side
+  for (let a = -0.3; a <= D + 0.3; a += 0.05) for (const [lo] of colSpans(...at(a, 0))) if (lo > feet + H - 0.02) C = Math.min(C, lo - feet - H);
+  let W = 0; // the span along it at that height, open above
+  for (const sd of [-1, 1]) { let s = 0.05; for (; s <= 1.0; s += 0.05) { const [x, z] = at(D / 2, s * sd); if (Math.abs(h(x, z) - H) > 0.12 || colBlocked(x, z, feet + H + 0.06, feet + H + 0.9)) break; } W += s - 0.05; }
+  return { O, n: [nx, nz], r: [sx, sz], H, D, L, C, W, dist, y0: feet };
+}
+// mirrored scripts: s flips sign, left and right limbs swap, roll and twist reverse
+const OV_UP = [0, 1, 0], OV_N = [1, 0, 0], OV_S = [0, 0, 1];
+function overScript(mode, B) {
+  const { H, D, L } = B, S = OVER_S, A = OVER_A, ks = [];
+  const k = (t, o) => ks.push({ t, ...o });
+  const stand = (a, y, fy, F = OV_N) => ({ pel: [a, y + S, 0], U: OV_UP, F, bend: [0, 0, 0], ft: F === OV_N ? [[a, fy + A, -0.11], [a, fy + A, 0.11]] : [[a + 0.11 * (F[0] === 0 ? F[2] : 1), fy + A, 0], [a - 0.11 * (F[0] === 0 ? F[2] : 1), fy + A, 0]] });
+  const hang = (p, F = OV_N) => F === OV_N ? [[p[0] + 0.04, p[1] - 0.05, -0.23], [p[0] + 0.04, p[1] - 0.05, 0.23]] : [[p[0] + 0.23, p[1] - 0.05, p[2]], [p[0] - 0.23, p[1] - 0.05, p[2]]];
+  const kF = [[1, 0.6, 0], [1, 0.6, 0]], eB = [[-1, -0.6, -0.5], [-1, -0.6, 0.5]], eUp = [[-0.6, 0.8, -0.4], [-0.6, 0.8, 0.4]], kS = [[0, 0.6, 1], [0, 0.6, 1]], eS = [[0.5, -0.6, -1], [-0.5, -0.6, -1]];
+  const far = (y) => Math.max(L + A, y); // a foot hanging beyond, no lower than the footing there
+  if (mode === 'high step') { // the lead knee lifts the foot over the top; a small hop carries the hips over it while the trailing leg lifts out to the side (a hurdler's trail leg), and the lead foot lands beyond
+    const s0 = stand(-0.36, 0, 0), up = [0.1, 0.7, -0.7], out = [0.15, 0.25, 1]; k(0.12, { ...s0, hd: hang(s0.pel), kp: [[0.6, 0.5, -0.5], kF[1]], ep: eB }); // (up: the lead knee rises out to its side, not forward into the face)
+    k(0.22, { pel: [-0.35, S - 0.02, 0.02], ft: [[-0.34, 0.4, -0.12], s0.ft[1]], kp: [up, kF[1]] });
+    k(0.32, { ft: [[-0.12, H + 0.17, -0.12], s0.ft[1]] });
+    k(0.42, { pel: [-0.18, S + 0.04, 0.02], bend: [0.12, 0, 0], ft: [[D / 2, H + 0.2, -0.12], [-0.36, A + 0.08, 0.11]], kp: [up, out] });
+    k(0.47, { pel: [-0.06, H + 0.21, 0.01], bend: [0.16, 0, 0], ft: [[D + 0.16, H + 0.13, -0.12], [-0.2, H - 0.2, 0.25]], kp: [[0.6, 0.6, -0.4], out] });
+    k(0.53, { pel: [D - 0.03, H + 0.22, 0], bend: [0.2, 0, 0], ft: [[D + 0.22, L + A + 0.1, -0.12], [-0.08, H + 0.1, 0.32]], kp: [kF[0], out] });
+    k(0.6, { pel: [D + 0.03, Math.max(H + 0.2, L + S + 0.04), 0], ft: [[D + 0.25, L + A, -0.12], [D / 2, H + 0.2, 0.3]] });
+    k(0.67, { ft: [[D + 0.25, L + A, -0.12], [D + 0.17, H + 0.13, 0.26]] });
+    k(0.74, { pel: [D + 0.12, L + S, 0], bend: [0.08, 0, 0], ft: [[D + 0.25, L + A, -0.12], [D + 0.32, L + A + 0.06, 0.13]], kp: kF });
+    const s1 = stand(D + 0.3, L, L); k(1, { ...s1, hd: hang(s1.pel) });
+    return { ks, dur: 1.6 };
+  }
+  if (mode === 'vault') { // the hands on the top, a spring, and the legs together swung up and over out to one side (left, unmirrored)
+    const s0 = stand(-0.42, 0, 0), top = [[D / 2, H + 0.05, -0.1], [D / 2, H + 0.05, 0.22]], sideK = [[0, 0.4, -1], [0, 0.4, -1]];
+    k(0.08, { ...s0, bend: [0.2, 0, 0], hd: [[-0.14, H + 0.14, -0.18], [-0.14, H + 0.14, 0.2]], kp: kF, ep: eUp }); // (the hands rise above the top before reaching onto it)
+    k(0.16, { pel: [-0.42, S - 0.05, 0], bend: [0.45, 0, 0], hd: [[0.06, H + 0.05, -0.16], [0.06, H + 0.05, 0.18]] });
+    k(0.26, { pel: [-0.34, S + 0.08, -0.08], U: [0.1, 1, 0.3], bend: [0.3, 0, 0], ft: [[-0.4, 0.4, -0.45], [-0.42, 0.32, -0.3]], hd: top, kp: sideK });
+    k(0.38, { pel: [-0.2, H + 0.1, -0.15], U: [0.15, 1, 0.45], bend: [0.2, 0, 0], ft: [[-0.1, H + 0.15, -0.8], [-0.2, H + 0.08, -0.7]], kp: [[0.3, 1, 0], [0.3, 1, 0]] });
+    k(0.58, { pel: [D / 2, H + 0.22, -0.2], U: [0, 1, 0.5], ft: [[D / 2 + 0.18, H + 0.22, -0.95], [D / 2 - 0.02, H + 0.17, -0.88]] });
+    k(0.78, { pel: [D + 0.17, Math.max(H + 0.1, L + S - 0.1), -0.1], U: [0, 1, 0.25], bend: [0.1, 0, 0], ft: [[D + 0.36, far(H - 0.2), -0.42], [D + 0.3, far(H - 0.28), -0.24]], kp: kF });
+    k(0.86, { hd: [[D + 0.22, H + 0.2, -0.15], [D + 0.22, H + 0.2, 0.2]] });
+    const s1 = stand(D + 0.34, L, L); k(1, { ...s1, hd: hang(s1.pel), ep: eB });
+    return { ks, dur: 1.4 };
+  }
+  // sitting astride: side-on (facing along the barrier, +s), the leg on the far side (the left) goes over first
+  const sitAndOff = (t0) => { // from sitting astride facing +s: the near leg swings over in front, the body turns to face across, and slides off
+    const ty = H + 0.17, dy = (t) => t0 + (1 - t0) * t;
+    k(dy(0.3), { pel: [D / 2, ty, 0], U: OV_UP, F: OV_S, bend: [0.1, 0, 0], ft: [[D + 0.2, far(H - 0.5), 0.2], [-0.05, H + 0.3, 0.32]], kp: [kS[0], [0, 1, 0.3]] });
+    k(dy(0.45), { ft: [[D + 0.2, far(H - 0.5), 0.2], [D + 0.16, H + 0.26, 0.3]] });
+    k(dy(0.62), { pel: [D * 0.55, ty, 0], F: OV_N, bend: [0.05, 0, 0], ft: [[D + 0.22, far(H - 0.45), -0.12], [D + 0.22, far(H - 0.45), 0.12]], hd: [[D * 0.4, H + 0.05, -0.25], [D * 0.4, H + 0.05, 0.25]], kp: kF, ep: eB });
+    k(dy(0.8), { pel: [D + 0.17, ty - 0.03, 0], hd: [[D * 0.5, H + 0.05, -0.25], [D * 0.5, H + 0.05, 0.25]] }); // sliding forward off the edge before dropping
+    k(dy(0.88), { hd: [[D + 0.25, H + 0.12, -0.25], [D + 0.25, H + 0.12, 0.25]] }); // (the hands leave the top upward)
+    const s1 = stand(D + 0.32, L, L); k(1, { ...s1, hd: hang(s1.pel), ep: eB, kp: kF });
+  };
+  if (mode === 'straddle') {
+    const s0 = stand(-0.22, 0, 0, OV_S);
+    k(0.12, { ...s0, bend: [0.15, -0.25, 0], hd: [[D / 2, H + 0.05, 0.2], [0.02, H + 0.05, -0.18]], kp: kS, ep: eS });
+    k(0.22, { pel: [-0.21, S, 0], ft: [[-0.16, H + 0.12, 0.1], s0.ft[1]], kp: [[-0.4, 0.7, 0.6], kS[1]] }); // (the foot rises clear of the face before going over)
+    k(0.3, { pel: [-0.2, S + 0.02, 0], ft: [[D / 2, H + 0.18, 0.12], s0.ft[1]] });
+    k(0.36, { ft: [[D + 0.14, H + 0.12, 0.1], s0.ft[1]], kp: [[0.3, 0.7, 0.6], kS[1]] });
+    k(0.42, { pel: [-0.14, H + 0.19, 0], ft: [[D + 0.17, H - 0.2, 0.1], [-0.33, Math.max(A, H + 0.19 - 0.86), 0]] });
+    k(0.52, { pel: [D / 2, H + 0.17, 0], bend: [0.1, 0, 0], ft: [[D + 0.2, far(H - 0.5), 0.2], [-0.2, Math.max(A, H - 0.5), 0.2]], hd: [[D / 2, H + 0.05, 0.3], [D / 2, H + 0.05, -0.25]], kp: kS });
+    sitAndOff(0.52);
+    return { ks, dur: 2.6 };
+  }
+  if (mode === 'straddle-mount') { // side-on, hands on the top: pull up, hook the far-side leg over, sit astride, then as a straddle
+    const s0 = stand(-0.34, 0, 0, OV_S), eOff = [[-0.7, -0.5, 0], [-0.7, -0.5, 0]], hip = H - 0.35;
+    k(0.08, { ...s0, bend: [0.1, -0.15, 0], hd: [[-0.16, H + 0.14, 0.22], [-0.2, H + 0.14, -0.22]], kp: kS, ep: eOff }); // (the hands rise above the top before reaching onto it)
+    k(0.15, { hd: [[0.03, H + 0.05, 0.22], [0.03, H + 0.05, -0.22]], ep: [[-1, -0.3, 0], [-1, -0.3, 0]] }); // gripping the lip (a forearm from below cannot reach further onto it)
+    k(0.28, { pel: [-0.3, hip, 0], bend: [0.1, -0.25, 0], ft: [[-0.2, Math.max(A, hip - 0.35), 0.2], [-0.4, Math.max(A, hip - 0.86), 0]], kp: [[-0.4, 0.6, 0.7], kS[1]] });
+    k(0.36, { ft: [[-0.16, H + 0.16, 0.25], [-0.4, Math.max(A, hip - 0.86), 0]] });
+    k(0.42, { ft: [[D / 2 - 0.02, H + 0.17, 0.25], [-0.4, Math.max(A, hip - 0.86), 0]] });
+    k(0.5, { pel: [-0.18, H + 0.19, 0], ft: [[D + 0.14, H + 0.1, 0.22], [-0.3, Math.max(A, H + 0.19 - 0.86), 0]], hd: [[D / 2, H + 0.05, 0.25], [D / 2, H + 0.05, -0.22]], ep: eOff });
+    k(0.58, { pel: [D / 2, H + 0.17, 0], bend: [0.1, 0, 0], ft: [[D + 0.2, far(H - 0.5), 0.2], [-0.2, Math.max(A, H - 0.5), 0.2]], hd: [[D / 2, H + 0.05, 0.3], [D / 2, H + 0.05, -0.25]], kp: kS });
+    sitAndOff(0.58);
+    return { ks, dur: 3.0 };
+  }
+  if (mode === 'roll over') { // belly onto the top, lying along it; the legs go off the far side and you slide down facing it
+    const s0 = stand(-0.42, 0, 0), U2 = [0.874, 0.486, 0], F2 = [0.486, -0.874, 0], back = [[0.4, 1, 0.3], [0.4, 1, -0.3]];
+    k(0.08, { ...s0, bend: [0.2, 0, 0], hd: [[-0.14, H + 0.14, -0.22], [-0.14, H + 0.14, 0.22]], kp: kF, ep: eUp });
+    k(0.15, { pel: [-0.42, S - 0.06, 0], bend: [0.4, 0, 0], hd: [[0.05, H + 0.05, -0.22], [0.05, H + 0.05, 0.22]] });
+    k(0.24, { pel: [-0.36, H - 0.28, 0], U: [0.12, 1, 0], bend: [0.25, 0, 0], ft: [[-0.4, Math.max(A, H - 1.1), -0.1], [-0.4, Math.max(A, H - 1.1), 0.1]] }); // pressed up beside it, upright
+    k(0.32, { pel: [-0.27, H + 0.06, 0], U: U2, F: F2, bend: [0, 0, 0], ft: [[-0.4, Math.max(A, H - 0.82), -0.14], [-0.4, Math.max(A, H - 0.82), 0.06]], kp: [[-0.2, 0.3, -1], [-0.2, 0.3, -1]] }); // (the knees out to the side the legs go, not into the face)
+    k(0.37, { ft: [[-0.36, H - 0.3, -0.6], [-0.36, H - 0.35, -0.45]] });
+    k(0.42, { pel: [-0.05, H + 0.16, -0.2], U: [0.5, 0.2, 0.8], F: [0.3, -0.95, 0], ft: [[-0.24, H + 0.17, -0.92], [-0.14, H + 0.17, -0.88]], kp: [[0, 1, 0], [0, 1, 0]] });
+    k(0.52, { pel: [D / 2, H + 0.17, -0.35], U: OV_S, F: [0, -1, 0], ft: [[D / 2 + 0.05, H + 0.12, -1.2], [D / 2 - 0.05, H + 0.12, -1.2]], hd: [[D / 2, H + 0.05, 0.45], [D / 2, H + 0.05, 0.6]], ep: [[0, 1, 0], [0, 1, 0]] });
+    k(0.64, { pel: [D / 2 + 0.05, H + 0.17, -0.25], ft: [[D + 0.32, H - 0.25, -0.5], [D + 0.32, H - 0.15, -0.3]], kp: [[1, 0, 0], [1, 0, 0]] });
+    k(0.74, { pel: [D + 0.24, H + 0.06, -0.12], U: [0, 0.6, 0.8], F: [-1, 0, 0], ft: [[D + 0.34, far(H - 0.75), -0.2], [D + 0.34, far(H - 0.7), -0.02]], hd: [[D / 2, H + 0.05, 0.25], [D / 2, H + 0.05, 0.05]], kp: [[-0.2, -1, 0], [-0.2, -1, 0]], ep: back });
+    k(0.84, { pel: [D + 0.27, Math.max(L + S - 0.1, H - 0.25), 0], U: OV_UP, ft: [[D + 0.3, far(H - 1.1), 0.11], [D + 0.3, far(H - 1.1), -0.11]], hd: [[D / 2, H + 0.05, 0.22], [D / 2, H + 0.05, -0.22]], kp: [[-0.3, -1, 0], [-0.3, -1, 0]] });
+    k(0.92, { hd: [[D + 0.3, H + 0.12, 0.22], [D + 0.3, H + 0.12, -0.22]] }); // (the hands leave the top upward)
+    k(1, { pel: [D + 0.32, L + S, 0], ft: [[D + 0.32, L + A, 0.11], [D + 0.32, L + A, -0.11]], hd: [[D + 0.27, L + S - 0.05, 0.23], [D + 0.27, L + S - 0.05, -0.23]], kp: [[-1, 0.6, 0], [-1, 0.6, 0]], ep: [[1, -0.6, 0.5], [1, -0.6, -0.5]] });
+    return { ks, dur: 2.6, faceBack: true };
+  }
+  if (mode === 'window') { // head first through the gap over the top, straight and level, belly on it; then down the far side
+    const s0 = stand(-0.6, 0, 0), lvl = H + 0.18, legsUp = [[0, 1, 0], [0, 1, 0]];
+    k(0.07, { ...s0, pel: [-0.74, S - 0.14, 0], bend: [0.35, 0, 0], neck: 0, hd: [[-0.36, H + 0.12, -0.18], [-0.36, H + 0.12, 0.18]], kp: kF, ep: eUp }); // (stepping back and down, the head low, the hands up to the top's height)
+    k(0.15, { pel: [-0.68, S - 0.1, 0], bend: [1.0, 0, 0], neck: 0.3, hd: [[D / 2 + 0.05, H + 0.05, -0.18], [D / 2 + 0.05, H + 0.05, 0.18]] });
+    k(0.26, { pel: [-0.44, H + 0.1, 0], U: [0.95, 0.3, 0], F: [0.3, -0.95, 0], bend: [0, 0, 0], neck: 0.2, ft: [[-0.95, H - 0.3, -0.1], [-0.95, H - 0.3, 0.1]], kp: legsUp });
+    k(0.36, { pel: [-0.3, lvl, 0], U: OV_N, F: [0, -1, 0], ft: [[-1.05, H + 0.05, -0.1], [-1.05, H + 0.05, 0.1]], hd: [[D + 0.1, H + 0.05, -0.18], [D + 0.1, H + 0.05, 0.18]], ep: [[0, 1, -0.5], [0, 1, 0.5]] });
+    k(0.6, { pel: [D - 0.02, lvl, 0], ft: [[D - 0.8, H + 0.12, -0.1], [D - 0.8, H + 0.12, 0.1]], hd: [[D + 0.55, L + 0.05, -0.2], [D + 0.55, L + 0.05, 0.2]] });
+    k(0.68, { pel: [D + 0.18, H + 0.08, 0], U: [0.6, -0.8, 0], F: [-0.8, -0.6, 0], ft: [[D - 0.7, H + 0.12, -0.1], [D - 0.7, H + 0.12, 0.1]] }); // (over the far edge on the belly)
+    k(0.78, { pel: [D + 0.2, H - 0.1, 0], U: [0.3, -0.95, 0], F: [-0.95, -0.3, 0], ft: [[-0.1, H + 0.12, -0.1], [-0.1, H + 0.12, 0.1]], hd: [[D + 0.45, L + 0.05, -0.2], [D + 0.45, L + 0.05, 0.2]] });
+    k(0.9, { pel: [D + 0.4, L + 0.5, 0], U: [0.6, 0.8, 0], F: [0.8, -0.6, 0], ft: [[D + 0.15, H + 0.15, -0.1], [D + 0.15, H + 0.15, 0.1]], kp: kF });
+    const s1 = stand(D + 0.5, L, L); k(1, { ...s1, hd: hang(s1.pel), ep: eB });
+    return { ks, dur: 2.8 };
+  }
+  return null;
+}
+// the rules (docs/movement.md, "Barriers with nothing to stand on at the top"), in order of effort
+const OVER_MODES = [
+  ['high step', (B) => B.H <= 0.75 && B.D <= 0.4 && Math.abs(B.L) <= 0.4],
+  ['straddle', (B) => B.H <= 0.95 && B.W >= 0.8],
+  ['vault', (B) => B.H <= VAULT_MAX && B.C >= 0.5],
+  ['roll over', (B) => B.H <= 1.3 && B.W >= 1.75 && B.C >= 0.4],
+  ['straddle-mount', (B) => B.H <= 1.45 && B.W >= 0.8 && B.C >= 0.9],
+  ['window', (B) => B.H <= 1.2 && B.C >= 0.38 && B.C < 0.6],
+];
+// the script in world terms, mirrored to one side, starting from the pose you are in
+function overWorld(B, sc, side, P0) {
+  const [nx, nz] = B.n, [sx, sz] = B.r, m = side > 0 ? -1 : 1; // (side -1: as written; +1: mirrored)
+  const pt = (p) => [B.O[0] + nx * p[0] + sx * p[2] * m, B.y0 + p[1], B.O[1] + nz * p[0] + sz * p[2] * m];
+  const dir = (p) => [nx * p[0] + sx * p[2] * m, p[1], nz * p[0] + sz * p[2] * m];
+  const pair = (a, f) => (m < 0 ? [a[1], a[0]] : a).map(f); // mirrored: the right limb does what the left did
+  const keys = [{ t: 0, P: P0 }]; let last = { U: OV_UP, F: OV_N, bend: [0, 0, 0], neck: 0 };
+  for (const kk of sc.ks) {
+    const c = last = { ...last, ...kk };
+    const prev = keys[keys.length - 1].P;
+    const U = V.nrm(dir(c.U)), F = dir(c.F), fr = SK.frameFrom(U, F);
+    const fh = [fr.F[0], 0, fr.F[2]], fl = Math.hypot(fh[0], fh[2]) > 0.2 ? V.nrm(fh) : [nx, 0, nz];
+    keys.push({ t: kk.t, P: {
+      pelvis: pt(c.pel), frame: fr, bend: [c.bend[0], c.bend[1] * m, c.bend[2] * m], neckPitch: c.neck || 0,
+      feet: c.ft ? pair(c.ft, pt) : prev.feet, toes: [fl, fl], hands: c.hd ? pair(c.hd, pt) : prev.hands,
+      kneePole: c.kp ? pair(c.kp, dir) : prev.kneePole, elbowPole: c.ep ? pair(c.ep, dir) : prev.elbowPole,
+    } });
+  }
+  return keys;
+}
+function overPose(keys, t) {
+  let i = 1; while (i < keys.length - 1 && keys[i].t < t) i++;
+  const a = keys[i - 1], b = keys[i], u = clamp((t - a.t) / Math.max(1e-6, b.t - a.t), 0, 1), e = u * u * (3 - 2 * u), A = a.P, Bp = b.P;
+  const mix = (p, q) => [lerp(p[0], q[0], e), lerp(p[1], q[1], e), lerp(p[2], q[2], e)];
+  return {
+    pelvis: mix(A.pelvis, Bp.pelvis), frame: SK.frameFrom(V.nrm(mix(A.frame.U, Bp.frame.U)), mix(A.frame.F, Bp.frame.F)),
+    bend: mix(A.bend, Bp.bend), neckPitch: lerp(A.neckPitch || 0, Bp.neckPitch || 0, e),
+    feet: A.feet.map((f, k) => mix(f, Bp.feet[k])), toes: A.toes.map((f, k) => V.nrm(mix(f, Bp.toes[k]))), hands: A.hands.map((f, k) => mix(f, Bp.hands[k])),
+    kneePole: A.kneePole.map((f, k) => mix(f, Bp.kneePole[k])), elbowPole: A.elbowPole.map((f, k) => mix(f, Bp.elbowPole[k])),
+  };
+}
+function capsOf(J) { // the body's ten capsules from solved joints (as bodyCapsules)
+  const out = [], cap = (a, b, r) => out.push(a[0], a[1], a[2], b[0], b[1], b[2], r);
+  for (const s of ['L', 'R']) { cap(J['hip' + s], J['knee' + s], 0.08); cap(J['knee' + s], [J['ankle' + s][0], J['ankle' + s][1] + 0.02, J['ankle' + s][2]], 0.06); }
+  cap(J.pelvis, J.chest, 0.16); cap(J.neck, J.head, 0.11);
+  for (const s of ['L', 'R']) { cap(J['shoulder' + s], J['elbow' + s], 0.05); cap(J['elbow' + s], J['hand' + s], 0.045); }
+  return out;
+}
+function capsPen(C, x, z) { // the deepest any capsule is inside a solid: gym boxes exactly, stems and logs as capsules, other solids by column
+  const S = staticCaps(x, z); let worst = 0, what = '';
+  for (let c = 0; c < C.length; c += 7) {
+    const R = C[c + 6], a = [C[c], C[c + 1], C[c + 2]], b = [C[c + 3], C[c + 4], C[c + 5]];
+    for (const bl of W.gym?.blocks || []) {
+      if (!bl._inv || Math.hypot(bl.x - x, bl.z - z) > 9) continue;
+      const hw = bl.size[0] / 2, hh = bl.size[1] / 2, hl = bl.size[2] / 2;
+      for (let t = 0; t <= 1.0001; t += 0.125) {
+        _gp.set(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t).applyMatrix4(bl._inv);
+        const qx = Math.abs(_gp.x) - hw, qy = Math.abs(_gp.y - hh) - hh, qz = Math.abs(_gp.z) - hl;
+        const pen = R - (Math.hypot(Math.max(qx, 0), Math.max(qy, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qy, qz), 0));
+        if (pen > worst) { worst = pen; what = `${CAPN[c / 7]} in a box`; }
+      }
+    }
+    for (const q of S) { const h = segSeg(a, b, q.a, q.b), pen = R + q.r - h.d; if (pen > worst) { worst = pen; what = `${CAPN[c / 7]} in a ${q.kind || 'stem'}`; } }
+    if (!W.gym) for (let t = 0; t <= 1.0001; t += 0.25) { const px = a[0] + (b[0] - a[0]) * t, py = a[1] + (b[1] - a[1]) * t, pz = a[2] + (b[2] - a[2]) * t; if (colBlocked(px, pz, py - R + 0.03, py + R - 0.03) && worst < 0.03) { worst = 0.03; what = `${CAPN[c / 7]} in a ${colWhy.split(' ')[0]}`; } }
+  }
+  return { pen: worst, what };
+}
+function overCheck(keys, n = 72) { // the script solved pose by pose: how deep any capsule goes, how short a planted foot falls
+  let pen = 0, what = '', at = 0, short = 0;
+  for (let i = 1; i <= n; i++) {
+    const t = i / n, sol = SK.solvePose(overPose(keys, t)), g = capsPen(capsOf(sol.J), sol.J.pelvis[0], sol.J.pelvis[2]);
+    if (g.pen > pen) { pen = g.pen; what = g.what; at = t; }
+    short = Math.max(short, sol.short.footL, sol.short.footR) * (t > 0.9 ? 1 : 0); // (at the end the feet must be down)
+  }
+  return { pen, what, at, short };
+}
+let overCache = null, overClock = 0; // (simulated seconds, for how long a plan is kept)
+function planOver(B, P0) {
+  const key = `${B.O[0].toFixed(1)},${B.O[1].toFixed(1)},${B.n[0].toFixed(1)},${B.n[1].toFixed(1)}`;
+  if (overCache && overCache.key === key && overClock - overCache.time < 1) { // the same barrier: the choice stands, rebuilt from where you are now (and checked again)
+    const r = overCache.res; if (!r) return null;
+    const keys = overWorld(B, overScript(r.mode, B), r.side, P0), c = overCheck(keys);
+    if (c.pen <= 0.02 && c.short <= 0.03) return { ...r, keys, B };
+  }
+  const tried = []; let res = null;
+  for (const [mode, ok] of OVER_MODES) {
+    if (!ok(B)) { tried.push(`${mode}: no`); continue; }
+    const sc = overScript(mode, B); if (!sc) continue;
+    for (const side of mode === 'vault' ? [body.veer || -1, -(body.veer || -1)] : [-1, 1]) {
+      const keys = overWorld(B, sc, side, P0), c = overCheck(keys);
+      tried.push(`${mode}${side > 0 ? ' (mirrored)' : ''}: ${(c.pen * 100).toFixed(0)} cm ${c.what} at ${c.at.toFixed(2)}${c.short > 0.03 ? `, foot short ${(c.short * 100).toFixed(0)} cm` : ''}`);
+      if (c.pen <= 0.02 && c.short <= 0.03) { res = { mode, side, keys, dur: sc.dur, B, faceBack: sc.faceBack }; break; }
+    }
+    if (res) break;
+  }
+  overCache = { key, time: overClock, res, tried }; body.overTried = tried;
+  return res;
+}
+function startOver(o) { rig.over = { ...o, t: 0 }; body.q.stats.overs = (body.q.stats.overs || 0) + 1; body.lastOver = o.mode; endGap(); body.cross = null; }
+function overBody(dt) { // the script owns the body: its pose, the eye in its head, the feet and hands where it put them
+  const O = rig.over, P = overPose(O.keys, O.t), sol = SK.solvePose(P); body.sol = sol;
+  const J = sol.J, F = sol.head ? sol.head.F : P.frame.F;
+  body.feet.forEach((ft, i) => { const a = J[i ? 'ankleR' : 'ankleL']; ft.x = ft.tx = ft.sx = a[0]; ft.y = ft.ty = ft.sy = a[1] - OVER_A; ft.z = ft.tz = ft.sz = a[2]; ft.t = 1; ft.ln = null; });
+  body.hands.forEach((h, i) => { const a = J[i ? 'handR' : 'handL']; h.p.set(a[0], a[1], a[2]); h.v.set(0, 0, 0); h.hold = null; h.sw = null; });
+  body.pelvis.y = J.pelvis[1]; body.base = J.pelvis[1]; body.pvy = body.vbase = 0; body.lean = body.roll = body.crouch = body.duck = body.duckLean = 0; body.vlean = body.vroll = body.vcrouch = 0;
+  const fh = Math.hypot(P.frame.F[0], P.frame.F[2]); if (fh > 0.3) body.yaw = body.shimYaw = Math.atan2(-P.frame.F[0], -P.frame.F[2]);
+  body.eye = { x: J.head[0] + F[0] * 0.08, y: J.head[1] + 0.02, z: J.head[2] + F[2] * 0.08 }; player.eye = body.eye.y;
+  body.speed = 0; body.moving = false; body.straddle = false; body.mix = 0; body.four = false; body.need = 0;
+}
 // on hands: does a move leave every planted hand and foot within reach (not more than half a stride behind home)?
 function quadAllows(nx, nz, px, pz) {
   if (!body.four) return true;
@@ -3605,9 +3847,13 @@ function movePlayer(dt) {
   const speed = lerp((run ? 4.2 : 1.6) * (1 - 0.55 * body.duck), GAIT4.speed * (run ? 1.4 : 1), body.need) * physResist(f, s) * (body.straddle ? 0.3 : 1); // (straddling something: slow until the trailing leg is over) // a stooped duck-walk is slow; on hands slower; a branch you cannot bend stops you
   const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
   const px = player.x, pz = player.z;
-  if (!rig.lift && !rig.vault && rig.vy === 0) { const here = footSupport(px, pz); if (here - rig.feet > STEP) rig.feet = here; } // embedded (e.g. a rock streamed in around you): climb out
-  let needT = body.needT;
-  if (rig.vault) { // over a hurdle: the body follows an arc through the crossing point, low over the top
+  if (!rig.lift && !rig.vault && !rig.over && rig.vy === 0) { const here = footSupport(px, pz); if (here - rig.feet > STEP) rig.feet = here; } // embedded (e.g. a rock streamed in around you): climb out
+  let needT = body.needT; overClock += dt;
+  if (rig.over) { // a way over: the script carries the body; the controller follows its pelvis
+    const O = rig.over; O.t = Math.min(1, O.t + dt / O.dur); const P = overPose(O.keys, O.t);
+    player.x = P.pelvis[0]; player.z = P.pelvis[2]; rig.feet = Math.min(P.feet[0][1], P.feet[1][1]) - OVER_A; needT = 0;
+    if (O.t >= 1) { rig.over = null; rig.feet = footSupport(player.x, player.z); rig.vy = 0; supportRef = rig.feet; }
+  } else if (rig.vault) { // over a hurdle: the body follows an arc through the crossing point, low over the top
     const H = rig.vault; H.t = Math.min(1, H.t + dt / H.dur); const t = H.t, e = t * t * (3 - 2 * t), a = (1 - e) * (1 - e), b = 2 * e * (1 - e), c = e * e;
     player.x = a * H.x0 + b * H.cx + c * H.lx; player.z = a * H.z0 + b * H.cz + c * H.lz;
     rig.feet = lerp(H.y0, H.ly, e) + H.arc * Math.sin(Math.PI * t); needT = 0;
@@ -3635,17 +3881,30 @@ function movePlayer(dt) {
     overPlan = null;
     if (step > 0 && rig.vy === 0) { // something low and thin ahead, or overhead within reach: over it, or under?
       const ux = dx / step, uz = dz / step, U = [ux, uz];
-      const blocked = footSupport(px + ux * 0.3, pz + uz * 0.3) - rig.feet > STEP;
-      let over = null;
-      if (blocked) over = hurdleAhead(px, pz, ux, uz);
-      else {
+      const blocked = footSupport(px + ux * 0.3, pz + uz * 0.3) - rig.feet > STEP || barrierTop(px + ux * 0.52, pz + uz * 0.52, rig.feet) > STEP; // (a wall too high to scramble is still in the way: the foot ring reaches 0.52 m)
+      let over = null, measured = false;
+      const tryOver = () => { // a barrier measured ahead: the first way over that fits, or none (you stop, or go round)
+        const B = barrierAt(px, pz, ux, uz); if (!B) return false; body.barrier = B;
+        const o = B.dist <= 0.75 ? planOver(B, bodyPose()) : null; if (o) { startOver(o); vault = o; needT = 0; }
+        return true;
+      };
+      if (blocked && !body.four) measured = tryOver();
+      if (blocked && !measured) over = hurdleAhead(px, pz, ux, uz);
+      else if (!blocked) {
         let c = Infinity; for (let d = 0.3; d <= 1.6; d += 0.1) c = Math.min(c, ceilingAt(px + ux * d, pz + uz * d, rig.feet, U));
         if (c < rig.feet + 1.9) { // you would have to duck or crawl: going over is the other way, and the gaze picks
-          over = hurdleAhead(px, pz, ux, uz, 1.6);
-          if (over && player.pitch < -0.3 && underOK(px, pz, ux, uz)) over = null;
+          const under = player.pitch < -0.3 && underOK(px, pz, ux, uz);
+          const B = !under && !body.four ? barrierAt(px, pz, ux, uz, 1.7) : null;
+          if (B) { // a barrier ahead: a way over it that fits claims it (you don't duck under its overhead part on the way in)
+            measured = true; body.barrier = B; const o = planOver(B, bodyPose());
+            if (o && B.dist <= 0.95) { startOver(o); vault = o; needT = 0; } else if (o) overPlan = { over: o.mode };
+          } else {
+            over = hurdleAhead(px, pz, ux, uz, 1.6);
+            if (over && under) over = null;
+          }
         }
       }
-      if (over && over.d0 <= 0.75) { vault = over; startVault(px, pz, over); needT = 0; }
+      if (over && over.d0 <= 0.75 && !(blocked || body.four ? false : tryOver())) { vault = over; startVault(px, pz, over); needT = 0; }
       else if (over) overPlan = over;
     }
     if (step > 0 && !vault) {
@@ -3682,7 +3941,7 @@ function movePlayer(dt) {
         ok = true; break;
       }
     } else if (!vault) needT = needHere();
-    if (!rig.lift && !rig.vault) {
+    if (!rig.lift && !rig.vault && !rig.over) {
       let sup = footSupport(player.x, player.z); { const w = body.want, wl = w ? Math.hypot(w[0], w[1]) : 0; if (wl) { const so = stepOverAt(player.x, player.z, sup, w[0] / wl, w[1] / wl); if (so !== null) sup = Math.max(so, Math.min(sup, rig.feet)); } } // (over a thin top, the body stays at the footing either side)
       if (sup >= rig.feet) { rig.feet = sup; rig.vy = 0; body.airborne = false; }
       else {
@@ -4177,6 +4436,7 @@ function bodyContacts(st) {
   });
 }
 function updateBody(dt, moved, run, dx, dz, fwdInput) {
+  if (rig.over) { overBody(dt); return; }
   const M = MOTION[settings.motion] ?? 1;
   const vx = dx / Math.max(dt, 1e-4), vz = dz / Math.max(dt, 1e-4), spd = Math.hypot(vx, vz);
   const accel = (spd - body.speed) / Math.max(dt, 1e-4); body.speed = lerp(body.speed, spd, 0.3);
@@ -4930,7 +5190,11 @@ window.foothold = {
   physics: { MD, modal: () => modal, clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
   branches: { crunchSegs, crunchStack, branchLoad, get crunchList() { return crunchList; }, logBuf: () => logBuf, logLeafBuf: () => logLeafBuf, logBranches, plantVariant, target: () => breakTargetAt, pick() { const r = running; running = true; breakTarget(); running = r; return breakTargetAt; }, push: pushState, pushStart, pushStop, pushUpdate, breakBranch, treeSegs, plantCells: () => plantCells, brokenTrees: () => brokenTrees, limbSolids, logBranchCells: () => branchLogCells },
   plants: { lib: plantLib, roots: () => rootMeshObj, rootQueue: () => rootQueue, rootCells: () => rootCells, PL },
-  debug: { supportAt: (x, z) => supportAt(x, z), gapAhead: (x, z, ux, uz) => gapAhead(x, z, ux, uz, rig.feet), shimmyFits: (x, z, ux, uz) => shimmyFits(x, z, ux, uz, rig.feet), rig: () => rig, stepOverAt: (x, z, s, ux, uz) => stepOverAt(x, z, s, ux, uz), footSupport: (x, z) => footSupport(x, z), bodyBlocked: (x, z, ux, uz) => { const r = bodyBlocked(x, z, ux, uz, rig.feet); return r ? colWhy : ''; } },
+  debug: { overDiag: (mode, side = -1, n = 96) => { const B = body.barrier || barrierAt(player.x, player.z, -Math.sin(player.yaw), -Math.cos(player.yaw)); if (!B) return 'no barrier'; const sc = overScript(mode, B), keys = overWorld(B, sc, side, bodyPose()), out = [];
+      const loc = (p) => { const dx = p[0] - B.O[0], dz = p[2] - B.O[1]; return `${(dx * B.n[0] + dz * B.n[1]).toFixed(2)},${(p[1] - B.y0).toFixed(2)},${(dx * B.r[0] + dz * B.r[1]).toFixed(2)}`; };
+      for (let i = 1; i <= n; i++) { const t = i / n, sol = SK.solvePose(overPose(keys, t)), J = sol.J, g = capsPen(capsOf(J), J.pelvis[0], J.pelvis[2]);
+        out.push(`t ${t.toFixed(2)} ${(g.pen * 100).toFixed(0)}cm ${g.what} | pel ${loc(J.pelvis)} chest ${loc(J.chest)} head ${loc(J.head)} | kneeL ${loc(J.kneeL)} ankL ${loc(J.ankleL)} kneeR ${loc(J.kneeR)} ankR ${loc(J.ankleR)} | hL ${loc(J.handL)} hR ${loc(J.handR)} short ${['footL','footR','handL','handR'].map((k) => (sol.short[k] * 100).toFixed(0)).join('/')}`); }
+      return `H ${B.H.toFixed(2)} D ${B.D.toFixed(2)} L ${B.L.toFixed(2)}\n` + out.join('\n'); }, barrier: () => body.barrier, overTried: () => body.overTried, measure: () => barrierAt(player.x, player.z, -Math.sin(player.yaw), -Math.cos(player.yaw)), supportAt: (x, z) => supportAt(x, z), gapAhead: (x, z, ux, uz) => gapAhead(x, z, ux, uz, rig.feet), shimmyFits: (x, z, ux, uz) => shimmyFits(x, z, ux, uz, rig.feet), rig: () => rig, stepOverAt: (x, z, s, ux, uz) => stepOverAt(x, z, s, ux, uz), footSupport: (x, z) => footSupport(x, z), bodyBlocked: (x, z, ux, uz) => { const r = bodyBlocked(x, z, ux, uz, rig.feet); return r ? colWhy : ''; } },
   gym: { pen: () => gymPen(), progress: () => gymProgress(), get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },
   loco: { stemAt, stemUnder, assess, grade, holdsNear, placeContact, stability, quadAllows, limbAt, GAIT4, TRACTION, get need() { return body.need; }, get q() { return body.q; } }, col: { topOf, supportAt, ceilingAt, duckPosture, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },
