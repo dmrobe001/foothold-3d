@@ -409,6 +409,48 @@ the ground holds it. Two logs generated overlapping are pushed apart by the over
 motion, about 1–3 kJ a second between a 1.5 t and a 0.5 t log). A settled object's energy creeps by under 2 J a second
 (the overlap clearing lifts it slightly).
 
+## Modal plants (replacing the branch rods)
+
+Every plant near you (trees, saplings, fresh fallen trees' branches, exposed roots, shrubs and seedlings) is now a set
+of **branches**, each one bending mode of a cantilever (src/modal.js). A branch is a chain of segments of one branching
+order. Its tip stiffness is k = 3EI/L³ (E of its wood, dry ×1.25; I from a radius two-thirds of the way from tip to base);
+its effective mass is its own and everything it carries weighted by the deflection shape squared, plus leaves on end
+branches; ω = √(k/m), at most 8 Hz (a faster ring is flicker at 60 frames per second), damping ratio 0.1 (shrubs 0.15).
+
+- **Shape and pose.** Deflection φ(s) = s²(3 − s)/2 (a tip-loaded cantilever). Each segment turns by the slope where it sits
+  (at most 1.5 rad), carried by whatever carries its branch, so a large bend turns segments rather than stretching them.
+  Drawn with the same per-segment turn texture as before.
+- **Motion.** Each branch is a damped oscillator with an exact update about the equilibrium its loads set: it cannot blow
+  up or gain energy on its own. A deflected child pulls its parent (k·u at its base, as a generalized force), so a touched
+  twig shakes the bough. Asleep after half a second still.
+- **Contact.** A body part overlapping a segment moves it out, the point giving way through every branch from there to the
+  anchor as springs in series (compliance φ(s)²/k each); the push is shared by compliance, the force is displacement over
+  the summed compliance, at most 200 N per body part (beyond that the body yields, and the push-back slows or stops you
+  as before). Two passes, so a large bend's shortfall is caught. Falling pieces push branches aside too (they feel
+  nothing back yet).
+- **Breaks.** A branch base fails when the moment on it (a contact's force times its arm, or the tip load its bend holds)
+  beats the wood: MOR·πr³/4, dry ×1.3 and it snaps clean off when under 1.5 cm radius; green ×2.5, rising to ×10 for
+  stems under 1 cm radius [rough: thin green stems bend into far tighter curves]; shrub stems ×6. Otherwise it gives way:
+  stiffness ×0.01, it hangs under its own weight (at most folded back 1.5 lengths).
+
+**Measured against the rods (scripted, main thread, the development container, per whole game step):**
+
+| | rods | modal |
+|---|---|---|
+| forest walk, mean / worst step | 8.8 / 85 ms | 6.2 / 33 ms |
+| sapling thicket, mean | 2.7 ms | 1.2 ms |
+| single sapling, mean | 1.1 ms | 0.6 ms |
+| clips over 1 cm per scan, thicket / single sapling | 0.23 / 0.04 | 0.90 / 0.19 |
+| thicket: pieces off / joints hanging | 1 / 0 | 4 / 5 |
+
+A single branch in Node: 15 Hz before the cap against 16 Hz from Euler–Bernoulli for the bare uniform beam; a static
+20 N tip load deflects it exactly F/k; the drawn tip lands at the deflection. Gym 40/40.
+
+**Not yet:** clipping in dense saplings is worse than with the rods (stems pushed near their base are stiff, so the body
+takes the overlap; this is what the movement planner is for). One mode per branch overstates how far a tip swings when
+pushed near the base (by about 2× from beam theory). No wind. The rod solver and its worker code are still in the source,
+unused.
+
 ## Push
 
 The Break button is now Push. Held, it presses on whatever your hands reach in the direction you look, ramping to 300 N

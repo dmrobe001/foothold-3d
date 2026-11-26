@@ -6,6 +6,7 @@ import { buildGymWorld, gymToWorld, stationOrigin, STATIONS } from './gym.js';
 import * as SK from './skeleton.js';
 import * as PL from './plants.js';
 import * as PH from './physics.js';
+import * as MD from './modal.js';
 
 const $ = (id) => document.getElementById(id);
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
@@ -1857,6 +1858,7 @@ function physOwnerOn(o, kind) {
   else { logMesh(o); logDirty = true; rootWork(0); }
 }
 function physOwnerOff(o, quiet) {
+  if (o.md) { modal.owners.delete(o); o.md = null; } // (no longer modal either)
   if (!o.ph) return;
   phys.owners.delete(o);
   if (o.ph.kind === 'tree') {
@@ -2001,6 +2003,7 @@ function clipScan(depth = 0.01) {
   for (const G of phys.groups.values()) { let s = simulated.get(G.owner); if (!s) simulated.set(G.owner, (s = new Set())); for (const i of G.nodes) s.add(i); }
   const close = (ws, k) => Math.min((ws[k] - bx) ** 2 + (ws[k + 2] - bz) ** 2, (ws[k + 3] - bx) ** 2 + (ws[k + 5] - bz) ** 2) < 9 || ((ws[k] + ws[k + 3]) / 2 - bx) ** 2 + ((ws[k + 2] + ws[k + 5]) / 2 - bz) ** 2 < 9;
   const seg = (o, ws, P, i) => { // current segment: rest plus the solver's displacement where simulated
+    if (o.md && o.ph?.xf) { const k = i * 7, X = o.ph.xf, q = new THREE.Quaternion(X.q[i * 4], X.q[i * 4 + 1], X.q[i * 4 + 2], X.q[i * 4 + 3]), v = new THREE.Vector3(ws[k + 3] - ws[k], ws[k + 4] - ws[k + 1], ws[k + 5] - ws[k + 2]).applyQuaternion(q), a = [X.a2[i * 3], X.a2[i * 3 + 1], X.a2[i * 3 + 2]]; return [a, [a[0] + v.x, a[1] + v.y, a[2] + v.z], o.md.M.nodeB[i] >= 0]; } // modal: where it is drawn
     const k = i * 7, D = o.ph?.data, sim = simulated.get(o)?.has(i), p = P.par[i];
     const e = D ? [D[i * 4], D[i * 4 + 1], D[i * 4 + 2]] : [0, 0, 0], b = D && p >= 0 ? [D[p * 4], D[p * 4 + 1], D[p * 4 + 2]] : [0, 0, 0]; // simulated, or carried by a simulated parent
     return [[ws[k] + b[0], ws[k + 1] + b[1], ws[k + 2] + b[2]], [ws[k + 3] + e[0], ws[k + 4] + e[1], ws[k + 5] + e[2]], sim];
@@ -2046,12 +2049,97 @@ function clipScan(depth = 0.01) {
   }
   return out;
 }
+// ---- modal plants (MD): every plant segment near you is a branch of a cantilever mode (see modal.js). Drawn with the same
+// per-segment turn texture as before; its push-back on the body goes where the rods' did (force, per capsule force, contact
+// point, the overlap the body takes). Plants with a branch hanging or broken off stay modal for good.
+const modal = { owners: new Set(), t: 1, ms: 0, out: null };
+function modalSpec(o, kind) {
+  if (kind === 'tree') { const P = o.v.P, sap = o.t && o.t.d < 8, w = PL.ARCH[o.v.sp].wood; return { P, ws: treeSegs(o), valid: (i) => !o.gone?.[i], fixed: sap ? () => false : (i) => P.ord[i] === 0, E: w.E, MOR: w.MOR, dry: (i) => P.st[i] !== PL.LIVE, leafy: 1 }; }
+  if (kind === 'log') { const M = o.m, P = M.v.P, w = PL.ARCH[o.t.sp].wood; return { P, ws: M.segs, valid: (i) => M.segs[i * 7 + 6] > 0 && !o.gone?.[i], fixed: (i) => P.ord[i] === 0, E: w.E, MOR: w.MOR, dry: (i) => M.T > 1 || P.st[i] !== PL.LIVE, leafy: M.T < 3 ? 0.5 : 0 }; }
+  if (kind === 'root') { const M = o.m, w = PL.ARCH[o.t.sp].wood; return { P: M.P, ws: M.ws, valid: (i) => !M.fixed[i], fixed: (i) => !!M.fixed[i] || !!M.pin?.[i], E: w.E, MOR: w.MOR, dry: () => false, leafy: 0 }; }
+  const T = plantProxy(o), w = PLANT_WOOD[o[0]]; return { P: T.P, ws: T.ws, valid: (i) => !o.gone?.[i], fixed: () => false, E: w.E, MOR: w.MOR, dry: () => false, leafy: 1.5, give: 6 };
+}
+function modalOn(o, kind) {
+  if (o.md) return o.md;
+  const sp = modalSpec(o, kind);
+  const M = MD.build(sp.P, sp.ws, { valid: sp.valid, fixed: sp.fixed, E: sp.E * 1e9, MOR: sp.MOR * 1e6, rho: 800, dry: sp.dry, leafy: sp.leafy, give: sp.give, zeta: kind === 'plant' ? 0.15 : 0.1 });
+  physOwnerOn(o, kind); const ph = o.ph; ph.xf = ph.xf || { a2: new Float32Array(sp.P.n * 3), q: new Float32Array(sp.P.n * 4) };
+  o.md = { M, kind, X: { a2: ph.xf.a2, q: ph.xf.q, D: ph.data }, near: 0 }; modal.owners.add(o);
+  MD.pose(M, sp.P, sp.ws, o.md.X, o.gone); modalUpload(o);
+  return o.md;
+}
+function modalOff(o) { modal.owners.delete(o); o.md = null; if (o.ph) physOwnerOff(o); }
+function modalLost(o) { modal.owners.delete(o); o.md = null; }
+function modalUpload(o) { // the per-segment turn texture (layout as in rodPatch: base, flag; carried base; turn)
+  const ph = o.ph, X = o.md.X, G = ph.gdata, ws = ownerWs(o), P = ownerP(o), n = Math.min(P.n, ws.length / 7);
+  for (let i = 0; i < ph.n; i++) { const g = (Math.floor(i / ph.W) * ph.W * 3 + (i % ph.W) * 3) * 4;
+    if (i >= n) { G.fill(0, g, g + 12); G[g + 11] = 1; continue; }
+    G[g] = ws[i * 7]; G[g + 1] = ws[i * 7 + 1]; G[g + 2] = ws[i * 7 + 2]; G[g + 3] = X.D[i * 4 + 3];
+    G[g + 4] = X.a2[i * 3]; G[g + 5] = X.a2[i * 3 + 1]; G[g + 6] = X.a2[i * 3 + 2]; G[g + 7] = 0;
+    G[g + 8] = X.q[i * 4]; G[g + 9] = X.q[i * 4 + 1]; G[g + 10] = X.q[i * 4 + 2]; G[g + 11] = X.q[i * 4 + 3]; }
+  ph.tex.needsUpdate = true;
+}
+function modalActivate(dt) { // every plant with a segment within reach of the body (or of a falling piece) becomes modal; quiet ones far off stop
+  if ((modal.t += dt) < 0.2) return; modal.t = 0;
+  const C = bodyCapsules(), box = capBox(C, 1.0), bx = player.x, bz = player.z, now = performance.now();
+  const near = (ws) => { for (let k = 0; k < ws.length; k += 7) { const r = ws[k + 6]; if (Math.max(ws[k], ws[k + 3]) + r >= box[0] && Math.min(ws[k], ws[k + 3]) - r <= box[1] && Math.max(ws[k + 1], ws[k + 4]) + r >= box[2] && Math.min(ws[k + 1], ws[k + 4]) - r <= box[3] && Math.max(ws[k + 2], ws[k + 5]) + r >= box[4] && Math.min(ws[k + 2], ws[k + 5]) - r <= box[5]) return true; } return false; };
+  const want = (o, kind, ws) => { if (!near(ws)) return; modalOn(o, kind).near = now; };
+  const ci = Math.floor((bx + HALF) / 16), cj = Math.floor((bz + HALF) / 16);
+  for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (const rec of plantCells.get((ci + di) * 4096 + cj + dj) || []) {
+    const sap = rec.t && rec.t.d < 8, reach = sap ? 4 : rec.v.crRep * (rec.m[0] ** 2 + rec.m[2] ** 2) ** 0.5 / rec.v.hRep + 3;
+    if ((rec.x - bx) ** 2 + (rec.z - bz) ** 2 > reach * reach) continue; want(rec, 'tree', treeSegs(rec));
+  }
+  for (const r of logPick) { const M = r.m; if (!M || bx < M.box[0] - 3 || bx > M.box[1] + 3 || bz < M.box[2] - 3 || bz > M.box[3] + 3) continue; want(r, 'log', M.segs); }
+  for (const it of plantItemsNear(bx, bz, 2.5)) want(it, 'plant', plantProxy(it).ws);
+  for (const r of rootPick) { const M = r.m; if (!M || (r.x - bx) ** 2 + (r.z - bz) ** 2 > (M.P.rp * 2.5 + 4) ** 2) continue; want(r, 'root', M.ws); }
+  if (pushState.on && pushState.rod && !pushState.rod.owner.md) modalOn(pushState.rod.owner, pushState.rod.kind);
+  for (const o of [...modal.owners]) { const M = o.md.M; if (now - o.md.near < 3000 || M.awake.some((a) => a) || M.hinge.some((h) => h) || o.gone) continue; modalOff(o); }
+}
+const BODY_PUSH = 200; // the most a body part can push a branch aside with (N); beyond that it is you that yields
+function modalStep(dt, caps) {
+  const n = caps.length / 7, F = [0, 0, 0], CF = new Float32Array(n * 3), CP = new Float32Array(n * 7), CD = new Float32Array(n * 4), prev = phys.prevCaps && phys.prevCaps.length === caps.length ? phys.prevCaps : caps;
+  const capV = new Float32Array(n * 3); for (let c = 0; c < n; c++) for (let d = 0; d < 3; d++) capV[c * 3 + d] = (caps[c * 7 + d] + caps[c * 7 + 3 + d] - prev[c * 7 + d] - prev[c * 7 + 3 + d]) / 2 / Math.max(dt, 1e-3);
+  const box = capBox(caps, 0.05), pieces = [];
+  for (const f of falls.values()) if (f.awake && (f.x - player.x) ** 2 + (f.z - player.z) ** 2 < 900) pieces.push(freeCaps(f)); // falling pieces push branches aside too (they feel nothing back yet)
+  let awake = 0, hits = 0;
+  for (const o of [...modal.owners]) {
+    if (!o.md || !o.ph) { modalLost(o); continue; }
+    const md = o.md, M = md.M, P = ownerP(o), ws = ownerWs(o), X = md.X;
+    if (pushState.on && pushState.rod && pushState.rod.owner === o) MD.force(M, X, pushState.rod.node, pushState.F);
+    const aw = MD.step(M, dt); awake += aw;
+    let moved = aw > 0;
+    if (moved) MD.pose(M, P, ws, X, o.gone);
+    let h = MD.contact(M, P, ws, X, caps, capV, BODY_PUSH, null, null, null, box); // a first pass moves the branches; after posing, a second sees what a large bend left (a turn
+    if (h) { MD.pose(M, P, ws, X, o.gone); h = MD.contact(M, P, ws, X, caps, capV, BODY_PUSH, CF, CP, CD, box); } hits += h; // delivers less than a straight push) and what the body must take
+    for (const pc of pieces) if (MD.contact(M, P, ws, X, pc, null, 150, null, null, null, capBox(pc, 0.05))) moved = true;
+    if (h) moved = true;
+    for (const br of MD.breaks(M, PH.BREAK_R ?? 0.015)) { // the load at a branch's base beat its wood: small and dry snaps off, anything else gives way and hangs
+      if (!br.clean) { moved = true; continue; }
+      MD.remove(M, P, br.node);
+      if (md.kind === 'tree') breakBranch(o, br.node); else if (md.kind === 'log') logBreak(o, br.node, true); else breakOff(o, md.kind, br.node);
+      moved = true; if (!o.md) break;
+    }
+    if (!o.md || !o.ph) continue;
+    if (moved) { MD.pose(M, P, ws, X, o.gone); modalUpload(o); }
+  }
+  for (let c = 0; c < n; c++) { F[0] += CF[c * 3]; F[1] += CF[c * 3 + 1]; F[2] += CF[c * 3 + 2]; }
+  modal.out = { force: F, capF: CF, capP: CP, capD: CD }; modal.awake = awake; modal.hits = hits; phys.nodes = awake;
+}
+function modalCombine() { // the plants' push-back plus the free objects' (from the worker's last step)
+  const a = modal.out, b = phys.freeOut;
+  if (!a && !b) { phys.force = [0, 0, 0]; phys.capF = null; phys.capP = null; return; }
+  if (!b) { phys.force = a.force; phys.capF = a.capF; phys.capP = a.capP; phys.capD = a.capD; phys.capDnew = true; return; }
+  if (!a) { phys.force = b.force; phys.capF = b.capF; phys.capP = b.capP; phys.capD = b.capD; phys.capDnew = true; return; }
+  phys.force = [0, 1, 2].map((d) => a.force[d] + b.force[d]); phys.capF = a.capF.map((v, i) => v + (b.capF[i] || 0));
+  phys.capP = Float32Array.from(a.capP); for (let c = 0; c < phys.capP.length / 7; c++) if ((b.capP[c * 7 + 6] || 0) > phys.capP[c * 7 + 6]) phys.capP.set(b.capP.subarray(c * 7, c * 7 + 7), c * 7);
+  phys.capD = a.capD.map((v, i) => v + (b.capD?.[i] || 0)); for (let c = 0; c < phys.capD.length / 4; c++) phys.capD[c * 4 + 3] = Math.hypot(phys.capD[c * 4], phys.capD[c * 4 + 1], phys.capD[c * 4 + 2]); phys.capDnew = true;
+}
 function physStep(dt) {
   if (!phys.core && !phys.worker) physReset();
   const caps = bodyCapsules(); setBodyCaps(caps);
   woodWake(caps); logWake(dt);
-  physActivate(dt);
-  if (!phys.groups.size && ![...falls.values()].some((o) => o.awake || (o.x - player.x) ** 2 + (o.z - player.z) ** 2 < 100)) { phys.force = [0, 0, 0]; phys.capF = null; phys.capP = null; phys.nodes = 0; phys.ms = 0; phys.prevCaps = caps; return; }
+  const t0 = performance.now(); modalActivate(dt); modalStep(dt, caps); modal.ms = performance.now() - t0;
+  if (![...falls.values()].some((o) => o.awake || (o.x - player.x) ** 2 + (o.z - player.z) ** 2 < 100)) { phys.freeOut = null; modalCombine(); phys.ms = 0; phys.prevCaps = caps; return; }
   const prev = phys.prevCaps && phys.prevCaps.length === caps.length ? phys.prevCaps : caps, forces = freeForces();
   if (phys.worker) {
     if (phys.pending) { phys.acc += dt; return; } // the sweep then covers every frame since the last step
@@ -2092,7 +2180,7 @@ function freeForces() {
   return out;
 }
 function physState(st) {
-  phys.pending = false; phys.force = st.force; if (st.capF && st.capF.length >= CAP.n * 3) { phys.capF = st.capF; phys.capP = st.capP; phys.capD = st.capD; phys.capDnew = true; } phys.ms = st.ms; phys.nodes = st.nodes; phys.hits = (phys.hits || 0) + (st.hits || 0);
+  phys.pending = false; phys.freeOut = st.capF && st.capF.length >= CAP.n * 3 ? { force: st.force, capF: st.capF, capP: st.capP, capD: st.capD } : null; modalCombine(); phys.ms = st.ms; phys.nodes = st.nodes; phys.hits = (phys.hits || 0) + (st.hits || 0);
   freeUpdate(st);
   const byId = new Map(); for (const [key, G] of phys.groups) byId.set(G.id, [key, G]);
   const breaks = [];
@@ -4556,7 +4644,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); physStep(dt); refreshNear(player.x, player.z); },
-  physics: { clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
+  physics: { modal: () => modal, clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
   branches: { crunchSegs, crunchStack, branchLoad, get crunchList() { return crunchList; }, logBuf: () => logBuf, logLeafBuf: () => logLeafBuf, logBranches, plantVariant, target: () => breakTargetAt, pick() { const r = running; running = true; breakTarget(); running = r; return breakTargetAt; }, push: pushState, pushStart, pushStop, pushUpdate, breakBranch, treeSegs, plantCells: () => plantCells, brokenTrees: () => brokenTrees, limbSolids, logBranchCells: () => branchLogCells },
   plants: { lib: plantLib, roots: () => rootMeshObj, rootQueue: () => rootQueue, rootCells: () => rootCells, PL },
   gym: { get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },
