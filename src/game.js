@@ -2743,6 +2743,7 @@ function buildGymExtras(rocks) {
   for (const b of G.blocks) {
     const M = trs(b.x, b.y, b.z, b.yaw * DEG, b.size[0], b.size[1], b.size[2], b.pitch * DEG, b.roll * DEG).clone();
     put(box, stone, M); addSolid(meshSolid(box, M, b.x, b.z), 0);
+    b._inv = trs(b.x, b.y, b.z, b.yaw * DEG, 1, 1, 1, b.pitch * DEG, b.roll * DEG).clone().invert(); // (for exact depth into it: gymPen)
   }
   for (const r of G.rocks) { // captured outcrops: the same big-rock shapes the forest uses (this gym's bedrock style)
     const M = new THREE.Matrix4().fromArray(r.e); M.elements[12] += r.x; M.elements[13] += r.y; M.elements[14] += r.z;
@@ -2784,6 +2785,26 @@ function goStation(i) {
 function showStation() { const s = W.gym.stations[gymAt]; $('hudWorld').textContent = `Gym ${gymAt + 1}/${W.gym.stations.length} · ${s.name}`; $('hudHere').textContent = gymStatus(); }
 const gymProgress = () => { const [, oz] = stationOrigin(gymAt); return oz - player.z; };
 function gymStatus() { const s = W.gym.stations[gymAt]; return `intended: ${s.plan || '—'} · [ ] or ◀ ▶ to change, R or ↺ to restart`; }
+// How deep the body is in any gym solid: each of its capsules (sampled along) against the exact boxes and the rails.
+const _gp = new THREE.Vector3();
+function gymPen() {
+  const C = bodyCapsules(), S = staticCaps(player.x, player.z); let worst = 0, what = '';
+  for (let c = 0; c < C.length; c += 7) {
+    const R = C[c + 6], a = [C[c], C[c + 1], C[c + 2]], b = [C[c + 3], C[c + 4], C[c + 5]];
+    for (const bl of W.gym.blocks) {
+      if (!bl._inv || Math.hypot(bl.x - player.x, bl.z - player.z) > 9) continue;
+      const hw = bl.size[0] / 2, hh = bl.size[1] / 2, hl = bl.size[2] / 2;
+      for (let t = 0; t <= 1.0001; t += 0.125) {
+        _gp.set(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t).applyMatrix4(bl._inv);
+        const qx = Math.abs(_gp.x) - hw, qy = Math.abs(_gp.y - hh) - hh, qz = Math.abs(_gp.z) - hl;
+        const sdf = Math.hypot(Math.max(qx, 0), Math.max(qy, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qy, qz), 0), pen = R - sdf;
+        if (pen > worst) { worst = pen; what = `${CAPN[c / 7]} in a box`; }
+      }
+    }
+    for (const q of S) { const h = segSeg(a, b, q.a, q.b), pen = R + q.r - h.d; if (pen > worst) { worst = pen; what = `${CAPN[c / 7]} in a ${q.kind || 'stem'}`; } }
+  }
+  return { pen: worst, what };
+}
 // Walk a station straight ahead for `secs` simulated seconds and score it against its intended outcome.
 function gymRun(i, secs = 16) {
   goStation(i); const s = W.gym.stations[gymAt], e = s.expect || {}; body.lastVault = null; let vaults = 0, wasV = false, rollMax = 0, cam = 9;
@@ -2793,12 +2814,13 @@ function gymRun(i, secs = 16) {
     return Math.hypot(p.x - q.x0 - vx * t, p.y - q.y0 - vy * t, p.z - q.z0 - vz * t) - q.r;
   }));
   const g0 = ground(player.x, player.z);
-  let maxF = -9, maxH = 0, hands = false, lifts = 0, worst = 9, worstAt = '', lifting = false, eyeJump = 0, lastEye = null;
+  let maxF = -9, maxH = 0, hands = false, lifts = 0, worst = 9, worstAt = '', lifting = false, eyeJump = 0, lastEye = null, pen = 0, penAt = '', duckMax = 0;
   for (let k = 0; k < secs * 60; k++) {
     input.keys.clear(); input.keys.add('KeyW'); movePlayer(1 / 60); physStep(1 / 60); refreshNear(player.x, player.z);
     const f = gymProgress(); maxF = Math.max(maxF, f); maxH = Math.max(maxH, rig.feet - g0);
     if (body.four) hands = true; if (rig.lift && !lifting) lifts++; lifting = !!rig.lift; if (rig.vault && !wasV) vaults++; wasV = !!rig.vault; if (Math.abs(body.roll) > Math.abs(rollMax)) rollMax = body.roll;
-    cam = Math.min(cam, toStem(body.eye));
+    cam = Math.min(cam, toStem(body.eye)); duckMax = Math.max(duckMax, body.duck || 0);
+    if (e.solid) { const g = gymPen(); if (g.pen > pen) { pen = g.pen; penAt = `${g.what} at f ${gymProgress().toFixed(1)}`; } }
     if (f >= 5) break; // past the goal: stop before reaching the next row of stations
     if (lastEye !== null) eyeJump = Math.max(eyeJump, Math.abs(player.eye - lastEye)); lastEye = player.eye;
     const J = !rig.vault && body.sol?.J; if (J) for (const nm of ['head', 'neck', 'chest']) { const j = J[nm], c = ceilingAt(j[0], j[2], rig.feet, [0, -1]), gap = c - (j[1] + (nm === 'head' ? 0.11 : 0.06)); if (gap < worst) { worst = gap; worstAt = nm; } }
@@ -2809,11 +2831,13 @@ function gymRun(i, secs = 16) {
   if (e.stop) checks.push(['stop', maxF < 1]);
   if (e.height !== undefined) checks.push([`height ≥ ${e.height}`, maxH >= e.height]);
   if (s.maxHeight !== undefined) checks.push([`height ≤ ${s.maxHeight}`, maxH <= s.maxHeight]);
+  if (e.solid) checks.push([`solid (deepest ${(pen * 100).toFixed(0)} cm${pen > 0.02 ? ': ' + penAt : ''})`, pen <= 0.02]);
   if (e.clean) checks.push(['clean', worst >= -0.02 && cam >= 0.12]); // no body in a stem; the camera (near plane 0.1 m) keeps clear
   if (e.hands !== undefined) checks.push([e.hands ? 'on hands' : 'on feet', hands === e.hands]);
   if (e.lean) checks.push([`lean ${e.lean}`, e.lean === 'right' ? rollMax > 0.15 : rollMax < -0.15]);
   if (e.vault) checks.push([typeof e.vault === 'string' ? `vault ${e.vault}` : 'vault', vaults > 0 && (typeof e.vault !== 'string' || (body.lastVault?.side < 0 ? 'left' : 'right') === e.vault)]);
-  return { i: gymAt + 1, name: s.name, pass: checks.every((c) => c[1]), checks: checks.map(([n, ok]) => `${ok ? '✓' : '✗'} ${n}`).join(' '),
+  const used = [maxF < 1 ? 'stopped' : 'crossed', vaults ? 'vault' : '', lifts ? 'climbed up' : '', hands ? 'on hands' : '', duckMax > 0.15 ? `ducked ${duckMax.toFixed(2)}` : '', Math.abs(rollMax) > 0.15 ? `leaned ${rollMax > 0 ? 'right' : 'left'}` : ''].filter(Boolean).join(', ');
+  return { i: gymAt + 1, name: s.name, mode: s.mode, used, pass: checks.every((c) => c[1]), checks: checks.map(([n, ok]) => `${ok ? '✓' : '✗'} ${n}`).join(' '),
     reached: +maxF.toFixed(2), height: +maxH.toFixed(2), hands, pullups: lifts, vaults, vaultSide: body.lastVault ? (body.lastVault.side < 0 ? 'left' : 'right') + ` at ${body.lastVault.s}` : '', roll: +rollMax.toFixed(2), clearance: +worst.toFixed(2), clearanceAt: worstAt, camera: +cam.toFixed(2), eyeJump: +eyeJump.toFixed(3), plan: s.plan };
 }
 $('gPrev').addEventListener('click', () => goStation(gymAt - 1));
