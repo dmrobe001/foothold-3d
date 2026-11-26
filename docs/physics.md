@@ -392,6 +392,17 @@ object moving into it (against a root, fully inelastic), and the overlap left is
 speed. The jiggling tree's peak kinetic energy fell from 10–23 J to 2 J, then 0.1 J. The speed, spin and bend-recovery
 limits are gone (fresh tree waking: at most 2 m/s without them).
 
+**Your body is a force-limited actuator, not a kinematic pusher.** Stepped-on logs jittered and carried on. The audit
+put nearly all of it on the body stage, not your weight (feet: 12–56 J; legs: 1,750 then 9,100 J in half a second
+climbing onto a 538 kg log, which reached 1.2 m/s). The body is driven by input, so a shin that met a log came back
+into it at walking pace every frame, and the overlap was pushed out of the log however heavy it was. Now a body part
+(mass as before: 60 kg for a planted leg, 8 kg swinging, 45 kg trunk) meets a free object in an inelastic impulse from
+its swept velocity, all parts together delivering at most 400 N over the step; the reaction is added to the push-back
+that already stops you against a stiff branch (60 N slows you, 250 N stops you). The overlap left is shared by mass:
+the object's part moves it without speed, the rest you yield. Measured on the same climb: 9 and 3 J from you, peak
+kinetic energy 22 J (was 415), asleep a second after you step off; on a forest walk the body's input to the fresh fallen
+tree fell from 43 kJ to 2 kJ in a second. Seesaw still tips under you; gym 40/40.
+
 **Still seen (open):** your foot pressing a branch into the soil puts energy into the soil spring (up to 40 kJ in a
 second, burned off by the ground, no visible motion): the body's share of a contact uses the object's mass, not whether
 the ground holds it. Two logs generated overlapping are pushed apart by the overlap clearing (potential energy without

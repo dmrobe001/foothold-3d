@@ -16,7 +16,7 @@
 // Reaction on the body: each touching segment pushes back with the branch's cantilever stiffness out to the contact
 // point, k_eff = 3 E I / ℓ³ (ℓ: arc length from the group's anchor), times how far that point is from rest.
 // a joint snaps clean off only if dry and under BREAK_R (m); rolling resistance coefficients (soft forest floor; bark on bark) and sliding friction; soil and litter under a segment: stiffness per contact point SOIL · r · length (N/m: 50 kN/m under a 0.8 m section of a 30 cm log, a few hundred under a twig); bark on bark: compliance WOOD (m/N)
-const BREAK_R = 0.015, SOIL = 4e5, WOOD = 2e-6, CRR_SOIL = 0.25, CRR_WOOD = 0.08, MU_SOIL = 0.8, MU_WOOD = 0.7, SLOP = 0.008, DEP = 0.5, VMAX = Infinity, WMAX = Infinity, WDEP = Infinity; // (no speed, spin or bend-recovery limits: the energy audit found the sources instead) // DEP: the fastest an overlap is pushed out (m/s); deeper ones take a few substeps, not one kick
+const BREAK_R = 0.015, SOIL = 4e5, WOOD = 2e-6, CRR_SOIL = 0.25, CRR_WOOD = 0.08, MU_SOIL = 0.8, MU_WOOD = 0.7, SLOP = 0.008, DEP = 0.5, VMAX = Infinity, WMAX = Infinity, WDEP = Infinity, BODY_F = 400; // (no speed, spin or bend-recovery limits: the energy audit found the sources instead) // DEP: the fastest an overlap is pushed out (m/s); deeper ones take a few substeps, not one kick
 export class PhysicsCore {
   constructor() { this.groups = new Map(); this.free = new Map(); }
   add(g) { // g: { id, n, par Int32, u, s0 (n*3), x0 (n*3), r, L, k, w, lim }
@@ -48,6 +48,8 @@ export class PhysicsCore {
     this.kb = kb && kb.length === caps.length / 7 ? kb : null; this.mb = mb && mb.length === caps.length / 7 ? mb : null; const CD = (this.CD = new Float32Array(caps.length / 7 * 4));
     const F = [0, 0, 0], CF = new Float32Array(caps.length / 7 * 3), CP = new Float32Array(caps.length / 7 * 7), SUB = 4, ITER = 2, FSUB = 4, h = Math.min(dt, 1 / 30) / SUB;
     const groups = [...this.groups.values()], frees = [...this.free.values()];
+    this.Fb = F; this.CFb = CF; this.SUBn = SUB; this.dtS = h * SUB; this.bodyJ = BODY_F * h * SUB; // the body's push on free objects this step: an impulse budget
+    this.capV = new Float32Array(caps.length / 7 * 3); if (prev && prev.length === caps.length) for (let c = 0; c < caps.length; c += 7) for (let d = 0; d < 3; d++) this.capV[c / 7 * 3 + d] = (caps[c + d] + caps[c + 3 + d] - prev[c + d] - prev[c + 3 + d]) / 2 / (h * SUB);
     const gf = [];
     for (const q of forces || []) { if (q.gid !== undefined) { gf.push(q); continue; } const f = this.free.get(q.id); if (f) { f.ext.push(q); if (f.sleep) this.wake(f); } }
     for (const g of groups) { g.touch.fill(0); g.nearP = this.nearCaps(g, caps, 0); }
@@ -406,7 +408,14 @@ export class PhysicsCore {
         const H = this.hit, b = f.cb[s], P = [H.px - H.nx * wc[k + 6], H.py - H.ny * wc[k + 6], H.pz - H.nz * wc[k + 6]];
         if (f.sleep) this.wake(f);
         const wo = this.wGen(f, b, P[0] - f.bx[b * 3], P[1] - f.bx[b * 3 + 1], P[2] - f.bx[b * 3 + 2], H.nx, H.ny, H.nz), wbd = this.mb ? 1 / this.mb[c / 7] : 0, so = wo / (wo + wbd || 1);
-        { const vo = Math.max(0, this.vAt(f, b, P, H.nx, H.ny, H.nz)); this.pos(f, b, P, null, -1, P, H.nx, H.ny, H.nz, H.pen * so, 0, h, Math.max(0, DEP + 3 - vo) * h, Math.max(0, 1.5 - vo) * h); } // (it gets at most a walking pace from you as speed; the rest of the overlap just moves it) // (a body already deep in it, as when a log wakes around your legs, pushes it out at walking pace, not in one throw)
+        { // momentum, not position: the body part (mass mb, moving at its swept velocity) meets it in an inelastic impulse, and a walking body
+          // pushes with at most BODY_F in all (it is a force-limited actuator, not a kinematic pusher); the reaction pushes back on you (and
+          // stops you, as a stiff branch does). The overlap left is shared by mass, the object's part moved without speed, the rest yielded by you.
+          const cv = this.capV, ci = c / 7 * 3, vc = cv ? cv[ci] * H.nx + cv[ci + 1] * H.ny + cv[ci + 2] * H.nz : 0, vo = this.vAt(f, b, P, H.nx, H.ny, H.nz);
+          if (vc > vo && this.bodyJ > 0) { const J = Math.min((vc - vo) / (wo + wbd), this.bodyJ); this.bodyJ -= J; this.imp(f, b, P, H.nx, H.ny, H.nz, J);
+            const Fk = J * this.SUBn / this.dtS, FF = this.Fb, CF = this.CFb; if (FF) { FF[0] -= H.nx * Fk; FF[1] -= H.ny * Fk; FF[2] -= H.nz * Fk; } if (CF) { CF[ci] -= H.nx * Fk; CF[ci + 1] -= H.ny * Fk; CF[ci + 2] -= H.nz * Fk; } }
+          this.pos(f, b, P, null, -1, P, H.nx, H.ny, H.nz, H.pen * so, 0, h, Infinity, 0);
+        }
         const need = H.pen * (1 - so), D = this.CD, j4 = c / 7 * 4;
         if (D && need > 1e-6) { D[j4] -= H.nx * need; D[j4 + 1] -= H.ny * need; D[j4 + 2] -= H.nz * need; D[j4 + 3] = Math.hypot(D[j4], D[j4 + 1], D[j4 + 2]); for (const e of [0, 3]) { all[c + e] -= H.nx * need; all[c + e + 1] -= H.ny * need; all[c + e + 2] -= H.nz * need; } }
         this.fCaps(f);
@@ -684,7 +693,7 @@ export function makeFree(id, pts, edges, wood, extra = {}) {
 
 // the worker's program: the class above plus a message loop
 export function workerSource() {
-  return `const BREAK_R = ${BREAK_R}, SOIL = ${SOIL}, WOOD = ${WOOD}, CRR_SOIL = ${CRR_SOIL}, CRR_WOOD = ${CRR_WOOD}, MU_SOIL = ${MU_SOIL}, MU_WOOD = ${MU_WOOD}, SLOP = ${SLOP}, DEP = ${DEP}, VMAX = ${VMAX}, WMAX = ${WMAX}, WDEP = ${WDEP};
+  return `const BREAK_R = ${BREAK_R}, SOIL = ${SOIL}, WOOD = ${WOOD}, CRR_SOIL = ${CRR_SOIL}, CRR_WOOD = ${CRR_WOOD}, MU_SOIL = ${MU_SOIL}, MU_WOOD = ${MU_WOOD}, SLOP = ${SLOP}, DEP = ${DEP}, VMAX = ${VMAX}, WMAX = ${WMAX}, WDEP = ${WDEP}, BODY_F = ${BODY_F};
 ${PhysicsCore.toString()}
 const core = new PhysicsCore();
 onmessage = (e) => {
