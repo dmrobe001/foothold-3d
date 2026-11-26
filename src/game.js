@@ -2742,7 +2742,7 @@ function buildGymExtras(rocks) {
   const put = (geo, mat, M) => { const m = new THREE.Mesh(geo, mat); m.matrixAutoUpdate = false; m.matrix.copy(M); m.castShadow = m.receiveShadow = true; worldGroup.add(m); };
   for (const b of G.blocks) {
     const M = trs(b.x, b.y, b.z, b.yaw * DEG, b.size[0], b.size[1], b.size[2], b.pitch * DEG, b.roll * DEG).clone();
-    put(box, stone, M); addSolid(meshSolid(box, M, b.x, b.z), 0);
+    put(box, stone, M); addSolid(boxSolid(b), 0);
     b._inv = trs(b.x, b.y, b.z, b.yaw * DEG, 1, 1, 1, b.pitch * DEG, b.roll * DEG).clone().invert(); // (for exact depth into it: gymPen)
   }
   for (const r of G.rocks) { // captured outcrops: the same big-rock shapes the forest uses (this gym's bedrock style)
@@ -2950,9 +2950,27 @@ function logSolids(bx, y0, bz, tx, y1, tz, sx, sz, wob, prof = trunkProfile) {
     p = q;
   }
 }
+// A box as an exact solid (the gym's): at any (x, z) it fills one span of height, [lo, hi] (topOf returns hi and leaves lo in
+// logUnder/logBottom, as a stem's underside), so what is under a roof is free space, not the inside of a wall.
+function boxSolid(b) {
+  const R = trs(b.x, b.y, b.z, b.yaw * DEG, 1, 1, 1, b.pitch * DEG, b.roll * DEG).clone(), inv = R.clone().invert(), hw = b.size[0] / 2, h = b.size[1], hl = b.size[2] / 2;
+  const o = { kind: 'box', x: b.x, z: b.z, e: Float64Array.from(inv.elements), r: Float64Array.from(R.elements), hw, h, hl, x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity, y0: Infinity, y1: -Infinity };
+  const v = new THREE.Vector3();
+  for (const sx of [-hw, hw]) for (const sy of [0, h]) for (const sz of [-hl, hl]) { v.set(sx, sy, sz).applyMatrix4(R); o.x0 = Math.min(o.x0, v.x); o.x1 = Math.max(o.x1, v.x); o.z0 = Math.min(o.z0, v.z); o.z1 = Math.max(o.z1, v.z); o.y0 = Math.min(o.y0, v.y); o.y1 = Math.max(o.y1, v.y); }
+  return o;
+}
+function boxSpan(o, x, z) { // the vertical line at (x, z) through the box: [lo, hi], or null
+  const e = o.e, ax = e[0] * x + e[8] * z + e[12], ay = e[1] * x + e[9] * z + e[13], az = e[2] * x + e[10] * z + e[14], bx = e[4], by = e[5], bz = e[6];
+  let t0 = -1e9, t1 = 1e9;
+  for (const [a, b, lo, hi] of [[ax, bx, -o.hw, o.hw], [ay, by, 0, o.h], [az, bz, -o.hl, o.hl]]) {
+    if (Math.abs(b) < 1e-9) { if (a < lo || a > hi) return null; continue; }
+    let u = (lo - a) / b, w = (hi - a) / b; if (u > w) [u, w] = [w, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, w); if (t0 > t1) return null;
+  }
+  return [t0, t1];
+}
 function addSolid(o, r) {
   if (solidSink) solidSink.push(o);
-  if (o.kind === 'mesh') { // every 8 m cell the world box touches
+  if (o.kind === 'mesh' || o.kind === 'box') { // every 8 m cell the world box touches
     for (let ci = Math.floor((o.x0 + HALF) / 8); ci <= Math.floor((o.x1 + HALF) / 8); ci++)
       for (let cj = Math.floor((o.z0 + HALF) / 8); cj <= Math.floor((o.z1 + HALF) / 8); cj++) {
         const k = ci * 4096 + cj; let a = solids.get(k); if (!a) solids.set(k, (a = [])); a.push(o);
@@ -3014,6 +3032,7 @@ function meshSolid(geo, matrix, x, z) {
   return { kind: 'mesh', x, z, geo, e: matrix.elements.slice(), tf: null, x0: bb.min.x, x1: bb.max.x, z0: bb.min.z, z1: bb.max.z };
 }
 function topOf(o, x, z) {
+  if (o.kind === 'box') { if (x < o.x0 || x > o.x1 || z < o.z0 || z > o.z1) return -Infinity; const sp = boxSpan(o, x, z); if (!sp) return -Infinity; logUnder = logBottom = sp[0]; return sp[1]; }
   if (o.kind === 'mesh') {
     if (x < o.x0 || x > o.x1 || z < o.z0 || z > o.z1) return -Infinity;
     return sampleTop(o.tf || (o.tf = topField(o.geo, o.e)), x, z);
@@ -3093,7 +3112,7 @@ function rockSupport(x, z) { // ground and the static solids registered so far (
 // beneath it (the body stoops and bends its knees to fit, see duckPosture).
 // `supportRef` is the height of the feet the query is for (set once per movement step); a stem resting near the ground
 // always counts, so lookups a little uphill of the feet still see logs lying there.
-const DUCK_MIN = 1.1; // lowest head-top height (above the feet) a stooped, knee-bent walk reaches; below it, hands and knees
+const DUCK_MIN = 1.0; // lowest head-top height (above the feet) a stooped, knee-bent walk reaches; below it, hands and knees
 let supportRef = Infinity, logUnder = 0, logBottom = 0; // logUnder: a stem's underside at the point asked; logBottom: its lowest, under its axis
 let supKind = 'soil', footKind = 'soil'; // what the last supportAt / footSupport stood on: soil, rock or wood
 function supportAt(x, z) {
@@ -3118,8 +3137,8 @@ function supportAt(x, z) {
 function ceilingAt(x, z, feet, along) {
   let c = Infinity; const list = solids.get(ckey8(x, z)); if (!list) return c;
   for (const o of list) {
-    if (o.kind !== 'log' || o.r0 === undefined) continue;
-    if (along) { const vx = o.x1 - o.x0, vz = o.z1 - o.z0, l = Math.hypot(vx, vz) || 1; if (Math.abs(vx * along[0] + vz * along[1]) / l > 0.85 && Math.abs(o.ya1 - o.ya0) / l > 0.3) continue; }
+    if (!(o.kind === 'log' && o.r0 !== undefined) && o.kind !== 'box') continue;
+    if (along && o.kind === 'log') { const vx = o.x1 - o.x0, vz = o.z1 - o.z0, l = Math.hypot(vx, vz) || 1; if (Math.abs(vx * along[0] + vz * along[1]) / l > 0.85 && Math.abs(o.ya1 - o.ya0) / l > 0.3) continue; }
     logUnder = -Infinity; if (topOf(o, x, z) === -Infinity) continue;
     if (logBottom > feet + CLEAR4 - 0.05 && logUnder < c) c = logUnder; // a stem lower than crawling height is something to go over
   }
@@ -3358,6 +3377,36 @@ function holdsNear(x, z, sup, ux, uz) {
 const CLEAR4 = 0.55; // lowest headroom (above the feet) crawling, hips and head low
 const GAIT4 = { stride: 0.5, swing: 0.13, speed: 1.0, climb: 1.5, homes: [0.72, 0.72, -0.3, -0.3] }; // limbs LH RH LF RF
 const LIMB = [{ hand: true, side: -1 }, { hand: true, side: 1 }, { hand: false, side: -1 }, { hand: false, side: 1 }];
+// The body's footprint must fit, not just its centre: points across the shoulders, and ahead where the legs and arms
+// reach, must have no solid between a step up and the lowest headroom the body can pass under (crawling). A wall at the
+// side stops you before an arm is in it; a roof too low to crawl under stops you before the legs are under it.
+let colWhy = ''; // (what blocked the last column asked: for tests)
+function colBlocked(px, pz, lo, hi) { // is any solid in the column at (px, pz) between heights lo and hi?
+  for (const t of nearbyTrunks(px, pz)) if (Math.hypot(t.x - px, t.z - pz) < t.r - 0.25) { colWhy = 'trunk'; return true; } // (the bark itself: t.r carries the body's own 0.25 m, for its centre)
+  for (const o of solids.get(ckey8(px, pz)) || []) {
+    logUnder = -Infinity; const t = topOf(o, px, pz); if (t === -Infinity) continue;
+    const b = o.kind === 'box' || (o.kind === 'log' && o.r0 !== undefined) ? logUnder : -Infinity; // meshes (rocks) are solid to the ground
+    if (t > lo && b < hi) { colWhy = `${o.kind} top ${(t - lo).toFixed(2)} above the band's foot, bottom ${b === -Infinity ? 'ground' : (b - lo).toFixed(2)}`; return true; }
+  }
+  return false;
+}
+const BODY_PROBES = [[0, -0.24], [0, 0.24], [0.15, -0.28], [0.15, 0.28], [0.3, 0], [0.3, -0.28], [0.3, 0.28], [0.45, 0], [0.45, -0.28], [0.45, 0.28]]; // the shoulders, and where the knees reach
+function ledgeAt(px, pz, ux, uz, feet) { // a top you can climb onto (and stand up on): it is not a wall to the body coming at it
+  const t = supportAt(px, pz); if (t - feet <= STEP || t - feet > SCRAMBLE) return false;
+  if (Math.abs(supportAt(px + ux * 0.35, pz + uz * 0.35) - t) > 0.1) return false;
+  return !colBlocked(px, pz, t + 0.05, t + CLEAR4);
+}
+function bodyBlocked(x, z, ux, uz, feet) {
+  const lo = feet + STEP + 0.02, hi = feet + CLEAR4, rx = -uz, rz = ux;
+  for (const [f, l] of BODY_PROBES) { const px = x + ux * f + rx * l, pz = z + uz * f + rz * l; if (colBlocked(px, pz, lo, hi) && !(f > 0 && ledgeAt(px, pz, ux, uz, feet))) return true; }
+  return false;
+}
+// a foothold the leg can reach: nothing solid over it, or halfway back to the body, from just above the foot to the hip
+function legRoom(x, z, s) { // (every 10 cm from the body to the foothold: a thin wall between them is in the way)
+  const lo = s + 0.55, hi = s + 0.85, n = Math.max(1, Math.ceil(Math.hypot(x - player.x, z - player.z) / 0.1));
+  for (let k = 1; k <= n; k++) if (colBlocked(lerp(player.x, x, k / n), lerp(player.z, z, k / n), lo, hi)) return false;
+  return true;
+}
 function assess(x, z, px, pz) {
   const sup = footSupport(x, z), kind = footKind, rise = sup - rig.feet;
   if (rise > SCRAMBLE || trunkHit(x, z)) return null;
@@ -3534,6 +3583,7 @@ function movePlayer(dt) {
         const [nx, nz] = stemPushOut(lim(px + mx), lim(pz + mz));
         const st = assess(nx, nz, px, pz);
         if (st === null) continue;
+        { const ml = Math.hypot(mx, mz) || 1; if (bodyBlocked(nx, nz, mx / ml, mz / ml, Math.max(rig.feet, st.sup))) continue; } // the whole body must fit
         if (!quadAllows(nx, nz, px, pz)) { if (!st.need) needT = 0; continue; } // held back by the limbs where hands aren't needed: stand up
         needT = st.need;
         if (st.rise > STEP) rig.lift = { x: nx, z: nz, y: st.sup }; else { player.x = nx; player.z = nz; }
@@ -3819,7 +3869,7 @@ function foothold(tx, tz) {
 }
 function footholdBase(tx, tz) {
   const s0 = supportAt(tx, tz);
-  if (Math.abs(s0 - rig.feet) < 0.45) return [tx, tz, s0];
+  if (Math.abs(s0 - rig.feet) < 0.45 && legRoom(tx, tz, s0)) return [tx, tz, s0];
   const c = [];
   for (const r of [0.12, 0.25]) for (let k = 0; k < 8; k++) { const a = k * 0.785; c.push([tx + Math.cos(a) * r, tz + Math.sin(a) * r]); }
   for (const k of [0.3, 0.55, 0.8, 1]) c.push([lerp(tx, player.x, k), lerp(tz, player.z, k)]);
@@ -3827,7 +3877,7 @@ function footholdBase(tx, tz) {
   let best = null, bd = Infinity, fb = [tx, tz, s0], fe = Math.abs(s0 - rig.feet);
   for (const [x, z] of c) {
     const s = supportAt(x, z), e = Math.abs(s - rig.feet), d = Math.hypot(x - tx, z - tz);
-    if (e < 0.45 && d < bd) { bd = d; best = [x, z, s]; }
+    if (e < 0.45 && d < bd && legRoom(x, z, s)) { bd = d; best = [x, z, s]; }
     if (e < fe) { fe = e; fb = [x, z, s]; }
   }
   return best || fb;
@@ -3844,6 +3894,8 @@ function startSwing(ft, tx0, tz0, dur) {
 // neck joint). Given the lowest stem underside over where the head is and is about to be, the deficit is shared: the
 // knees take about half (pelvis down to ~0.45 m lower), the back stoops for the rest (up to 1 rad), then the knees again.
 // Below DUCK_MIN this can't fit, and the hands come down (the controller's `need`).
+const neckBack = (lean) => lean <= 0.6 ? lean * 0.5 : Math.max(0, 0.3 * (1 - (lean - 0.6) / 0.5)); // how far the head tips back to look ahead
+function headTop(lean) { const L = SK.BONES.spine, W = SK.BONES.spineW; let h = 0, cw = 0; for (let i = 0; i < L.length; i++) { cw += W[i]; h += L[i] * Math.cos(lean * cw); } return h + (RIG.neck + 0.08) * Math.cos(lean - neckBack(lean)) + 0.11; }
 function duckPosture(ux, uz, spd) {
   const feet = rig.feet, fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), ahead = 1.0 + Math.min(0.6, spd * 0.3); // a fixed lead: the duck-walk slows you, which must not shrink the warning
   // the head can lean sideways (torso roll, up to ~0.3 m): read the stem's underside across the body's width and
@@ -3863,15 +3915,18 @@ function duckPosture(ux, uz, spd) {
   if (best.c < Infinity) for (const l of [-0.3, -0.15, 0.15, 0.3]) { const o = lowest(l); if (o.c - 0.1 * Math.abs(l) > best.c - 0.1 * Math.abs(lat) + 0.02) { best = o; lat = l; } }
   const { c, cx, cz } = best;
   if (c === Infinity) return null;
-  const sl = RIG.spine + RIG.neck, head0 = Math.max(body.base - feet, RIG.leg - 0.03) + sl + 0.17, D = head0 - (c - feet - 0.18);
+  // the head's top above the pelvis for a forward lean, as the skeleton bends: spread over three spine segments, then the
+  // neck and head (which tip back to look ahead only while the lean is moderate: deep down, the head follows the back)
+  const pel0 = Math.max(body.base - feet, RIG.leg - 0.03), top = c - feet - 0.05, D = pel0 + headTop(0) - top;
   if (D <= 0) return null;
-  let crouch = -Math.min(0.38, D * 0.55);
-  const D2 = D + crouch, lean = Math.acos(clamp(1 - D2 / sl, Math.cos(1.0), 1));
-  const D3 = D2 - sl * (1 - Math.cos(lean)); if (D3 > 0) crouch = Math.max(-0.45, crouch - D3);
+  const cmin = -Math.max(0, Math.min(0.45, body.base - feet - 0.45)); // the hips go no lower than 0.45 m on foot
+  let crouch = Math.max(cmin, -Math.min(0.38, D * 0.55)), lean = 0;
+  if (pel0 + crouch + headTop(1.3) > top) crouch = Math.max(cmin, top - headTop(1.3) - pel0); // the knees take the rest
+  if (pel0 + crouch + headTop(0) > top) { let lo = 0, hi = 1.3; for (let k = 0; k < 14; k++) { const m = (lo + hi) / 2; if (pel0 + crouch + headTop(m) > top) lo = m; else hi = m; } lean = hi; } // just enough lean (up to 1.3 rad)
   const side = (cx - player.x) * Math.cos(player.yaw) - (cz - player.z) * Math.sin(player.yaw) >= 0 ? 1 : -1;
   // lat is right of travel; the roll is about the facing direction (they agree walking forward)
   const latR = lat * ((-uz) * Math.cos(player.yaw) + ux * -Math.sin(player.yaw) >= 0 ? 1 : -1);
-  return { lean, crouch, amt: clamp(D / 0.6, 0, 1), x: cx, y: c, z: cz, side, roll: clamp(Math.asin(clamp(latR / sl, -0.5, 0.5)), -0.45, 0.45) };
+  return { lean, crouch, amt: clamp(D / 0.6, 0, 1), x: cx, y: c, z: cz, side, roll: clamp(Math.asin(clamp(latR / (RIG.spine + RIG.neck), -0.5, 0.5)), -0.45, 0.45) };
 }
 // Rigid things the limbs meet: standing and fallen stems (branches and roots are rods, handled by the solver). Each as a
 // capsule; a limb capsule inside one is pushed out. The push is kept and relaxes over a quarter second, so a hand that
@@ -3933,6 +3988,20 @@ function staticResolve(st, C, S) { // rigid things: the body part takes the whol
       const n = h.d > 1e-5 ? [(pa[0] - pq[0]) / h.d, (pa[1] - pq[1]) / h.d, (pa[2] - pq[2]) / h.d] : [0, 1, 0];
       for (let k = 0; k < 3; k++) o[k] += n[k] * pen; moved += pen;
       st.hit[i] = { p: pq.map((v, k) => v + n[k] * q.r), n, kind: q.kind };
+    }
+    for (let f = 0; f <= 1.0001; f += 0.25) { // boxes: out through the nearest face (a wall at the side, a roof above)
+      const px = a[0] + (b[0] - a[0]) * f, py = a[1] + (b[1] - a[1]) * f, pz = a[2] + (b[2] - a[2]) * f;
+      for (const so of solids.get(ckey8(px, pz)) || []) {
+        if (so.kind !== 'box' || px < so.x0 - R || px > so.x1 + R || pz < so.z0 - R || pz > so.z1 + R || py < so.y0 - R || py > so.y1 + R) continue;
+        const e = so.e, lx = e[0] * px + e[4] * py + e[8] * pz + e[12], ly = e[1] * px + e[5] * py + e[9] * pz + e[13], lz = e[2] * px + e[6] * py + e[10] * pz + e[14];
+        const cx = clamp(lx, -so.hw, so.hw), cy = clamp(ly, 0, so.h), cz = clamp(lz, -so.hl, so.hl), dx = lx - cx, dy = ly - cy, dz = lz - cz, d = Math.hypot(dx, dy, dz);
+        let nx, ny, nz, pen;
+        if (d > 1e-6) { if (d >= R) continue; nx = dx / d; ny = dy / d; nz = dz / d; pen = R - d; }
+        else { const fx = so.hw - Math.abs(lx), fy = Math.min(ly, so.h - ly), fz = so.hl - Math.abs(lz); // inside: out by the nearest face
+          if (fx <= fy && fx <= fz) { nx = Math.sign(lx) || 1; ny = nz = 0; pen = R + fx; } else if (fy <= fz) { ny = ly < so.h / 2 ? -1 : 1; nx = nz = 0; pen = R + fy; } else { nz = Math.sign(lz) || 1; nx = ny = 0; pen = R + fz; } }
+        const m = so.r, wx = m[0] * nx + m[4] * ny + m[8] * nz, wy = m[1] * nx + m[5] * ny + m[9] * nz, wz = m[2] * nx + m[6] * ny + m[10] * nz; // the normal back in the world
+        o[0] += wx * pen; o[1] += wy * pen; o[2] += wz * pen; moved += pen; st.hit[i] = { p: [px - wx * R, py - wy * R, pz - wz * R], n: [wx, wy, wz], kind: 'rock' };
+      }
     }
     for (const f of [0, 0.5, 1]) { // rocks and stumps (mesh solids): a limb below their top is pushed out of it, as a falling piece is
       const px = a[0] + (b[0] - a[0]) * f, py = a[1] + (b[1] - a[1]) * f, pz = a[2] + (b[2] - a[2]) * f;
@@ -4248,11 +4317,11 @@ function walkPose() {
   const cf = body.fb && !body.four ? body.fb : { lat: 0, lean: 0, crouch: 0, hand: [[0, 0, 0], [0, 0, 0]] }; // contact offsets, at once
   const yaw = body.yaw ?? player.yaw, fx = -Math.sin(yaw), fz = -Math.cos(yaw), rX = Math.cos(yaw), rZ = -Math.sin(yaw);
   return {
-    pelvis: [player.x + rX * (body.lat + cf.lat), body.pelvis.y + body.crouch + cf.crouch, player.z + rZ * (body.lat + cf.lat)],
-    frame: { R: [rX, 0, rZ], U: [0, 1, 0], F: [fx, 0, fz] }, bend: [body.lean + cf.lean, body.roll, 0], neckPitch: -body.lean * 0.5,
+    pelvis: [player.x + rX * (body.lat + cf.lat), Math.max(rig.feet + 0.45, body.pelvis.y + body.crouch + cf.crouch), player.z + rZ * (body.lat + cf.lat)], // (a crouch-walk keeps the hips above 0.45 m: lower than that is on hands)
+    frame: { R: [rX, 0, rZ], U: [0, 1, 0], F: [fx, 0, fz] }, bend: [body.lean + cf.lean, body.roll, 0], neckPitch: -neckBack(body.lean),
     feet: body.feet.map((ft) => [ft.x, ft.y + 0.06, ft.z]), toes: [[fx, 0, fz], [fx, 0, fz]],
     hands: body.hands.map((h, k) => [h.p.x + cf.hand[k][0], h.p.y + cf.hand[k][1], h.p.z + cf.hand[k][2]]),
-    kneePole: [[fx, 0, fz], [fx, 0, fz]],
+    kneePole: [[fx, 0.6, fz], [fx, 0.6, fz]], // forward and a little up: with the foot ahead of a low hip (a deep crouch) the knee rises rather than splaying
     elbowPole: [-1, 1].map((side) => [-fx + rX * side * 0.5, -0.6, -fz + rZ * side * 0.5]),
   };
 }
@@ -4711,7 +4780,8 @@ window.foothold = {
   physics: { MD, modal: () => modal, clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
   branches: { crunchSegs, crunchStack, branchLoad, get crunchList() { return crunchList; }, logBuf: () => logBuf, logLeafBuf: () => logLeafBuf, logBranches, plantVariant, target: () => breakTargetAt, pick() { const r = running; running = true; breakTarget(); running = r; return breakTargetAt; }, push: pushState, pushStart, pushStop, pushUpdate, breakBranch, treeSegs, plantCells: () => plantCells, brokenTrees: () => brokenTrees, limbSolids, logBranchCells: () => branchLogCells },
   plants: { lib: plantLib, roots: () => rootMeshObj, rootQueue: () => rootQueue, rootCells: () => rootCells, PL },
-  gym: { get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },
+  debug: { bodyBlocked: (x, z, ux, uz) => { const r = bodyBlocked(x, z, ux, uz, rig.feet); return r ? colWhy : ''; } },
+  gym: { pen: () => gymPen(), progress: () => gymProgress(), get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },
   loco: { stemAt, stemUnder, assess, grade, holdsNear, placeContact, stability, quadAllows, limbAt, GAIT4, TRACTION, get need() { return body.need; }, get q() { return body.q; } }, col: { topOf, supportAt, ceilingAt, duckPosture, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },
   info() { return { near: Object.fromEntries(Object.entries(near.b).map(([k, v]) => [k, v.n])), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries }; },
