@@ -92,3 +92,15 @@ Not yet: the crawls (on hands it goes, but in one posture, with thighs 13–17 c
 way over a barrier (the old vault puts legs 15–18 cm inside walls); climbing onto the block works but a shin passes 26 cm
 into it; held against a wall, the body still sidles and steps in place, so a shin can touch the mouth of a narrow gap
 (3–5 cm). Forest walk unchanged (37.6 m in 25 s).
+
+## Step 2: the shimmy (14/30)
+
+When facing the way does not fit (the shoulders) but a body turned side-on does (0.4 m deep, the hips; from behind the
+shoulder to 0.7 m ahead, so it is a gap to go through and not a wall to face; with 1.3 m of headroom), the body turns to
+face across the way, first, then side-steps at under half pace: the hips lie along the way, the lead foot steps and the
+trailing foot closes up to 0.16 m behind it (the feet never pass), the knees bow out along the way rather than into the
+wall in front, and the arms hang from the turned shoulders. (The body's facing had a second owner, the on-hands surface
+frame, which pulled it back toward the view every frame; the shimmy now holds it while sideways or turning back.)
+
+Passing now, besides step 1's: the 0.45 m gap (shimmied), and the 0.45 m gap under 1.2 m stops cleanly. Forest walk
+unchanged (37.9 m).

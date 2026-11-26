@@ -6167,6 +6167,13 @@ function ledgeAt(px, pz, ux, uz, feet) { // a top you can climb onto (and stand 
   if (Math.abs(supportAt(px + ux * 0.35, pz + uz * 0.35) - t) > 0.1) return false;
   return !colBlocked(px, pz, t + 0.05, t + CLEAR4);
 }
+// Sideways (a shimmy): the shoulders lie along the way, the body 0.28 m deep across it; it needs 1.3 m of headroom
+const SHIMMY_PROBES = [-0.26, -0.13, 0, 0.13, 0.26, 0.4, 0.55, 0.7].flatMap((a) => [-0.19, 0, 0.19].map((l) => [a, l])); // the body sideways, 0.4 m deep (the hips), from behind the shoulder to past the lead knee: a gap to go through, not a wall to face
+function shimmyFits(x, z, ux, uz, feet) {
+  const lo = feet + STEP + 0.02, hi = feet + 1.3, rx = -uz, rz = ux;
+  for (const [a, l] of SHIMMY_PROBES) if (colBlocked(x + ux * a + rx * l, z + uz * a + rz * l, lo, hi)) return false;
+  return true;
+}
 function bodyBlocked(x, z, ux, uz, feet) {
   const lo = feet + STEP + 0.02, hi = feet + CLEAR4, rx = -uz, rz = ux;
   for (const [f, l] of BODY_PROBES) { const px = x + ux * f + rx * l, pz = z + uz * f + rz * l; if (colBlocked(px, pz, lo, hi) && !(f > 0 && ledgeAt(px, pz, ux, uz, feet))) return true; }
@@ -6354,10 +6361,13 @@ function movePlayer(dt) {
         const [nx, nz] = stemPushOut(lim(px + mx), lim(pz + mz));
         const st = assess(nx, nz, px, pz);
         if (st === null) continue;
-        { const ml = Math.hypot(mx, mz) || 1; if (bodyBlocked(nx, nz, mx / ml, mz / ml, Math.max(rig.feet, st.sup))) continue; } // the whole body must fit
+        let sx = nx, sz = nz, shim = false;
+        { const ml = Math.hypot(mx, mz) || 1, ux2 = mx / ml, uz2 = mz / ml, fe = Math.max(rig.feet, st.sup); // the whole body must fit: facing the way, or else turned sideways (a shimmy)
+          if (bodyBlocked(nx, nz, ux2, uz2, fe)) { if (sd || body.four || !shimmyFits(nx, nz, ux2, uz2, fe)) continue; shim = true; const k = (body.shimTurn ?? 1) < 0.3 ? 0.45 : 0; sx = lerp(px, nx, k); sz = lerp(pz, nz, k); } } // (turned side-on first, then side-stepping)
+        body.shimmy = shim ? (body.shimmy || 0) + dt : 0; body.shimDir = shim ? [mx, mz] : body.shimDir;
         if (!quadAllows(nx, nz, px, pz)) { if (!st.need) needT = 0; continue; } // held back by the limbs where hands aren't needed: stand up
         needT = st.need;
-        if (st.rise > STEP) rig.lift = { x: nx, z: nz, y: st.sup }; else { player.x = nx; player.z = nz; }
+        if (st.rise > STEP) rig.lift = { x: nx, z: nz, y: st.sup }; else { player.x = sx; player.z = sz; }
         ok = true; break;
       }
     } else if (!vault) needT = needHere();
@@ -6836,19 +6846,33 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
   if (spd > 0.05) body.fwd = [vx / spd, vz / spd];
   const [ux, uz] = moved > 0 ? [dx / moved, dz / moved] : [-Math.sin(player.yaw), -Math.cos(player.yaw)];
   const rx = -uz, rz = ux; // right of travel
+  { // the body's facing: the view, or turned to face across the way while shimmying
+    const sh = body.shimmy > 0 && body.shimDir, d = sh ? Math.hypot(...body.shimDir) || 1 : 1;
+    const yawT = sh ? Math.atan2(body.shimDir[1] / d, -body.shimDir[0] / d) : player.yaw; // facing the right of the way: fx = -sin(yaw) = -uz, fz = -cos(yaw) = ux
+    const cur = body.shimYaw ?? body.yaw ?? player.yaw, dy = Math.atan2(Math.sin(yawT - cur), Math.cos(yawT - cur));
+    body.shimYaw = cur + dy * Math.min(1, dt * 8); body.shimTurn = sh ? Math.abs(dy) : 1; body.shimOn = sh || Math.abs(dy) > 0.05; // (it holds the facing while sideways or turning back)
+  }
   const uphill = moved > 0 ? (sampleGrid(W.H, N, player.x + ux, player.z + uz) - sampleGrid(W.H, N, player.x - ux, player.z - uz)) / 2 : 0;
   const steep = smoothstep(0.1, 0.8, uphill);
   const m = rig.lift || rig.vault, four = body.four, vlt = rig.vault;
   surfaceFrame(dt, ux, uz, moved > 0);
+  if (body.shimOn) body.yaw = body.shimYaw; else body.shimYaw = body.yaw;
 
   // feet. Walking: a gait cycle driven by distance travelled. One cycle = two steps. Each foot swings for a fraction
   // `duty` of the cycle (walk 0.4: always one foot down; run 0.62: brief flight). A swing aims the foot so its stance
   // is centred under the hip: it lands (1 - duty) * stepLen ahead of the hip. On hands: quadStep.
   const runK = clamp((spd - 1.6) / 2.6, 0, 1);
   const stepLen = lerp(RIG.stepWalk, RIG.stepRun, runK) * (1 - 0.5 * steep) * (1 - 0.4 * body.duck), duty = lerp(0.4, 0.62, runK);
-  const ideal = (ft) => [player.x + rx * ft.side * RIG.hipW, player.z + rz * ft.side * RIG.hipW];
+  const byaw = body.yaw ?? player.yaw, hx = Math.cos(byaw), hz = -Math.sin(byaw); // the body's own right (sideways, it lies along the way)
+  const shim = body.shimmy > 0;
+  const ideal = (ft) => shim ? [player.x + hx * ft.side * 0.14, player.z + hz * ft.side * 0.14] : [player.x + rx * ft.side * RIG.hipW, player.z + rz * ft.side * RIG.hipW];
   const landAhead = (1 - duty) * stepLen;
-  const aim = (ft, tLeft) => { const [ix, iz] = ideal(ft), a = landAhead * 0.8 + spd * tLeft; return [ix + ux * a, iz + uz * a]; };
+  const aim = (ft, tLeft) => { const [ix, iz] = ideal(ft), a = landAhead * (shim ? 0.5 : 0.8) + spd * tLeft; let x = ix + ux * a, z = iz + uz * a;
+    if (shim) { // the feet never pass each other: the trailing foot closes up to 0.16 m behind the leading one
+      const o = body.feet[ft === body.feet[0] ? 1 : 0], ahead = (o.x - player.x) * ux + (o.z - player.z) * uz, mine = (ix - player.x) * ux + (iz - player.z) * uz;
+      const along = (x - player.x) * ux + (z - player.z) * uz, lead = mine > (( (ideal(o)[0] - player.x) * ux + (ideal(o)[1] - player.z) * uz)), lim = lead ? Math.max(along, ahead + 0.16) : Math.min(along, ahead - 0.16);
+      x += ux * (lim - along); z += uz * (lim - along); }
+    return [x, z]; };
   if (four) { const w = body.want || [0, 0]; quadStep(dt, w[0], w[1]); body.moving = false; }
   else {
     for (const h of body.hands) { h.hold = null; h.sw = null; }
@@ -6931,7 +6955,7 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
 
   // arms: on hands, the hands are where quadStep put them; otherwise they swing, or reach for a shrub / barrier / stem
   const chestY = body.pelvis.y + body.crouch + RIG.spine * Math.cos(body.lean);
-  const fwdX = -Math.sin(player.yaw), fwdZ = -Math.cos(player.yaw), cRx = Math.cos(player.yaw), cRz = -Math.sin(player.yaw);
+  const ayaw = body.yaw ?? player.yaw, fwdX = -Math.sin(ayaw), fwdZ = -Math.cos(ayaw), cRx = Math.cos(ayaw), cRz = -Math.sin(ayaw); // (the body's facing: sideways in a shimmy)
   const chestX = player.x + fwdX * RIG.spine * Math.sin(body.lean), chestZ = player.z + fwdZ * RIG.spine * Math.sin(body.lean);
   updatePlants(dt, ux, uz, rx, rz, spd, four);
   let react = 0;
@@ -7092,7 +7116,7 @@ function walkPose() {
     frame: { R: [rX, 0, rZ], U: [0, 1, 0], F: [fx, 0, fz] }, bend: [body.lean + cf.lean, body.roll, 0], neckPitch: -neckBack(body.lean),
     feet: body.feet.map((ft) => [ft.x, ft.y + 0.06, ft.z]), toes: [[fx, 0, fz], [fx, 0, fz]],
     hands: body.hands.map((h, k) => [h.p.x + cf.hand[k][0], h.p.y + cf.hand[k][1], h.p.z + cf.hand[k][2]]),
-    kneePole: [[fx, 0.6, fz], [fx, 0.6, fz]], // forward and a little up: with the foot ahead of a low hip (a deep crouch) the knee rises rather than splaying
+    kneePole: body.shimmy > 0 ? [[-rX, 0.4, -rZ], [rX, 0.4, rZ]] : [[fx, 0.6, fz], [fx, 0.6, fz]], // forward and a little up (with the foot ahead of a low hip, a deep crouch, the knee rises rather than splaying); sideways in a gap, bowed out along the way
     elbowPole: [-1, 1].map((side) => [-fx + rX * side * 0.5, -0.6, -fz + rZ * side * 0.5]),
   };
 }
