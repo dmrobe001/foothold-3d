@@ -5911,18 +5911,27 @@ function ceilingAt(x, z, feet, along) {
     if (!(o.kind === 'log' && o.r0 !== undefined) && o.kind !== 'box') continue;
     if (along && o.kind === 'log') { const vx = o.x1 - o.x0, vz = o.z1 - o.z0, l = Math.hypot(vx, vz) || 1; if (Math.abs(vx * along[0] + vz * along[1]) / l > 0.85 && Math.abs(o.ya1 - o.ya0) / l > 0.3) continue; }
     logUnder = -Infinity; if (topOf(o, x, z) === -Infinity) continue;
-    if (logBottom > feet + CLEAR4 - 0.05 && logUnder < c) c = logUnder; // a stem lower than crawling height is something to go over
+    if (logBottom > feet + CLEAR4 && logUnder < c) c = logUnder; // a stem lower than crawling height is something to go over
   }
   if (body.plan) for (const g of body.plan.ceil) { // stiff plant segments overhead (planScan): their underside where they pass over (x, z)
     const vx = g.B[0] - g.A[0], vz = g.B[2] - g.A[2], l2 = vx * vx + vz * vz, t = l2 > 1e-8 ? clamp(((x - g.A[0]) * vx + (z - g.A[2]) * vz) / l2, 0, 1) : 0;
     if (Math.hypot(g.A[0] + vx * t - x, g.A[2] + vz * t - z) > g.r + 0.12) continue;
-    const y = g.A[1] + (g.B[1] - g.A[1]) * t - g.r; if (y > feet + CLEAR4 - 0.05 && y < c) c = y;
+    const y = g.A[1] + (g.B[1] - g.A[1]) * t - g.r; if (y > feet + CLEAR4 && y < c) c = y;
   }
   return c;
 }
+// a top too narrow to stand on (under 0.5 m along the way) with footing within a step either side: stepped over, so neither the
+// body's height nor a foothold takes it (a thin wall, a rail). Returns the footing either side instead, or null.
+function stepOverAt(x, z, s0, ux, uz) {
+  if (!(ux || uz)) return null;
+  const a = supportAt(x + ux * 0.47, z + uz * 0.47), b = supportAt(x - ux * 0.47, z - uz * 0.47), lo = Math.max(a, b); // (beyond the foot ring, 0.22, and half a narrow top)
+  if (s0 - lo < 0.12 || s0 - lo > STEP) return null; // (it is level ground, or a ledge to climb)
+  if (s0 - a < 0.12 || s0 - b < 0.12) return null; // a step up onto something deeper: stood on
+  return lo;
+}
 function footSupport(x, z) { // the highest footing under a foot-sized ring (and what it is: footKind)
   let y = supportAt(x, z), kind = supKind;
-  for (let k = 0; k < 6; k++) { const a = (k / 6) * 6.283, t = supportAt(x + Math.cos(a) * FOOT, z + Math.sin(a) * FOOT); if (t > y) { y = t; kind = supKind; } }
+  const c = y; for (let k = 0; k < 6; k++) { const a = (k / 6) * 6.283, t = supportAt(x + Math.cos(a) * FOOT, z + Math.sin(a) * FOOT); if (t > y && t - c <= SCRAMBLE) { y = t; kind = supKind; } } // (a wall at the ring's edge is beside you, not under you)
   footKind = kind;
   return y;
 }
@@ -5984,7 +5993,7 @@ function resetRig(feetY) { // stand at the player's x, z: on the ground (not a s
   }
   body.pelvis.set(player.x, rig.feet + RIG.leg - 0.03, player.z); body.pvy = 0;
   body.base = body.pelvis.y; Object.assign(body, { vbase: 0, lean: 0, vlean: 0, crouch: 0, vcrouch: 0, lat: 0, vlat: 0, react: 0, vreact: 0, roll: 0, vroll: 0, plants: [], airborne: false, duck: 0, duckLean: 0, duckHold: null });
-  body.stems.clear();
+  body.stems.clear(); body.gap = null; body.shimmy = 0; body.shimYaw = undefined; body.shimOn = false; body.shimDir = null;
   for (const h of body.hands) { h.p.set(player.x, rig.feet + 0.9, player.z); h.v.set(0, 0, 0); h.target = null; }
   player.eye = rig.feet + 1.65;
   body.eye = { x: player.x, y: player.eye, z: player.z };
@@ -6169,6 +6178,52 @@ function ledgeAt(px, pz, ux, uz, feet) { // a top you can climb onto (and stand 
 }
 // Sideways (a shimmy): the shoulders lie along the way, the body 0.28 m deep across it; it needs 1.3 m of headroom
 const SHIMMY_PROBES = [-0.26, -0.13, 0, 0.13, 0.26, 0.4, 0.55, 0.7].flatMap((a) => [-0.19, 0, 0.19].map((l) => [a, l])); // the body sideways, 0.4 m deep (the hips), from behind the shoulder to past the lead knee: a gap to go through, not a wall to face
+// A narrow gap steers you: scanned across the way at 0.5, 0.8 and 1.1 m ahead, the free run (at least 0.38 m wide, up to 1.3 m
+// of headroom) nearest the line you are on gives the gap's centre there; two or more give its axis. Returns { dir, at } or null.
+function gapAhead(px, pz, ux, uz, feet) {
+  const rx = -uz, rz = ux, lo = feet + STEP + 0.02, hi = feet + 1.3, cs = [];
+  for (const d of [0.5, 0.8, 1.1]) {
+    let best = null, run = null;
+    for (let l = -0.9; l <= 0.9001; l += 0.05) {
+      const free = !colBlocked(px + ux * d + rx * l, pz + uz * d + rz * l, lo, hi);
+      if (free) { if (!run) run = [l, l]; else run[1] = l; }
+      if ((!free || l > 0.9) && run) { const w = run[1] - run[0]; if (w >= 0.33 && w <= 0.6 && run[0] > -0.9 && l <= 0.9) { const c = (run[0] + run[1]) / 2; if (best === null || Math.abs(c) < Math.abs(best)) best = c; } run = null; } // (a gap: solid both sides, open ground is not one)
+    }
+    if (best !== null) cs.push([px + ux * d + rx * best, pz + uz * d + rz * best]);
+  }
+  if (cs.length < 2) return null;
+  const a = cs[0], b = cs[cs.length - 1], gx = b[0] - a[0], gz = b[1] - a[1], gl = Math.hypot(gx, gz) || 1;
+  return { dir: [gx / gl, gz / gl], at: a };
+}
+// The gap plan. Started when the body facing the way would not fit 0.35 m on but a narrow gap lies ahead; it measures the gap once
+// (its centre line, and its mouth: the first point along that line where the side-on body's flanks meet solid) and then runs:
+// 'approach' (walk to a point on the centre line 0.7 m before the mouth), 'turn' (side-on, in place), 'through' (side-step along
+// the axis until the body facing the way fits again), then lets go. Letting go of the stick, or steering away, cancels it.
+function gapPlan(px, pz, dx, dz, dt) {
+  const l = Math.hypot(dx, dz); if (!l || body.four) { endGap(); return []; }
+  const ux = dx / l, uz = dz / l; let G = body.gap;
+  if (G && ux * G.dir[0] + uz * G.dir[1] < 0.3) { endGap(); G = null; } // steering away
+  if (!G) {
+    if (!bodyBlocked(px + ux * 0.35, pz + uz * 0.35, ux, uz, rig.feet)) return [];
+    const g = gapAhead(px, pz, ux, uz, rig.feet); if (!g || g.dir[0] * ux + g.dir[1] * uz < 0.6) return [];
+    const [gx, gz] = g.dir, nx = -gz, nz = gx, lo = rig.feet + STEP + 0.02, hi = rig.feet + 1.3; let mouth = null;
+    for (let s = -1.2; s <= 0.4; s += 0.05) { const cx = g.at[0] + gx * s, cz = g.at[1] + gz * s; if (colBlocked(cx + nx * 0.3, cz + nz * 0.3, lo, hi) || colBlocked(cx - nx * 0.3, cz - nz * 0.3, lo, hi)) { mouth = [cx, cz]; break; } }
+    if (!mouth || !shimmyFits(mouth[0] + gx * 0.1, mouth[1] + gz * 0.1, gx, gz, rig.feet)) return [];
+    G = body.gap = { dir: g.dir, entry: [mouth[0] - gx * 0.7, mouth[1] - gz * 0.7], phase: 'approach', clear: 0 }; // (0.7 m short of it: room to turn and re-step clear of its corners)
+  }
+  const [gx, gz] = G.dir;
+  if (G.phase === 'approach') {
+    const tx = G.entry[0] - px, tz = G.entry[1] - pz, d = Math.hypot(tx, tz);
+    if (d < 0.03) G.phase = 'turn'; else { const k = Math.min(l, d) / d; return [[tx * k, tz * k, 0]]; }
+  }
+  body.shimmy = (body.shimmy || 0) + dt; body.shimDir = [gx, gz]; // side-on from here
+  if (G.phase === 'turn') { if ((body.shimTurn ?? 1) < 0.12) G.phase = 'through'; else return [[0, 0, 0]]; }
+  // through: along the axis at a side-step's pace; done once the body facing the way fits again
+  G.clear = !bodyBlocked(px, pz, gx, gz, rig.feet) && !bodyBlocked(px - gx * 0.4, pz - gz * 0.4, gx, gz, rig.feet) ? G.clear + dt : 0; // (the trailing side out too: it turns back to the view only once wholly clear)
+  if (G.clear > 0.3) { endGap(); return []; }
+  return [[gx * l * 0.45, gz * l * 0.45, 0]];
+}
+function endGap() { if (body.gap) { body.gap = null; body.shimmy = 0; } }
 function shimmyFits(x, z, ux, uz, feet) {
   const lo = feet + STEP + 0.02, hi = feet + 1.3, rx = -uz, rz = ux;
   for (const [a, l] of SHIMMY_PROBES) if (colBlocked(x + ux * a + rx * l, z + uz * a + rz * l, lo, hi)) return false;
@@ -6186,7 +6241,8 @@ function legRoom(x, z, s) { // (every 10 cm from the body to the foothold: a thi
   return true;
 }
 function assess(x, z, px, pz) {
-  const sup = footSupport(x, z), kind = footKind, rise = sup - rig.feet;
+  let sup = footSupport(x, z); const kind = footKind; { const mx = x - px, mz = z - pz, ml = Math.hypot(mx, mz); if (ml > 1e-6) { const so = stepOverAt(x, z, sup, mx / ml, mz / ml); if (so !== null) sup = so; } }
+  const rise = sup - rig.feet;
   if (rise > SCRAMBLE || trunkHit(x, z)) return null;
   const mx = x - px, mz = z - pz, ml = Math.hypot(mx, mz) || 1, ux = mx / ml, uz = mz / ml;
   const U = [ux, uz], head = Math.min(ceilingAt(x, z, sup, U), ceilingAt(x + ux * 0.45, z + uz * 0.45, sup, U), body.four ? ceilingAt(x + ux * 0.9, z + uz * 0.9, sup, U) : Infinity) - sup;
@@ -6298,7 +6354,7 @@ function movePlayer(dt) {
   if (input.keys.has('ArrowRight')) player.yaw -= dt * 1.8;
   if (input.keys.has('ShiftLeft') || input.keys.has('ShiftRight')) run = true;
   const mag = Math.hypot(f, s); if (mag > 1) { f /= mag; s /= mag; }
-  const speed = lerp((run ? 4.2 : 1.6) * (1 - 0.55 * body.duck), GAIT4.speed * (run ? 1.4 : 1), body.need) * physResist(f, s); // a stooped duck-walk is slow; on hands slower; a branch you cannot bend stops you
+  const speed = lerp((run ? 4.2 : 1.6) * (1 - 0.55 * body.duck), GAIT4.speed * (run ? 1.4 : 1), body.need) * physResist(f, s) * (body.straddle ? 0.3 : 1); // (straddling something: slow until the trailing leg is over) // a stooped duck-walk is slow; on hands slower; a branch you cannot bend stops you
   const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
   const px = player.x, pz = player.z;
   if (!rig.lift && !rig.vault && rig.vy === 0) { const here = footSupport(px, pz); if (here - rig.feet > STEP) rig.feet = here; } // embedded (e.g. a rock streamed in around you): climb out
@@ -6355,16 +6411,19 @@ function movePlayer(dt) {
         const c = Math.cos(a * sd), sn = Math.sin(a * sd), k = Math.cos(a) * 0.9;
         veer.push([(dx * c - dz * sn) * k, (dx * sn + dz * c) * k, sd]);
       }
-      for (const [mx, mz, sd] of body.four ? [[dx, dz, 0]] : [[dx, dz, 0], ...veer, [dx, 0, 0], [0, dz, 0]]) { // on hands, you go where the holds lead or not at all
+      const gapC = gapPlan(px, pz, dx, dz, dt); // a narrow gap only a side-on body fits: a committed plan (to its mouth, turn, through)
+      let wide = false; { const l = Math.hypot(dx, dz) || 1, ux0 = dx / l, uz0 = dz / l, lo = rig.feet + STEP + 0.02, hi = rig.feet + CLEAR4; // a wall across the way (blocked at both shoulders and the middle): you stop, not slide along it
+        wide = [-0.3, 0.3].every((q) => colBlocked(px + ux0 * 0.45 - uz0 * q, pz + uz0 * 0.45 + ux0 * q, lo, hi)); } // (both shoulders: a wall, or a gap too narrow to face; you stop rather than edge in by angles)
+      for (const [mx, mz, sd, tag] of body.four ? [[dx, dz, 0]] : body.gap ? gapC.map((c) => [...c, 'gap']) : [[dx, dz, 0], ...(wide ? [] : veer), [dx, 0, 0], [0, dz, 0]]) { // on hands, you go where the holds lead or not at all
         if (!mx && !mz) continue;
         if (sd) body.veer = sd;
         const [nx, nz] = stemPushOut(lim(px + mx), lim(pz + mz));
         const st = assess(nx, nz, px, pz);
         if (st === null) continue;
         let sx = nx, sz = nz, shim = false;
-        { const ml = Math.hypot(mx, mz) || 1, ux2 = mx / ml, uz2 = mz / ml, fe = Math.max(rig.feet, st.sup); // the whole body must fit: facing the way, or else turned sideways (a shimmy)
+        if (tag !== 'gap') { const ml = Math.hypot(mx, mz) || 1, ux2 = mx / ml, uz2 = mz / ml, fe = Math.max(rig.feet, st.sup); // the whole body must fit: facing the way, or else turned sideways (a shimmy)
           if (bodyBlocked(nx, nz, ux2, uz2, fe)) { if (sd || body.four || !shimmyFits(nx, nz, ux2, uz2, fe)) continue; shim = true; const k = (body.shimTurn ?? 1) < 0.3 ? 0.45 : 0; sx = lerp(px, nx, k); sz = lerp(pz, nz, k); } } // (turned side-on first, then side-stepping)
-        body.shimmy = shim ? (body.shimmy || 0) + dt : 0; body.shimDir = shim ? [mx, mz] : body.shimDir;
+        if (tag !== 'gap') { body.shimmy = shim ? (body.shimmy || 0) + dt : 0; if (shim) body.shimDir = [mx, mz]; }
         if (!quadAllows(nx, nz, px, pz)) { if (!st.need) needT = 0; continue; } // held back by the limbs where hands aren't needed: stand up
         needT = st.need;
         if (st.rise > STEP) rig.lift = { x: nx, z: nz, y: st.sup }; else { player.x = sx; player.z = sz; }
@@ -6372,7 +6431,7 @@ function movePlayer(dt) {
       }
     } else if (!vault) needT = needHere();
     if (!rig.lift && !rig.vault) {
-      const sup = footSupport(player.x, player.z);
+      let sup = footSupport(player.x, player.z); { const w = body.want, wl = w ? Math.hypot(w[0], w[1]) : 0; if (wl) { const so = stepOverAt(player.x, player.z, sup, w[0] / wl, w[1] / wl); if (so !== null) sup = Math.max(so, Math.min(sup, rig.feet)); } } // (over a thin top, the body stays at the footing either side)
       if (sup >= rig.feet) { rig.feet = sup; rig.vy = 0; body.airborne = false; }
       else {
         const drop = rig.feet - sup, snap = body.four ? 0.3 : 0.06 + speed * dt * MAX_GROUND_SLOPE; // holding on, a slip off a stem's crown is not a fall
@@ -6663,8 +6722,8 @@ function foothold(tx, tz) {
   return [x, z, footStack(x, z, y)];
 }
 function footholdBase(tx, tz) {
-  const s0 = supportAt(tx, tz);
-  if (Math.abs(s0 - rig.feet) < 0.45 && legRoom(tx, tz, s0)) return [tx, tz, s0];
+  const s0 = supportAt(tx, tz), w = body.want, wl = w ? Math.hypot(w[0], w[1]) : 0, narrow = (x, z, s) => wl && stepOverAt(x, z, s, w[0] / wl, w[1] / wl) !== null;
+  if (Math.abs(s0 - rig.feet) < 0.45 && legRoom(tx, tz, s0) && !narrow(tx, tz, s0)) return [tx, tz, s0];
   const c = [];
   for (const r of [0.12, 0.25]) for (let k = 0; k < 8; k++) { const a = k * 0.785; c.push([tx + Math.cos(a) * r, tz + Math.sin(a) * r]); }
   for (const k of [0.3, 0.55, 0.8, 1]) c.push([lerp(tx, player.x, k), lerp(tz, player.z, k)]);
@@ -6672,7 +6731,7 @@ function footholdBase(tx, tz) {
   let best = null, bd = Infinity, fb = [tx, tz, s0], fe = Math.abs(s0 - rig.feet);
   for (const [x, z] of c) {
     const s = supportAt(x, z), e = Math.abs(s - rig.feet), d = Math.hypot(x - tx, z - tz);
-    if (e < 0.45 && d < bd && legRoom(x, z, s)) { bd = d; best = [x, z, s]; }
+    if (e < 0.45 && d < bd && legRoom(x, z, s) && !narrow(x, z, s)) { bd = d; best = [x, z, s]; }
     if (e < fe) { fe = e; fb = [x, z, s]; }
   }
   return best || fb;
@@ -6879,13 +6938,13 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
   const stepLen = lerp(RIG.stepWalk, RIG.stepRun, runK) * (1 - 0.5 * steep) * (1 - 0.4 * body.duck), duty = lerp(0.4, 0.62, runK);
   const byaw = body.yaw ?? player.yaw, hx = Math.cos(byaw), hz = -Math.sin(byaw); // the body's own right (sideways, it lies along the way)
   const shim = body.shimmy > 0;
-  const ideal = (ft) => shim ? [player.x + hx * ft.side * 0.14, player.z + hz * ft.side * 0.14] : [player.x + rx * ft.side * RIG.hipW, player.z + rz * ft.side * RIG.hipW];
+  // each foot either side of the body itself (not of the way it is going: walking backwards or sideways, those differ)
+  const ideal = (ft) => [player.x + hx * ft.side * (shim ? 0.14 : RIG.hipW), player.z + hz * ft.side * (shim ? 0.14 : RIG.hipW)];
   const landAhead = (1 - duty) * stepLen;
   const aim = (ft, tLeft) => { const [ix, iz] = ideal(ft), a = landAhead * (shim ? 0.5 : 0.8) + spd * tLeft; let x = ix + ux * a, z = iz + uz * a;
-    if (shim) { // the feet never pass each other: the trailing foot closes up to 0.16 m behind the leading one
-      const o = body.feet[ft === body.feet[0] ? 1 : 0], ahead = (o.x - player.x) * ux + (o.z - player.z) * uz, mine = (ix - player.x) * ux + (iz - player.z) * uz;
-      const along = (x - player.x) * ux + (z - player.z) * uz, lead = mine > (( (ideal(o)[0] - player.x) * ux + (ideal(o)[1] - player.z) * uz)), lim = lead ? Math.max(along, ahead + 0.16) : Math.min(along, ahead - 0.16);
-      x += ux * (lim - along); z += uz * (lim - along); }
+    // the feet never pass each other: across the body, each stays at least 0.16 m on its own side of the other foot
+    const o = body.feet[ft === body.feet[0] ? 1 : 0], oL = (o.x - player.x) * hx + (o.z - player.z) * hz, mL = (x - player.x) * hx + (z - player.z) * hz;
+    const lim = ft.side > 0 ? Math.max(mL, oL + 0.16) : Math.min(mL, oL - 0.16); x += hx * (lim - mL); z += hz * (lim - mL);
     return [x, z]; };
   if (four) { const w = body.want || [0, 0]; quadStep(dt, w[0], w[1]); body.moving = false; }
   else {
@@ -6913,12 +6972,28 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
       for (const ft of body.feet) { const [ix, iz] = ideal(ft), d = Math.hypot(ft.x - ix, ft.z - iz); if (d > worstD) { worstD = d; worst = ft; } }
       if (worst) { const [ix, iz] = ideal(worst); startSwing(worst, ix, iz, 0.3); }
     }
+    body.straddle = false; body.strK = body.strK || 0;
+    if (!vlt && !body.airborne && spd > 0.05) for (const ft of body.feet) { // straddling something (a foot planted behind it, the hips past it): that foot comes over now, and the body slows
+      if (ft.t < 1) continue; const n = Math.max(1, Math.ceil(Math.hypot(player.x - ft.x, player.z - ft.z) / 0.08)); let between = false;
+      for (let k = 1; k < n && !between; k++) { const x = lerp(ft.x, player.x, k / n), z = lerp(ft.z, player.z, k / n); between = colBlocked(x, z, ft.y + 0.12, ft.y + 0.6); }
+      if (!between) continue; body.straddle = true;
+      if (!body.feet.some((f) => f.t < 1)) { const [tx, tz] = aim(ft, 0.4); startSwing(ft, tx, tz, 0.4); }
+    }
+    body.strK += ((body.straddle ? 1 : 0) - body.strK) * Math.min(1, dt * 10);
+    if (!vlt && !body.airborne && !body.feet.some((ft) => ft.t < 1)) { // planted crossed (the body turned over them): the one further out of place steps back to its side at once
+      const [L, R] = body.feet[0].side < 0 ? body.feet : [body.feet[1], body.feet[0]];
+      if ((R.x - L.x) * hx + (R.z - L.z) * hz < 0.08) { const far = (ft) => { const [ix, iz] = ideal(ft); return Math.hypot(ft.x - ix, ft.z - iz); }, ft = far(L) > far(R) ? L : R, [tx, tz] = aim(ft, 0.25); startSwing(ft, tx, tz, 0.25); }
+    }
   }
   for (const ft of body.feet) if (ft.t < 1) {
     if (!four && !ft.ln && ft.t < 0.7 && spd > 0.05) { [ft.tx, ft.tz, ft.ty] = foothold(...aim(ft, ft.dur * (1 - ft.t))); ft.stack = lastStack; }
     ft.t = Math.min(1, ft.t + dt / ft.dur);
-    const e = ft.t * ft.t * (3 - 2 * ft.t), l = Math.sin(Math.PI * ft.t) * ft.lift, n = ft.ln || [0, 1, 0];
+    const over = !four && ft.lift > RIG.lift + 0.15, tt = over ? clamp((ft.t - 0.3) / 0.7, 0, 1) : ft.t; // a step over something: the foot rises first, then goes over it
+    const e = tt * tt * (3 - 2 * tt), l = (over ? smoothstep(0, 0.3, ft.t) * (1 - smoothstep(0.8, 1, ft.t)) : Math.sin(Math.PI * ft.t)) * ft.lift, n = ft.ln || [0, 1, 0]; // (over: up, held while it crosses, down)
     ft.x = lerp(ft.sx, ft.tx, e) + n[0] * l; ft.z = lerp(ft.sz, ft.tz, e) + n[2] * l; ft.y = lerp(ft.sy, ft.ty, e) + n[1] * l;
+    if (!four) { // around the standing leg, not through it: the swinging foot keeps 0.2 m out to its own side of the other foot
+      const o = body.feet[ft === body.feet[0] ? 1 : 0], by = body.yaw ?? player.yaw, hx = Math.cos(by), hz = -Math.sin(by), m = (ft.x - o.x) * hx + (ft.z - o.z) * hz, want = 0.2 * Math.sin(Math.PI * ft.t);
+      const gap = ft.side > 0 ? want - m : m + want; if (gap > 0) { ft.x += hx * ft.side * gap; ft.z += hz * ft.side * gap; } }
     if (!four && ft.fb) { const q = Math.sin(Math.PI * ft.t); ft.x += ft.fb[0] * q; ft.y += ft.fb[1] * q; ft.z += ft.fb[2] * q; } // a branch across the shin pushes the swinging foot aside and up
     if (ft.t >= 1) { ft.x = ft.tx; ft.y = ft.ty; ft.z = ft.tz; if (ft.ln) body.q.stats.steps++; if (!four && ft.ty < ft.sy - 0.15) body.vcrouch -= (ft.sy - ft.ty) * 0.6; } // big step down: knees take it
   }
@@ -7126,7 +7201,7 @@ function walkPose() {
   const cf = body.fb && !body.four ? body.fb : { lat: 0, lean: 0, crouch: 0, hand: [[0, 0, 0], [0, 0, 0]] }; // contact offsets, at once
   const yaw = body.yaw ?? player.yaw, fx = -Math.sin(yaw), fz = -Math.cos(yaw), rX = Math.cos(yaw), rZ = -Math.sin(yaw);
   return {
-    pelvis: [player.x + rX * (body.lat + cf.lat), Math.max(rig.feet + 0.45, body.pelvis.y + body.crouch + cf.crouch), player.z + rZ * (body.lat + cf.lat)], // (a crouch-walk keeps the hips above 0.45 m: lower than that is on hands)
+    pelvis: [player.x + rX * (body.lat + cf.lat), Math.max(rig.feet + 0.45, body.pelvis.y + body.crouch + cf.crouch) + 0.13 * (body.strK || 0), player.z + rZ * (body.lat + cf.lat)], // (straddling: up on the leading leg) // (a crouch-walk keeps the hips above 0.45 m: lower than that is on hands)
     frame: { R: [rX, 0, rZ], U: [0, 1, 0], F: [fx, 0, fz] }, bend: [body.lean + cf.lean, body.roll, 0], neckPitch: -neckBack(body.lean),
     feet: body.feet.map((ft) => [ft.x, ft.y + 0.06, ft.z]), toes: [[fx, 0, fz], [fx, 0, fz]],
     hands: body.hands.map((h, k) => [h.p.x + cf.hand[k][0], h.p.y + cf.hand[k][1], h.p.z + cf.hand[k][2]]),
@@ -7589,7 +7664,7 @@ window.foothold = {
   physics: { MD, modal: () => modal, clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
   branches: { crunchSegs, crunchStack, branchLoad, get crunchList() { return crunchList; }, logBuf: () => logBuf, logLeafBuf: () => logLeafBuf, logBranches, plantVariant, target: () => breakTargetAt, pick() { const r = running; running = true; breakTarget(); running = r; return breakTargetAt; }, push: pushState, pushStart, pushStop, pushUpdate, breakBranch, treeSegs, plantCells: () => plantCells, brokenTrees: () => brokenTrees, limbSolids, logBranchCells: () => branchLogCells },
   plants: { lib: plantLib, roots: () => rootMeshObj, rootQueue: () => rootQueue, rootCells: () => rootCells, PL },
-  debug: { bodyBlocked: (x, z, ux, uz) => { const r = bodyBlocked(x, z, ux, uz, rig.feet); return r ? colWhy : ''; } },
+  debug: { gapAhead: (x, z, ux, uz) => gapAhead(x, z, ux, uz, rig.feet), shimmyFits: (x, z, ux, uz) => shimmyFits(x, z, ux, uz, rig.feet), rig: () => rig, stepOverAt: (x, z, s, ux, uz) => stepOverAt(x, z, s, ux, uz), footSupport: (x, z) => footSupport(x, z), bodyBlocked: (x, z, ux, uz) => { const r = bodyBlocked(x, z, ux, uz, rig.feet); return r ? colWhy : ''; } },
   gym: { pen: () => gymPen(), progress: () => gymProgress(), get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },
   loco: { stemAt, stemUnder, assess, grade, holdsNear, placeContact, stability, quadAllows, limbAt, GAIT4, TRACTION, get need() { return body.need; }, get q() { return body.q; } }, col: { topOf, supportAt, ceilingAt, duckPosture, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },

@@ -118,3 +118,31 @@ Passing now: monkey crawl (0.9 m), bear crawl (0.8), hands and knees (0.65), arm
 Not yet: dropping onto the hands at the mouth of the 0.55 m × 0.5 m gap dips the head 7 cm into the roof's face (the
 crawl through it is clean); the 0.4 m wall is stepped over with a thigh 3 cm into it (the limit is 2); every way over a
 barrier. Forest walk unchanged (37.5 m).
+
+## Fixes from play (17/30)
+
+- **Feet crossed walking backwards or sideways** (in the wrong order a third to half of the time, legs 15 cm into each
+  other): the feet were placed either side of the way you go, not of the body. Now either side of the body, each at
+  least 0.16 m on its own side of the other in every mode; a swinging foot keeps 0.2 m out to its side round the standing
+  one; a planted foot left on the wrong side (the body turned over it) steps back at once. Measured over 3–4 s each:
+  forward, backward, sideways right, back-and-right and walking while turning, no crossing and no overlap; turning on the
+  spot 2 cm; sideways left 7 cm (open).
+- **The bunny hop over the 0.4 m wall**: the body's height took the top of the 0.2 m wall as footing (its foot-sized
+  ring reaches it from 0.24 m away), stood on it, then fell off the far side, and falling parks both feet together. A top
+  under 0.5 m deep with footing within a step either side is now stepped over (`stepOverAt`): neither the body's height
+  nor a foothold takes it. A step-over swing rises first, holds while it crosses and drops last; a foot left behind
+  something the hips have passed comes over at once, the body slows to 0.3 and rises 0.13 m onto the leading leg
+  meanwhile. Left: the trailing shin grazes the top by 4 cm.
+- **The shimmy refused unless you came at the gap dead straight and centred**, and dithered at the mouth. It is now a
+  committed plan (`gapPlan`): measured once (the gap's centre line from narrow free runs across the way, solid both
+  sides; its mouth where a side-on body's flanks meet solid), then: walk to a point on the centre line 0.7 m short of the
+  mouth, turn side-on in place, side-step along the axis until the body facing the way fits behind and before it, turn
+  back. Steering away cancels it. Also: a wall at the edge of the foot-sized ring is beside you, not footing (one
+  centimetre off centre in a 0.45 m gap, the ring read the 2.6 m wall as a climb). From seven approaches (straight,
+  ±0.15 rad, off centre by 0.1 and 0.2 m, both together): six through, five within 1 cm, one 8 cm before the plan starts;
+  at 0.3 rad it does not find the gap (open).
+- **Fidgeting at a gap you cannot use** (station 12): the angled moves that take you round a stem were edging you into
+  the mouth. With both shoulders blocked ahead (a wall, or a gap too narrow to face) you now stop. Five of seven
+  approaches stop clean; off centre by 0.1 and 0.2 m, a leg is 3 and 16 cm into the mouth's corner (open).
+- **The rail at 0.5 m** had become a 0.4 m roof (its underside) once the body's height stayed on the ground beside it;
+  anything lower than the lowest crawl is now something to go over, not under.
