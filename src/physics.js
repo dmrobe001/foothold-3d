@@ -15,8 +15,8 @@
 // Gravity is left out for attached branches: their rest shape already includes their sag.
 // Reaction on the body: each touching segment pushes back with the branch's cantilever stiffness out to the contact
 // point, k_eff = 3 E I / ℓ³ (ℓ: arc length from the group's anchor), times how far that point is from rest.
-// soil and litter under a segment: stiffness per contact point SOIL · r · length (N/m: 50 kN/m under a 0.8 m section of a 30 cm log, a few hundred under a twig); bark on bark: compliance WOOD (m/N)
-const SOIL = 4e5, WOOD = 2e-6;
+// rolling resistance coefficients (soft forest floor; bark on bark) and sliding friction; soil and litter under a segment: stiffness per contact point SOIL · r · length (N/m: 50 kN/m under a 0.8 m section of a 30 cm log, a few hundred under a twig); bark on bark: compliance WOOD (m/N)
+const SOIL = 4e5, WOOD = 2e-6, CRR_SOIL = 0.25, CRR_WOOD = 0.08, MU_SOIL = 0.8, MU_WOOD = 0.7, SLOP = 0.008;
 export class PhysicsCore {
   constructor() { this.groups = new Map(); this.free = new Map(); }
   add(g) { // g: { id, n, par Int32, u, s0 (n*3), x0 (n*3), r, L, k, w, lim }
@@ -133,7 +133,12 @@ export class PhysicsCore {
     if (f.v0) for (let b = 0; b < nb; b++) for (let k = 0; k < 3; k++) f.v[b * 3 + k] = f.v0[k];
     this.fFrames(f); this.fCaps(f);
     f.cts = []; f.noPair = new Set(); // parts of one object that touch in its rest shape (a fork's two branches at their base) never collide with each other
-    for (let c = 0; c < f.nc; c++) for (let d = c + 1; d < f.nc; d++) { const k = d * 7; if (f.cb[c] !== f.cb[d] && this.segCap(f.wc[c * 7], f.wc[c * 7 + 1], f.wc[c * 7 + 2], f.wc[c * 7 + 3], f.wc[c * 7 + 4], f.wc[c * 7 + 5], f.wc, k, f.wc[c * 7 + 6] + 0.01)) f.noPair.add(c * f.nc + d); }
+    f.thick = []; f.solid = []; for (let c = 0; c < f.nc; c++) { if (f.cr[c] >= 0.02) f.thick.push(c); if (f.cr[c] >= 0.01 || f.nc <= 4) f.solid.push(c); } // only these meet each other within one object (twigs do not jam visibly)
+    const W = f.wc, T = f.thick;
+    for (let x = 0; x < T.length; x++) for (let y = x + 1; y < T.length; y++) { const c = T[x], d = T[y]; if (f.cb[c] === f.cb[d]) continue;
+      const a = c * 7, k = d * 7, R = W[a + 6] + W[k + 6] + 0.01; // box first
+      if (Math.min(W[a], W[a + 3]) - R > Math.max(W[k], W[k + 3]) || Math.max(W[a], W[a + 3]) + R < Math.min(W[k], W[k + 3]) || Math.min(W[a + 1], W[a + 4]) - R > Math.max(W[k + 1], W[k + 4]) || Math.max(W[a + 1], W[a + 4]) + R < Math.min(W[k + 1], W[k + 4]) || Math.min(W[a + 2], W[a + 5]) - R > Math.max(W[k + 2], W[k + 5]) || Math.max(W[a + 2], W[a + 5]) + R < Math.min(W[k + 2], W[k + 5])) continue;
+      if (this.segCap(W[a], W[a + 1], W[a + 2], W[a + 3], W[a + 4], W[a + 5], W, k, W[a + 6] + 0.01)) f.noPair.add(c * f.nc + d); }
     this.free.set(f.id, f);
   }
   wake(f) { f.sleep = false; f.still = 0; f.age = 0; f.snap = null; }
@@ -257,31 +262,32 @@ export class PhysicsCore {
   }
   fGround(f, h) {
     this.fCaps(f);
-    const wc = f.wc, mu = f.mu ?? 0.6;
-    for (let c = 0; c < f.nc; c++) { const k0 = c * 7, ln = Math.hypot(wc[k0 + 3] - wc[k0], wc[k0 + 4] - wc[k0 + 1], wc[k0 + 5] - wc[k0 + 2]), ns = Math.max(2, Math.ceil(ln / 0.5)); for (let si = 0; si <= ns; si++) { const t = si / ns; // a sample every half metre at most: a long log follows the ground's shape
+    const wc = f.wc, mu = MU_SOIL;
+    for (let c = 0; c < f.nc; c++) { if (f.cr[c] < 0.01 && f.nc > 4) continue; const k0 = c * 7, ln = Math.hypot(wc[k0 + 3] - wc[k0], wc[k0 + 4] - wc[k0 + 1], wc[k0 + 5] - wc[k0 + 2]), ns = Math.max(2, Math.ceil(ln / 0.5)); for (let si = 0; si <= ns; si++) { const t = si / ns; // a sample every half metre at most: a long log follows the ground's shape
       const k = c * 7, r = wc[k + 6], px = wc[k] + (wc[k + 3] - wc[k]) * t, py = wc[k + 1] + (wc[k + 4] - wc[k + 1]) * t, pz = wc[k + 2] + (wc[k + 5] - wc[k + 2]) * t;
       const H = f.hf && this.hfAt(f.hf, px, pz); if (!H) continue;
       const pen = H[0] + r - py; if (pen <= 0) continue;
       const nl = Math.hypot(H[1], 1, H[2]), nx = -H[1] / nl, ny = 1 / nl, nz = -H[2] / nl, P = [px - nx * r, py - ny * r, pz - nz * r];
       const alpha = 1 / (SOIL * Math.max(0.003, r) * Math.max(0.1, ln / ns * 2)); // (per sample: the ground under its share of the length) // soil bears on the area under it: stiffer under a thick, long log than a twig
-      f.touch = true; f.cts.push(f.cb[c], P[0], P[1], P[2], nx, ny, nz); this.pos(f, f.cb[c], P, null, -1, P, nx, ny, nz, pen, alpha, h);
+      f.touch = true; const jn = this.pos(f, f.cb[c], P, null, -1, P, nx, ny, nz, pen, alpha, h); f.cts.push(f.cb[c], P[0], P[1], P[2], nx, ny, nz, jn / h, CRR_SOIL * r);
       this.fric(f, f.cb[c], P, null, -1, P, nx, ny, nz, pen, mu, h);
     } }
   }
   fStatic(f, h) {
     const S = f.statics; if (!S || !S.length) return;
     this.fCaps(f); const wc = f.wc;
-    for (let c = 0; c < f.nc; c++) { const k = c * 7; for (let s = 0; s < S.length; s += 7) {
+    for (let c = 0; c < f.nc; c++) { if (f.cr[c] < 0.01 && f.nc > 4) continue; const k = c * 7; for (let s = 0; s < S.length; s += 7) {
       if (!this.segCap(wc[k], wc[k + 1], wc[k + 2], wc[k + 3], wc[k + 4], wc[k + 5], S, s, wc[k + 6])) continue;
       const H = this.hit, P = [H.px - H.nx * wc[k + 6], H.py - H.ny * wc[k + 6], H.pz - H.nz * wc[k + 6]];
-      f.touch = true; f.cts.push(f.cb[c], P[0], P[1], P[2], H.nx, H.ny, H.nz); this.pos(f, f.cb[c], P, null, -1, P, H.nx, H.ny, H.nz, H.pen, WOOD, h); this.fric(f, f.cb[c], P, null, -1, P, H.nx, H.ny, H.nz, H.pen, 0.5, h);
+      f.touch = true; const ln = this.pos(f, f.cb[c], P, null, -1, P, H.nx, H.ny, H.nz, H.pen, WOOD, h); f.cts.push(f.cb[c], P[0], P[1], P[2], H.nx, H.ny, H.nz, ln / h, CRR_WOOD * wc[k + 6]); this.fric(f, f.cb[c], P, null, -1, P, H.nx, H.ny, H.nz, H.pen, MU_WOOD, h);
     } }
   }
   fBody(f, all, nc, h) { // the body: shared by mass (the body's share moves it now, within the step)
     const B = f.box; this.fCaps(f); const wc = f.wc;
     for (let c = 0; c < nc; c += 7) {
       const R = all[c + 6]; if (Math.min(all[c], all[c + 3]) - R > B[1] || Math.max(all[c], all[c + 3]) + R < B[0] || Math.min(all[c + 1], all[c + 4]) - R > B[3] || Math.max(all[c + 1], all[c + 4]) + R < B[2] || Math.min(all[c + 2], all[c + 5]) - R > B[5] || Math.max(all[c + 2], all[c + 5]) + R < B[4]) continue;
-      for (let s = 0; s < f.nc; s++) {
+      const L = f.sleep || f.nc > 60 ? f.solid : null, nn = L ? L.length : f.nc; // (a big object meets the body with its parts of 1 cm and up; asleep, only those wake it)
+      for (let si = 0; si < nn; si++) { const s = L ? L[si] : si;
         const k = s * 7; if (!this.segCap(wc[k], wc[k + 1], wc[k + 2], wc[k + 3], wc[k + 4], wc[k + 5], all, c, wc[k + 6])) continue;
         const H = this.hit, b = f.cb[s], P = [H.px - H.nx * wc[k + 6], H.py - H.ny * wc[k + 6], H.pz - H.nz * wc[k + 6]];
         if (f.sleep) this.wake(f);
@@ -295,14 +301,19 @@ export class PhysicsCore {
   }
   fPair(f, g, h) { // two objects (or two parts of one, not joined to each other): at the contact point, with friction
     const A = f.box, B = g.box; if (A[0] > B[1] || A[1] < B[0] || A[2] > B[3] || A[3] < B[2] || A[4] > B[5] || A[5] < B[4]) return;
-    this.fCaps(f); this.fCaps(g); const fw = f.wc, gw = g.wc, mu = Math.min(f.mu ?? 0.6, g.mu ?? 0.6);
-    for (let c = 0; c < f.nc; c++) { const k = c * 7; for (let d = 0; d < g.nc; d++) {
-      if (f === g && (d <= c || f.cb[c] === f.cb[d] || f.noPair.has(c * f.nc + d) || this.joined(f, f.cb[c], f.cb[d]))) continue;
+    this.fCaps(f); this.fCaps(g); const fw = f.wc, gw = g.wc, mu = MU_WOOD, self = f === g;
+    const LA = self ? f.thick : f.solid, LB = self ? f.thick : g.solid, na = LA.length, nb2 = LB.length; // (between objects: capsules of 1 cm and up)
+    for (let ia = 0; ia < na; ia++) { const c = LA[ia], k = c * 7;
+      if (!self && (Math.min(fw[k], fw[k + 3]) - fw[k + 6] > B[1] || Math.max(fw[k], fw[k + 3]) + fw[k + 6] < B[0] || Math.min(fw[k + 1], fw[k + 4]) - fw[k + 6] > B[3] || Math.max(fw[k + 1], fw[k + 4]) + fw[k + 6] < B[2] || Math.min(fw[k + 2], fw[k + 5]) - fw[k + 6] > B[5] || Math.max(fw[k + 2], fw[k + 5]) + fw[k + 6] < B[4])) continue; // outside the other's box
+      for (let ib = self ? ia + 1 : 0; ib < nb2; ib++) { const d = LB[ib];
+      if (self && (f.cb[c] === f.cb[d] || f.noPair.has(Math.min(c, d) * f.nc + Math.max(c, d)) || this.joined(f, f.cb[c], f.cb[d]))) continue;
       const l = d * 7; if (!this.segCap(fw[k], fw[k + 1], fw[k + 2], fw[k + 3], fw[k + 4], fw[k + 5], gw, l, fw[k + 6])) continue;
       const H = this.hit, P1 = [H.px - H.nx * fw[k + 6], H.py - H.ny * fw[k + 6], H.pz - H.nz * fw[k + 6]], P2 = [H.qx + H.nx * gw[l + 6], H.qy + H.ny * gw[l + 6], H.qz + H.nz * gw[l + 6]];
-      if (g.sleep && !f.sleep && H.pen > 0.003) this.wake(g);
-      if (f.sleep && !g.sleep && H.pen > 0.003) this.wake(f);
-      f.touch = g.touch = true; this.pos(f, f.cb[c], P1, g, g.cb[d], P2, H.nx, H.ny, H.nz, H.pen, WOOD, h); // bark on bark
+      if (H.pen <= SLOP) continue; H.pen -= SLOP; // a little overlap is tolerated (logs in a pile rest slightly into each other)
+      if (g.sleep && !f.sleep && H.pen > 0.02) this.wake(g); // woken only by a real push
+      if (f.sleep && !g.sleep && H.pen > 0.02) this.wake(f);
+      f.touch = g.touch = true; const ln = this.pos(f, f.cb[c], P1, g, g.cb[d], P2, H.nx, H.ny, H.nz, H.pen, WOOD, h); // bark on bark
+      if (!f.sleep) f.cts.push(f.cb[c], P1[0], P1[1], P1[2], H.nx, H.ny, H.nz, ln / h, CRR_WOOD * fw[k + 6]); if (g !== f && !g.sleep) g.cts.push(g.cb[d], P2[0], P2[1], P2[2], -H.nx, -H.ny, -H.nz, ln / h, CRR_WOOD * gw[l + 6]);
       this.fric(f, f.cb[c], P1, g, g.cb[d], P2, H.nx, H.ny, H.nz, H.pen, mu, h);
       this.fCaps(f); if (g !== f) this.fCaps(g);
     } }
@@ -323,7 +334,7 @@ export class PhysicsCore {
     { const k = 1 - Math.exp(-25 * h), I = f.Iw, w = f.w; // wood damps its own vibration: each joint takes out part of the two bodies' relative spin
       for (let j = 0; j < f.nj; j++) { if (f.jbr[j]) continue; const a = f.ja[j], b = f.jb[j], ia = (I[a * 9] + I[a * 9 + 4] + I[a * 9 + 8]), ib = (I[b * 9] + I[b * 9 + 4] + I[b * 9 + 8]), s = ia + ib || 1;
         for (let d = 0; d < 3; d++) { const rel = (w[b * 3 + d] - w[a * 3 + d]) * k; w[b * 3 + d] -= rel * ib / s; w[a * 3 + d] += rel * ia / s; } } }
-    for (let i = 0; i < f.cts.length; i += 7) { // contacts with the ground and fixed things are dissipative: a rebound keeps 20 % of its speed
+    for (let i = 0; i < f.cts.length; i += 9) { // contacts with the ground and fixed things are dissipative: a rebound keeps 20 % of its speed
       const b = f.cts[i], o = b * 3, rx = f.cts[i + 1] - f.bx[o], ry = f.cts[i + 2] - f.bx[o + 1], rz = f.cts[i + 3] - f.bx[o + 2], nx = f.cts[i + 4], ny = f.cts[i + 5], nz = f.cts[i + 6], w = f.w;
       const vn = (f.v[o] + w[o + 1] * rz - w[o + 2] * ry) * nx + (f.v[o + 1] + w[o + 2] * rx - w[o] * rz) * ny + (f.v[o + 2] + w[o] * ry - w[o + 1] * rx) * nz;
       if (vn <= 0) continue;
@@ -331,9 +342,13 @@ export class PhysicsCore {
       const tx = (ry * nz - rz * ny) * j, ty = (rz * nx - rx * nz) * j, tz = (rx * ny - ry * nx) * j, I = f.Iw, i9 = b * 9;
       w[o] += I[i9] * tx + I[i9 + 1] * ty + I[i9 + 2] * tz; w[o + 1] += I[i9 + 3] * tx + I[i9 + 4] * ty + I[i9 + 5] * tz; w[o + 2] += I[i9 + 6] * tx + I[i9 + 7] * ty + I[i9 + 8] * tz;
     }
-    for (let i = 0; i < f.cts.length; i += 7) { // rolling resistance: litter, bark and uneven ground take the spin out of anything rolling on them
-      const b = f.cts[i], o = b * 3, nx = f.cts[i + 4], ny = f.cts[i + 5], nz = f.cts[i + 6], w = f.w, wn = w[o] * nx + w[o + 1] * ny + w[o + 2] * nz, k = Math.exp(-4 * h);
-      w[o] = wn * nx + (w[o] - wn * nx) * k; w[o + 1] = wn * ny + (w[o + 1] - wn * ny) * k; w[o + 2] = wn * nz + (w[o + 2] - wn * nz) * k;
+    for (let i = 0; i < f.cts.length; i += 9) { // rolling resistance: the surface deforms under a rolling thing, a torque Crr·r·N against the roll
+      const b = f.cts[i], o = b * 3, nx = f.cts[i + 4], ny = f.cts[i + 5], nz = f.cts[i + 6], N = f.cts[i + 7], cr = f.cts[i + 8], w = f.w, I = f.Iw, i9 = b * 9;
+      const wn = w[o] * nx + w[o + 1] * ny + w[o + 2] * nz, tx = w[o] - wn * nx, ty = w[o + 1] - wn * ny, tz = w[o + 2] - wn * nz, wt = Math.hypot(tx, ty, tz);
+      if (wt < 1e-6 || !(N > 0)) continue;
+      const J = cr * N, ux = tx / wt, uy = ty / wt, uz = tz / wt; // angular impulse against the roll this substep
+      const ax = I[i9] * ux + I[i9 + 1] * uy + I[i9 + 2] * uz, ay = I[i9 + 3] * ux + I[i9 + 4] * uy + I[i9 + 5] * uz, az = I[i9 + 6] * ux + I[i9 + 7] * uy + I[i9 + 8] * uz, dw = Math.min(wt, J * Math.hypot(ax, ay, az));
+      const al = Math.hypot(ax, ay, az) || 1; w[o] -= ax / al * dw; w[o + 1] -= ay / al * dw; w[o + 2] -= az / al * dw;
     }
     f.cts.length = 0;
     if (!fast && f.touch) { const k = Math.exp(-6 * h); for (let i = 0; i < f.nb * 3; i++) { f.v[i] *= k; f.w[i] *= k; } } // slow and touching something: contact jitter dies
@@ -433,7 +448,7 @@ export class PhysicsCore {
       const k = owner[c / 7], f = this.fref[k * 2], cc = this.fref[k * 2 + 1]; if (!f) return 1;
       const b = f.cb[cc], P = [hit.qx, hit.qy, hit.qz], wo = this.wGen(f, b, P[0] - f.bx[b * 3], P[1] - f.bx[b * 3 + 1], P[2] - f.bx[b * 3 + 2], -hit.nx, -hit.ny, -hit.nz), wr = g.pin[i] ? 0 : g.w[i] * hit.t * hit.t;
       if (wo + wr <= 0) return 0;
-      if (wo > 0) f.cts.push(b, P[0], P[1], P[2], -hit.nx, -hit.ny, -hit.nz), f.touch = true; // the same contact treatment as anything else (rebound damping, rolling resistance)
+      if (wo > 0) f.cts.push(b, P[0], P[1], P[2], -hit.nx, -hit.ny, -hit.nz, 0, 0), f.touch = true; // the same contact treatment as anything else (rebound damping, rolling resistance)
       if (wo > 0) this.vkick(f, b, P, -hit.nx, -hit.ny, -hit.nz, hit.pen * wo / (wo + wr) / wo / (this.hstep || 1 / 240)); // as momentum: it moves out over the step, with the speed that takes
       return wr / (wo + wr);
     }
@@ -503,7 +518,7 @@ export function makeFree(id, pts, edges, wood, extra = {}) {
   const L = edges.map((g) => Math.max(1e-4, Math.hypot(pts[g.b][0] - pts[g.a][0], pts[g.b][1] - pts[g.a][1], pts[g.b][2] - pts[g.a][2])));
   const root = edges.map((_, e) => e), find = (e) => (root[e] === e ? e : (root[e] = find(root[e])));
   const kap = edges.map((g, e) => { const p = g.par ?? -1; if (p < 0) return 0; const rr = Math.min(edges[p].r, g.r); return E * Math.PI * rr ** 4 / 4 / ((L[p] + L[e]) / 2); });
-  edges.forEach((g, e) => { const p = g.par ?? -1; if (p >= 0 && (kap[e] > K_RIGID_F || g.r < TWIG_F)) root[find(e)] = find(p); });
+  const twig = extra.twig ?? TWIG_F; edges.forEach((g, e) => { const p = g.par ?? -1; if (p >= 0 && (kap[e] > K_RIGID_F || g.r < twig)) root[find(e)] = find(p); });
   const ids = new Map(), seg2body = edges.map((_, e) => { const r = find(e); if (!ids.has(r)) ids.set(r, ids.size); return ids.get(r); });
   const nb = ids.size, bm = new Float32Array(nb), bx = new Float32Array(nb * 3), bq = new Float32Array(nb * 4), bI = new Float32Array(nb * 9);
   const em = edges.map((g, e) => rho * Math.PI * g.r * g.r * L[e] + 0.002);
@@ -530,7 +545,7 @@ export function makeFree(id, pts, edges, wood, extra = {}) {
 
 // the worker's program: the class above plus a message loop
 export function workerSource() {
-  return `const SOIL = ${SOIL}, WOOD = ${WOOD};
+  return `const SOIL = ${SOIL}, WOOD = ${WOOD}, CRR_SOIL = ${CRR_SOIL}, CRR_WOOD = ${CRR_WOOD}, MU_SOIL = ${MU_SOIL}, MU_WOOD = ${MU_WOOD}, SLOP = ${SLOP};
 ${PhysicsCore.toString()}
 const core = new PhysicsCore();
 onmessage = (e) => {

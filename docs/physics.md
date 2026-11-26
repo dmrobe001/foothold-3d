@@ -247,6 +247,28 @@ moves with it. Fresh fallen trees that still carry their branches (as rods ancho
   the far end rises to 1.27 m, and you ride it down.
 - A maple limb broken 6 m up: 22 bodies, lands, lies flat, some joints snap.
 
+### Calibration (second pass)
+
+- **Friction:** sliding μ 0.8 on soil and litter, 0.7 bark on bark.
+- **Rolling resistance** as soil deformation does it: each contact applies a torque Crr · r · N against the roll (N
+  the contact's normal force from the solver), Crr 0.25 on the forest floor and 0.08 bark on bark. A big log nudged
+  on the ground rolls a little and stops; it no longer rolls like a can on concrete.
+- **Beds:** where an object already rests in the ground when it is made, its own copy of the ground is shaped to it
+  (its underside carved in, at least one grid cell wide). A log half sunk into the soil lies in its trough: touching it
+  wakes it without lifting it (measured: 0.0 cm rise, 1.8 cm shift walking over a log sunk 15 cm), and rolling it means
+  lifting it out.
+- **Decay:** a log's wood follows its decay fraction fd (years down over the time a stem that size takes to rot):
+  density 550 · (1 − 0.45 fd) kg/m³, MOR × (1 − 0.8 fd), E × (1 − 0.6 fd) [rough: rots take most of the strength
+  before most of the mass].
+- **Overlap slop:** objects tolerate 8 mm of overlap before pushing apart (logs in a pile were placed slightly into
+  each other), and one wakes another only by pushing it 2 cm. Before this, waking one log woke its whole pile.
+- **Every fallen stem 3 cm and up** near you is an object, including fresh ones that still carry branches: those are one
+  object with their branches (branches under 1.5 cm ride rigidly on their parent). While asleep its branches stay rods,
+  so walking through its twigs is as before; it comes alive from your weight, a push, or a hit on a part 1 cm or thicker.
+- **No mesh swap:** a log is drawn by its own instance in the terrain tile, which follows the stem's pose.
+- **Force at the right part:** a thin pole is several jointed bodies; your weight is now applied to the body under your
+  foot. It used to go to the first body whatever the foot stood on, which threw a pole into the air.
+
 ## Push
 
 The Break button is now Push. Held, it presses on whatever your hands reach in the direction you look, ramping to 300 N
@@ -259,7 +281,8 @@ the body leaned back 0.28 rad.
 ## Not yet
 
 - Small pieces resting on springy branches can fidget for a while before they sleep (two integrators meeting).
-- Fresh fallen trees carrying branches stay put.
+- An awake fresh fallen tree's twigs under 1 cm do not meet the body (its branch rods are retired when it comes alive).
+- A planted leg still yields only at the knee, so a shin can stay a few centimetres into a log that rolls against it.
 - The body's share of a rod contact arrives one frame late (the solver runs on a worker).
 - Twigs touching near their base can stay a few centimetres inside the body.
 - A planted leg takes its share at the knee only; it does not step aside.
