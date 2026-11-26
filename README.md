@@ -74,12 +74,12 @@ World panel: **Camera motion** (Full, Reduced, Off), **View** (first person, or 
 Branches near your body are simulated as elastic rods on a worker thread. They bend as you pass, push back, and snap
 when strained past the wood's limit; a branch too stiff to push stops you. See `docs/physics.md`.
 
-## Branches
+## Push
 
-Look at a branch within reach and press **B** (or the **Break branch** button) to hang your weight on it. Whether it
-breaks, and where, comes from a beam calculation with the wood's strength; dead branches snap near the trunk. Thick low
-limbs are solid, and limbs can give way under you. Fallen trees keep their branches for some years. See
-`docs/plants.md`, step 3.
+Look at something within reach and hold **B** (or the **Push** button): your hands press on it, up to 300 N along your
+view, and the same force acts back on you. A branch bends (and may snap), a loose piece or a log moves, a standing trunk
+does not and you lean back. Free objects (broken pieces, loose wood, fallen logs near you) are rigid bodies joined where
+the wood bends: they fall, flop, roll, break and lever, and your weight on one presses it. See `docs/physics.md`.
 
 ## Performance panel
 

@@ -208,11 +208,60 @@ joint read as breaking strain.
 - Forest, 60 s: 13 overlaps in 1200 samples across all eight categories, mostly the first frame after touching a
   stick, before the solver has it.
 
+## Free objects: rigid bodies joined where the wood bends
+
+Anything not attached is a free object: a piece that broke off, loose wood once touched, a root or shrub stem that
+snapped, and every fallen stem within 12 m (asleep until something wakes it). Before this, a free piece was one rigid
+body: a bent or branched piece could only tumble whole, and fallen stems were scenery.
+
+**Model** (`PhysicsCore.addFree`, built by `makeFree`): rigid bodies joined at the points where segments meet, solved
+with XPBD for rigid bodies (Müller et al. 2020: positions and orientations move, then each constraint corrects them
+through the generalized inverse mass 1/m + (r×n)·I⁻¹(r×n), and velocities follow from the change). Segments are fused
+into one body where the wood is too stiff for any load here to bend it measurably (joint stiffness κ = EI/L above
+5×10⁴ N·m/rad) or the child is a twig under 4 mm. A joint holds its two bodies together at a point and resists turning
+from their rest relative orientation with compliance 1/κ; it breaks when the torque it carried over the step (the vector
+sum of its angular impulses, divided by the step) exceeds MOR · health · πr³/4.
+
+**Contacts** act at the contact point, with friction: ground (soil stiffness per contact point 4×10⁵ · r · length N/m,
+so about 50 kN/m under a 0.8 m section of a 30 cm log and a few hundred under a twig), fixed scenery, each other, the
+body (shared by mass), and branch rods (shared by mass, as momentum). Contacts with the ground and fixed things keep 20 %
+of a rebound, and resist rolling (spin about axes along the ground decays at 4/s). A cylinder therefore rolls because
+friction turns it; a bent or branched shape cannot, and flops. Joints damp their own vibration (relative spin decays at
+25/s). Thin segments' inertia about their own axis is floored at a tenth of that across them; without that, a twig's
+million-to-one ratio made the solver unstable.
+
+**Forces at points.** A planted foot on a free object presses it with its share of your weight, and rides on it: held
+where it was planted in the body's own frame, carried as it moves, and you with it. A push presses at the hands.
+
+**Sleep.** An object sleeps once no part has moved more than 2 cm (or turned about 6°) in a second, or after 20 s. Asleep,
+it is solid to everything else; a touch, a load or a hit wakes it. Fallen stems near you start asleep; the first time one
+wakes it gets its own mesh, its instance in the tile is hidden, and its fixed walking surface is replaced by one that
+moves with it. Fresh fallen trees that still carry their branches (as rods anchored to the stem) stay put for now.
+
+**Measured** (Node unless noted):
+- A 30 cm log dropped 1 m: lands, no breaks, asleep within a second.
+- An L-shaped branch dropped 1.5 m: flops onto its flat side keeping its shape; peak joint torques 0.1–0.6 of their limits.
+- A log across a log, 1 m short arm: 785 N on it does nothing (the log's own moment about the pivot is about 1070 N·m);
+  1400 N tips it.
+- In the gym ('Seesaw: a log across a log'): standing on the raised end, it tips; your end goes from 1.04 m to the ground,
+  the far end rises to 1.27 m, and you ride it down.
+- A maple limb broken 6 m up: 22 bodies, lands, lies flat, some joints snap.
+
+## Push
+
+The Break button is now Push. Held, it presses on whatever your hands reach in the direction you look, ramping to 300 N
+along your view: a branch, root or shrub stem (a point force on the rod), a free object (a point force on its body), or
+something fixed (nothing moves). The same force acts back on you: hands on the contact point, the trunk shifted and
+leaned back by F/2600 N/m and 0.45 m · F / 380 N·m. It lets go when the contact leaves your reach. Measured in the gym:
+a sapling's branch moved 13 cm under 300 N; a log rolled 49 cm away and out of reach; a standing trunk did not move and
+the body leaned back 0.28 rad.
+
 ## Not yet
 
-- The body's share of a rod contact arrives one frame late (the solver runs on a worker): a few centimetres for a frame.
+- Small pieces resting on springy branches can fidget for a while before they sleep (two integrators meeting).
+- Fresh fallen trees carrying branches stay put.
+- The body's share of a rod contact arrives one frame late (the solver runs on a worker).
 - Twigs touching near their base can stay a few centimetres inside the body.
 - A planted leg takes its share at the knee only; it does not step aside.
 - Shadows of a bending branch stay at its rest pose.
 - The movement planner does not yet choose between pushing, ducking and going round from stiffness.
-- Stepping uses rest-pose branch positions, not where the simulated rod currently is.
