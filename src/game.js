@@ -1294,9 +1294,9 @@ function breakTarget() {
     for (let i = 0; i < P.n; i++) if (!rec.gone?.[i]) consider(P.ord[i] >= 1 || sap ? 'tree' : 'fixed', rec, ws, i, 0.004);
   }
   for (const r of logPick) { const M = r.m; if (!M || player.x < M.box[0] - 3 || player.x > M.box[1] + 3 || player.z < M.box[2] - 3 || player.z > M.box[3] + 3) continue; const P = M.v.P; for (let i = 0; i < P.n; i++) if (M.segs[i * 7 + 6] > 0 && !r.gone?.[i]) consider(P.ord[i] >= 1 ? 'log' : 'fixed', r, M.segs, i, 0.004); }
-  for (const r of rootPick) { const M = r.m; if (!M || (r.x - player.x) ** 2 + (r.z - player.z) ** 2 > 100) continue; for (let i = 0; i < M.P.n; i++) if (!M.fixed[i]) consider('root', r, M.ws, i, 0.003); }
+  if (PHYS.roots) for (const r of rootPick) { const M = r.m; if (!M || (r.x - player.x) ** 2 + (r.z - player.z) ** 2 > 100) continue; for (let i = 0; i < M.P.n; i++) if (!M.fixed[i]) consider('root', r, M.ws, i, 0.003); }
   for (const it of plantItemsNear(player.x, player.z, 2)) { const T = plantProxy(it); for (let i = 0; i < T.P.n; i++) if (!it.gone?.[i]) consider('plant', it, T.ws, i, 0.002); }
-  for (const o of falls.values()) { if ((o.x - player.x) ** 2 + (o.z - player.z) ** 2 > 100) continue; const C = freeCaps(o); for (let c = 0; c < C.length / 7; c++) consider('free', o, C, c, 0.004, { b: o.f.cb[c] }); }
+  if (PHYS.free) for (const o of falls.values()) { if ((o.x - player.x) ** 2 + (o.z - player.z) ** 2 > 100) continue; const C = freeCaps(o); for (let c = 0; c < C.length / 7; c++) consider('free', o, C, c, 0.004, { b: o.f.cb[c] }); }
   { const S = staticCaps(player.x, player.z), ws = new Float32Array(S.length * 7); S.forEach((q, k) => ws.set([...q.a, ...q.b, q.r], k * 7)); for (let k = 0; k < S.length; k++) consider('fixed', null, ws, k, 0); }
   breakTargetAt = best; $('bBreak').hidden = !best;
   if (best) { const t = best.kind === 'fixed' ? 'Push (it will not move)' : `Push · ${Math.max(1, Math.round(best.r * 200))} cm`; if ($('bBreak').textContent !== t) $('bBreak').textContent = t; }
@@ -1327,6 +1327,14 @@ function closestRaySeg(e, d, ws, k, maxT) { // closest approach of the ray e + t
   const px = e.x + d.x * t - ax - ux * u, py = e.y + d.y * t - ay - uy * u, pz = e.z + d.z * t - az - uz * u;
   return { t, u, dist: Math.hypot(px, py, pz) };
 }
+// ---- which physics runs. What stays on: everything is a collider for the body, and a branch, sapling or plant that a
+// body part (or a push with the hands) presses bends in its own modes (the modal solver), as far as the force you can
+// apply moves it. The rest is switched off until it can be afforded again:
+//   free:   ground wood and logs waking as rigid bodies, and broken pieces falling as rigid bodies
+//   breaks: anything breaking: branches snapping under the modal load, under your weight, under a scripted hand or
+//           foot (a way over that then gives way), or twigs crushed in a stack underfoot
+//   roots:  exposed roots bending (they stay solid)
+const PHYS = { free: false, breaks: false, roots: false };
 const BODY_N = 785; // your weight, newtons
 const bBreak = $('bBreak');
 bBreak.addEventListener('pointerdown', (e) => { e.preventDefault(); pushStart(); });
@@ -1336,6 +1344,7 @@ function flash(msg) { $('hint').textContent = msg; $('hint').style.opacity = 1; 
 // checked as one is underfoot (branchLoad). One that snaps or bends away is no longer under you, and you drop.
 const tested = new WeakSet();
 function standLoad() {
+  if (!PHYS.breaks) return;
   for (let k = 0; k < 7; k++) {
     const a = (k / 6) * 6.283, x = player.x + (k ? Math.cos(a) * FOOT : 0), z = player.z + (k ? Math.sin(a) * FOOT : 0);
     for (const o of solids.get(ckey8(x, z)) || []) {
@@ -1419,7 +1428,7 @@ function customTree(rec) { // this tree's own mesh: the variant's buffers minus 
 // what broke off falls: turned so it lies roughly level, about the joint where it broke, and dropped onto the ground.
 // o: { src: {bark, leaf} buffers with a node per vertex and positions in plant metres times ps, toW(plant metres) ->
 // world, nrm(local normal) -> world normal, ws: world segments, P, s: world scale, gone, node, tint, conifer, leaves }
-function fallOrDrop(o) { return [...falls.values()].filter((f) => f.awake).length < 12 && (phys.worker || phys.core) ? spawnFall(o) : dropPiece(o); }
+function fallOrDrop(o) { return PHYS.free && [...falls.values()].filter((f) => f.awake).length < 12 && (phys.worker || phys.core) ? spawnFall(o) : dropPiece(o); }
 // the broken-off part's triangles in the world, where they were when it broke (place: an optional extra transform)
 function pieceGeometry(o, place = (p) => _pg.set(p[0], p[1], p[2])) {
   const { gone } = o, tmp = new THREE.Vector3();
@@ -2274,8 +2283,8 @@ function modalActivate(dt) { // every plant with a segment within reach of the b
   }
   for (const r of logPick) { const M = r.m; if (!M || bx < M.box[0] - 3 || bx > M.box[1] + 3 || bz < M.box[2] - 3 || bz > M.box[3] + 3) continue; want(r, 'log', M.segs); }
   for (const it of plantItemsNear(bx, bz, 2.5)) want(it, 'plant', plantProxy(it).ws);
-  for (const r of rootPick) { const M = r.m; if (!M || (r.x - bx) ** 2 + (r.z - bz) ** 2 > (M.P.rp * 2.5 + 4) ** 2) continue; want(r, 'root', M.ws); }
-  if (pushState.on && pushState.rod && !pushState.rod.owner.md) modalOn(pushState.rod.owner, pushState.rod.kind);
+  if (PHYS.roots) for (const r of rootPick) { const M = r.m; if (!M || (r.x - bx) ** 2 + (r.z - bz) ** 2 > (M.P.rp * 2.5 + 4) ** 2) continue; want(r, 'root', M.ws); }
+  if (pushState.on && pushState.rod) modalOn(pushState.rod.owner, pushState.rod.kind).near = now; // held by the hands: kept live (it was switched off again in the same pass before)
   for (const o of [...modal.owners]) { const M = o.md.M; if (now - o.md.near < 3000 || M.awake.some((a) => a) || M.hinge.some((h) => h) || o.gone) continue; modalOff(o); }
 }
 const BODY_PUSH = 200, BODY_TOTAL = 300; // the most a body part can push a branch aside with (N); beyond that it is you that yields
@@ -2297,7 +2306,7 @@ function modalStep(dt, caps) {
     if (h) { MD.pose(M, P, ws, X, o.gone); h = MD.contact(M, P, ws, X, caps, capV, BODY_PUSH, CF, CP, CD, box, bud2); } hits += h; // the last pass: what the body feels and must take
     for (const pc of pieces) if (MD.contact(M, P, ws, X, pc, null, 150, null, null, null, capBox(pc, 0.05))) moved = true;
     if (h) moved = true;
-    for (const br of MD.breaks(M, PH.BREAK_R ?? 0.015)) { // the load at a branch's base beat its wood: small and dry snaps off, anything else gives way and hangs
+    if (PHYS.breaks) for (const br of MD.breaks(M, PH.BREAK_R ?? 0.015)) { // the load at a branch's base beat its wood: small and dry snaps off, anything else gives way and hangs
       if (!br.clean) { moved = true; continue; }
       MD.remove(M, P, br.node);
       if (md.kind === 'tree') breakBranch(o, br.node); else if (md.kind === 'log') logBreak(o, br.node, true); else breakOff(o, md.kind, br.node);
@@ -2321,9 +2330,9 @@ function modalCombine() { // the plants' push-back plus the free objects' (from 
 function physStep(dt) {
   if (!phys.core && !phys.worker) physReset();
   const caps = bodyCapsules(); setBodyCaps(caps);
-  woodWake(caps); logWake(dt);
+  if (PHYS.free) { woodWake(caps); logWake(dt); }
   const t0 = performance.now(); modalActivate(dt); modalStep(dt, caps); modal.ms = performance.now() - t0;
-  if (![...falls.values()].some((o) => o.awake || (o.x - player.x) ** 2 + (o.z - player.z) ** 2 < 100)) { phys.freeOut = null; modalCombine(); phys.ms = 0; phys.prevCaps = caps; return; }
+  if (!PHYS.free || ![...falls.values()].some((o) => o.awake || (o.x - player.x) ** 2 + (o.z - player.z) ** 2 < 100)) { phys.freeOut = null; modalCombine(); phys.ms = 0; phys.prevCaps = caps; return; }
   const prev = phys.prevCaps && phys.prevCaps.length === caps.length ? phys.prevCaps : caps, forces = freeForces();
   if (phys.worker) {
     if (phys.pending) { phys.acc += dt; return; } // the sweep then covers every frame since the last step
@@ -3026,7 +3035,7 @@ function gymRun(i, secs = 16) {
     const f = gymProgress(); maxF = Math.max(maxF, f); maxH = Math.max(maxH, rig.feet - g0);
     if (body.four) hands = true; if (rig.lift && !lifting) lifts++; lifting = !!rig.lift; if (rig.vault && !wasV) vaults++; wasV = !!rig.vault; if (rig.over && !wasO) overs.push(rig.over.mode); wasO = !!rig.over; if (Math.abs(body.roll) > Math.abs(rollMax)) rollMax = body.roll;
     cam = Math.min(cam, toStem(body.eye)); duckMax = Math.max(duckMax, body.duck || 0);
-    if (e.solid) { const g = gymPen(); if (g.pen > pen) { pen = g.pen; penAt = `${g.what} at f ${gymProgress().toFixed(1)}`; } }
+    if (e.solid) { const g = gymPen(); if (g.pen > pen) { pen = g.pen; penAt = `${g.what} at f ${gymProgress().toFixed(1)}`; gymRun.penDiag = { over: rig.over?.mode || null, feet: body.feet.map((f) => ({ t: +f.t.toFixed(2), sy: +f.sy?.toFixed(2), ty: +f.ty?.toFixed(2), y: +f.y.toFixed(2), lift: +(f.lift || 0).toFixed(2), d: +Math.hypot((f.tx ?? 0) - (f.sx ?? 0), (f.tz ?? 0) - (f.sz ?? 0)).toFixed(2) })), feetY: +rig.feet.toFixed(2) }; } }
     if (f >= 5) break; // past the goal: stop before reaching the next row of stations
     if (lastEye !== null) eyeJump = Math.max(eyeJump, Math.abs(player.eye - lastEye)); lastEye = player.eye;
     const J = !rig.vault && !rig.over && body.sol?.J; if (J) for (const nm of ['head', 'neck', 'chest']) { const j = J[nm], c = ceilingAt(j[0], j[2], rig.feet, [0, -1]), gap = c - (j[1] + (nm === 'head' ? 0.11 : 0.06)); if (gap < worst) { worst = gap; worstAt = nm; } }
@@ -4054,6 +4063,7 @@ function branchOf(o) { // a solid that is a branch, as the foot-stack check desc
   return { kind: 'log', rec: r, ws: M.segs, i: o.node, P: M.v.P, s: M.s, dead: M.T > 1, gdn: [-M.X.y, -M.a.y, -M.Z.y] };
 }
 function overLoad(O, P) { // true if something gave way (the script has ended)
+  if (!PHYS.breaks) { body.overContacts = null; return false; }
   const pts = [...P.feet.map((f) => [f[0], f[1] - OVER_A, f[2], 1]), ...P.hands.map((h) => [h[0], h[1] - 0.05, h[2], 0.5])];
   const L = O.load || (O.load = pts.map(() => null)), on = [];
   pts.forEach((p, k) => {
@@ -4483,6 +4493,7 @@ function footStack(x, z, base) {
 }
 // a planted foot works down through its stack (updateBody calls this for each foot in stance)
 function crunchFoot(ft, dt) {
+  if (!PHYS.breaks) { ft.stack = null; return; } // nothing gives underfoot: the foot stays on the top of the stack
   const S = ft.stack; if (!S) return;
   let e = S.list[0];
   while (e && e.c.rec.gone?.[e.c.i]) { S.list.shift(); e = S.list[0]; } // gone already (snapped by something else)
@@ -5469,7 +5480,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); physStep(dt); refreshNear(player.x, player.z); },
-  physics: { MD, modal: () => modal, clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
+  physics: { switches: PHYS, MD, modal: () => modal, clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
   branches: { crunchSegs, crunchStack, branchLoad, get crunchList() { return crunchList; }, logBuf: () => logBuf, logLeafBuf: () => logLeafBuf, logBranches, plantVariant, target: () => breakTargetAt, pick() { const r = running; running = true; breakTarget(); running = r; return breakTargetAt; }, push: pushState, pushStart, pushStop, pushUpdate, breakBranch, treeSegs, plantCells: () => plantCells, brokenTrees: () => brokenTrees, limbSolids, logBranchCells: () => branchLogCells },
   plants: { lib: plantLib, roots: () => rootMeshObj, rootQueue: () => rootQueue, rootCells: () => rootCells, PL },
   debug: { branchSolids: () => [...new Set([...solids.values()].flat())].filter((o) => o.limb || o.branch), overTrack: (mode, side = -1, n = 120) => { // a way over, solved pose by pose, as joint positions in the barrier's frame [a along its normal from the near face, y up, s to the right] (for sim/)
@@ -5482,7 +5493,7 @@ window.foothold = {
       for (let i = 1; i <= n; i++) { const t = i / n, sol = SK.solvePose(overPose(keys, t)), J = sol.J, g = capsPen(capsOf(J), J.pelvis[0], J.pelvis[2]);
         out.push(`t ${t.toFixed(2)} ${(g.pen * 100).toFixed(0)}cm ${g.what} | pel ${loc(J.pelvis)} chest ${loc(J.chest)} head ${loc(J.head)} | kneeL ${loc(J.kneeL)} ankL ${loc(J.ankleL)} kneeR ${loc(J.kneeR)} ankR ${loc(J.ankleR)} | hL ${loc(J.handL)} hR ${loc(J.handR)} short ${['footL','footR','handL','handR'].map((k) => (sol.short[k] * 100).toFixed(0)).join('/')}`); }
       return `H ${B.H.toFixed(2)} D ${B.D.toFixed(2)} L ${B.L.toFixed(2)}\n` + out.join('\n'); }, barrier: () => body.barrier, overTried: () => body.overTried, measure: () => barrierAt(player.x, player.z, -Math.sin(player.yaw), -Math.cos(player.yaw)), supportAt: (x, z) => supportAt(x, z), gapAhead: (x, z, ux, uz) => gapAhead(x, z, ux, uz, rig.feet), shimmyFits: (x, z, ux, uz) => shimmyFits(x, z, ux, uz, rig.feet), rig: () => rig, stepOverAt: (x, z, s, ux, uz) => stepOverAt(x, z, s, ux, uz), footSupport: (x, z) => footSupport(x, z), bodyBlocked: (x, z, ux, uz) => { const r = bodyBlocked(x, z, ux, uz, rig.feet); return r ? colWhy : ''; } },
-  gym: { pen: () => gymPen(), progress: () => gymProgress(), get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), capture: () => captureSpot(), stationOrigin },
+  gym: { pen: () => gymPen(), progress: () => gymProgress(), get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), penDiag: () => gymRun.penDiag, capture: () => captureSpot(), stationOrigin },
   loco: { stemAt, stemUnder, assess, grade, holdsNear, placeContact, stability, quadAllows, limbAt, GAIT4, TRACTION, get need() { return body.need; }, get q() { return body.q; } }, col: { topOf, supportAt, ceilingAt, duckPosture, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },
   info() { return { near: Object.fromEntries(Object.entries(near.b).map(([k, v]) => [k, v.n])), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries }; },

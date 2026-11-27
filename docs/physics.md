@@ -525,3 +525,40 @@ Measured in the forest: four of the thickest low limbs broken off nearby trees a
 
 The small branches end up in the ground because nothing stops them. Step time didn't change measurably (7.8–9.7 ms
 across runs either way).
+
+## What runs now (most physics switched off)
+
+Stepping onto almost any log set it flopping, so the physics is cut back to two phenomena, behind one switch table
+(`PHYS` in `src/game.js`; `foothold.physics.switches` in the console):
+1. **Everything is a collider for the body.** Logs, ground wood, roots, rocks, stumps and limbs stay where the world put
+   them.
+2. **Bending under the body.** A branch, sapling or small plant that a body part presses, or that the hands push (Push
+   button or B), bends in its own modes (the modal solver), as far as the force the body can apply moves it:
+   - up to 200 N from one body part and 300 N in all;
+   - up to 300 N from a push.
+
+Switched off (each can be turned back on):
+- `free`: ground wood and logs waking as rigid bodies (the flopping), and broken pieces falling as rigid bodies.
+- `breaks`: everything that breaks:
+  - a branch snapping under the modal load;
+  - one breaking or bending away under your weight (`standLoad`);
+  - a support giving way under a scripted hand or foot (`overLoad`);
+  - twigs crushed in a stack underfoot (`crunchFoot`).
+- `roots`: roots bending. They stay solid.
+
+**Measured** (seed 1; eight logs, each walked at for 5 s from 3 m away; 2,400 steps):
+
+| | before | now |
+|---|---|---|
+| free objects alive at once | up to 24 | 0 |
+| twig stacks crunched | 3 | 0 |
+| body contacts with bending plants | 51 | 157 |
+| main-thread time per step | 8.8 ms | 5.9 ms |
+
+A push on four saplings (3.7–5.8 cm dbh) bends them: up to 300 N from the hands turns segments by 16–86°. Both builds
+give the same numbers.
+
+**Gym: 30/33**, down from 31. The slow 0.5 m rail station (32) now fails with a shin 6 cm inside the rail. With `free`
+on it passes, because the rail used to wake and be shoved aside. The clipping is the gait's: the swinging foot straddles
+or lands on a thin round rail. It was hidden, not introduced. Two foothold changes tried in this pass did not fix it and
+were reverted.
