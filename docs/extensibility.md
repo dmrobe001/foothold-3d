@@ -2,7 +2,7 @@
 
 Short answer: the **process layers** (terrain → water → site → stand dynamics → form) are general, and most of
 what makes a region distinct can be added as *data plus a few new processes*. The **appearance layer** is where
-the prototype is narrow: seven species (table rows since `plants.md` §8e, though the far crowns still have only three card archetypes), three rock shapes. That is where
+the prototype is narrow: eighteen species in three regions (table rows since `plants.md` §8e–8f, though the far crowns still have only three card archetypes), three rock shapes. That is where
 the next real engineering goes.
 
 ## What the pipeline is made of today

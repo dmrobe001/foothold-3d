@@ -1,6 +1,6 @@
 # Plants: design for a branched, rooted, breakable plant model
 
-Status: **steps 1 and 2 built**, with seven species (§8e); **step 3 mostly built** (branch obstacles, breaking, branches on fallen trees; pushing through foliage by branch is not yet); step 4 is design. This replaces the "Trees: forks, branch hierarchy, stubs" sketch in
+Status: **steps 1 and 2 built**, with eighteen species in three regions and three seasons (§8e, §8f); **step 3 mostly built** (branch obstacles, breaking, branches on fallen trees; pushing through foliage by branch is not yet); step 4 is design. This replaces the "Trees: forks, branch hierarchy, stubs" sketch in
 `extensibility.md` and folds in five requirements:
 
 1. leaf placement differs by plant;
@@ -411,6 +411,105 @@ Other measurements, default world:
 - Load time and frame time are unchanged within run-to-run noise: about 6 s and 16–22 ms in software rendering, both
   builds.
 - Generation takes 0.4–14 ms per plant for the new species. A mature oak has about 1,300 segments.
+
+## 8f. Regions, seasons, and trees that aren't the "normal tree" (built)
+
+Eighteen species now. A **region** (a world setting: cool temperate, the default; Mediterranean; mountain) picks the
+species pool and shifts the climate:
+- Mediterranean: site moisture −0.12, snow ×0.15.
+- Mountain: moisture +0.04, snow ×1.6.
+
+Within a region, the stand simulation sorts species by site as before (moisture, fertility, elevation), plus two new
+niche traits:
+- `riparian`: favours stream banks and wet hollows instead of avoiding them. Streams alone cover only 0.2 % of cells,
+  so wet hollows (the wetness index) count too.
+- `rocky`: tolerates rock and thin soil that keep other trees out.
+
+| species | region | what makes it look different | bark |
+|---|---|---|---|
+| willow | temperate (riparian) | weeping: long whips hang from every limb; short, often divided trunk | furrowed |
+| juniper | temperate, Mediterranean, mountain (rocky, dry) | several leaning, twisting stems; fluted, lumpy base; blue berries all year | shaggy strips |
+| wild cherry | temperate | tiered pseudo-whorls; white blossom (Apr–May), dark red cherries (Jun–Aug), red in autumn | glossy, banded lenticels |
+| rowan | temperate, mountain (rocky uplands) | small, often two-stemmed; cream flower heads (May–Jun), orange-red berries (Aug–Nov) | smooth grey |
+| plane | temperate, Mediterranean (riverside) | massive lumpy base, low spreading split | flaking camouflage plates |
+| olive | Mediterranean | many-stemmed, spiralled, burled and fluted trunk; silvery leaves; olives (Sep–Dec) | fissured grey |
+| cork oak | Mediterranean | low, broad, crooked crown | thick cork in a net of red fissures |
+| stone pine | Mediterranean | a clean stem under a flat-topped umbrella | orange scaly plates |
+| strawberry tree | Mediterranean | crooked, many-stemmed; flowers and red fruit together in autumn | thin red bark peeling to green |
+| larch | mountain | drooping branchlets; needles turn gold in autumn | scaly |
+| bristlecone | mountain (rocky ridges) | rope-twisted, lumpy stems; a third of its limbs dead; foxtail needles | silver deadwood with narrow live strips |
+
+**Generator** (`plants.js`, each an optional `ARCH` field; the original four species still grow identical graphs, checked
+by hash):
+- `upright`: gravitropism of the stem (default 0.6). Low values let stems wander.
+- `stemZig`: sympodial zig-zag of the stem.
+- `stems`: extra stems from the base. They hang off the first stem segment, so the pipe model fuses them into one
+  swollen bole.
+- `dieback`: a share of live limbs grown dead.
+- `sub.hangAll`, `maxK`, `seg`: weeping whips.
+- `umbrella`: a crown envelope, flat-topped and widest high up.
+
+**Trunks** (`barkMesh`):
+- `lumps`: burls, as a few interfering waves round and along the stem.
+- `flute`: ridges.
+- `twist`: spiral grain, turning the flutes and the bark pattern.
+- `swell`: a bottle-like base.
+
+Rough stems get 12 sides and rings about every 0.18 m. Normals are recomputed from the bumped surface, so the lumps
+shade. Collision still uses the plain radius.
+
+**Bark patterns** (`bark`, drawn in the near-tree bark shader from the bark's own coordinates):
+- smooth;
+- plates;
+- shaggy;
+- peeling;
+- cork;
+- banded;
+- papery (now on birch);
+- strip;
+- scaly (now on pine and spruce too);
+- fissured.
+
+Each pattern is a colour multiplier around the texture mean, so the species' bark tint still sets the hue. Far trunks
+and fallen logs keep the plain texture.
+
+**Seasons** (a world setting: spring = May, summer = July, autumn = October):
+- **Flowers and fruit:** `ARCH.show` lists them with their months and colours. In season they are tinted cards at the
+  shoot tips, berries hanging in bunches and flower heads all over the crown. Month ranges may wrap the new year.
+- **Autumn colour:** deciduous species turn in autumn: maple red, birch yellow, aspen and larch gold, oak russet, cherry
+  and rowan red, plane brown-yellow.
+- **Spring:** spring leaves are fresher.
+- **Colour without a new shader:** the game measures the leaf texture's mean colour once. Autumn tints and flower or
+  fruit cards are set so texture × tint averages to the named colour.
+
+**Wind flagging.** On exposed ridges (exposure > 0.45) a tree of any species uses the one-sided crown turned downwind
+(`W.windDir`). Its windward limbs are short or missing, as on real timberline trees.
+
+**Measured** (seed 1, basal area share of stems ≥ 10 cm):
+
+| world | composition |
+|---|---|
+| temperate, mesic granite (default) | fir 15, oak 13, pine 12, plane 10, aspen 9, willow 9, maple 8, birch 8, cherry 5, spruce 4, juniper 4, rowan 2 % |
+| temperate, wet basalt | plane 25, maple 24, willow 19, fir 15 % … |
+| temperate, dry sandstone | pine 69, juniper 10, oak 7 % … |
+| Mediterranean, mesic granite | stone pine 21, pine 20, oak 19, plane 14, olive 11, cork oak 11, juniper 2, strawberry tree 2 % |
+| Mediterranean, dry sandstone | pine 55, stone pine 25, juniper 7, olive 6 % … |
+| mountain, mesic granite | fir 26, larch 22, spruce 12, birch 11, aspen 11, pine 8, bristlecone 5 % … |
+
+Other measurements:
+- Wind-flagged trees: 300–560 per world, about 3 %.
+- Load time: 7.0 s against 6.4 s before (software rendering), from more variants and finer trunk meshes.
+- Frame time: unchanged within noise.
+- Movement gym: still 31/33.
+
+The species' niche numbers are guesses tuned for a plausible mix. The wood values for willow, juniper, cherry, plane and
+larch are from the USDA Wood Handbook (black willow, eastern redcedar, black cherry, American sycamore, western larch).
+Those for rowan, olive, cork oak, stone pine, strawberry tree and bristlecone are guesses.
+
+Not built yet:
+- Ground cover doesn't know the region: the Mediterranean floor is as lush as the temperate one.
+- Far card crowns use three shapes for every species.
+- Winter (leaf-off) is not a season option.
 
 ## 9. How we check it (the plant gym)
 

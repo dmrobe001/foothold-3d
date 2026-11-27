@@ -1,6 +1,6 @@
 // Foothold renderer, controls and UI. World data comes from ./worldgen.js.
 import * as THREE from 'three';
-import { generateWorld, sampleGrid, SPECIES, isConifer, GEOLOGY, crownRadius, crownFraction, treeHeight, plateRadius, plateThickness, WORLD, N, NF, CELL, HALF, hash3, mulberry32, makeNoise2D, clamp, smoothstep } from './worldgen.js';
+import { generateWorld, sampleGrid, SPECIES, REGIONS, isConifer, GEOLOGY, crownRadius, crownFraction, treeHeight, plateRadius, plateThickness, WORLD, N, NF, CELL, HALF, hash3, mulberry32, makeNoise2D, clamp, smoothstep } from './worldgen.js';
 import { settleDeadfall, trunkProfile } from './deadfall.js';
 import { buildGymWorld, gymToWorld, stationOrigin, STATIONS } from './gym.js';
 import * as SK from './skeleton.js';
@@ -12,9 +12,14 @@ const $ = (id) => document.getElementById(id);
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 
 // ---------------------------------------------------------------- settings
-const settings = { seed: 1, age: 160, moisture: 'mesic', storms: 'occasional', geology: 'granite', quality: isTouch ? 'low' : 'high', motion: 'full', view: 'first', body: 'hidden', place: 'forest' };
+const settings = { seed: 1, age: 160, moisture: 'mesic', storms: 'occasional', geology: 'granite', region: 'temperate', season: 'summer', quality: isTouch ? 'low' : 'high', motion: 'full', view: 'first', body: 'hidden', place: 'forest' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('foothold.settings') || '{}')); } catch (e) { /* storage unavailable */ }
 try { if (/(^|[?#&])gym\b/.test(location.search.slice(1) + '&' + location.hash.slice(1))) settings.place = 'gym'; } catch (e) { /* no location */ }
+try { // world settings in the link, e.g. #region=mediterranean&season=autumn&seed=4 (shareable, and used by tests)
+  const q = new URLSearchParams(location.hash.slice(1));
+  for (const k of ['region', 'season', 'moisture', 'geology', 'storms']) if (q.get(k)) settings[k] = q.get(k);
+  if (q.get('seed')) settings.seed = +q.get('seed'); if (q.get('age')) settings.age = +q.get('age');
+} catch (e) { /* no location */ }
 const saveSettings = () => { try { localStorage.setItem('foothold.settings', JSON.stringify(settings)); } catch (e) { /* ignore */ } };
 
 // ---------------------------------------------------------------- renderer, scene, lights
@@ -395,7 +400,7 @@ function cardGeometry(cards) {
       pos.push(k.c[0] + a * k.u[0] + c * k.v[0], k.c[1] + a * k.u[1] + c * k.v[1], k.c[2] + a * k.u[2] + c * k.v[2]);
       const nn = k.nFor ? k.nFor(a, c) : k.n; nor.push(nn[0], nn[1], nn[2]);
       uv.push((a + 1) / 2, (c + 1) / 2);
-      const ao = c < 0 ? k.ao0 : k.ao1; col.push(ao, ao, ao);
+      const ao = c < 0 ? k.ao0 : k.ao1, mu = k.mul || [1, 1, 1]; col.push(ao * mu[0], ao * mu[1], ao * mu[2]);
       uv[uv.length - 1] = lerp(k.v0 ?? 0, k.v1 ?? 1, (c + 1) / 2);
     }
     idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
@@ -578,6 +583,59 @@ function bendPatch(sh) {
     #ifdef USE_INSTANCING
     { float sx = length(instanceMatrix[0].xyz), sy = length(instanceMatrix[1].xyz), sz = length(instanceMatrix[2].xyz);
       vec2 b = bendXZ(clamp(position.y, 0.0, 1.0), sy); transformed.x += b.x / sx; transformed.z += b.y / sz; }
+    #endif`);
+}
+// Bark patterns (ARCH.bark, per vertex as aBark): drawn over the shared bark texture in the fragment shader, from the
+// bark's own coordinates (u round the stem, turned by the spiral grain; v along it, in half-circumferences). Each style
+// is a colour multiplier around the texture's mean, so the tree's instance colour (TINT.bark) still sets the hue.
+const BARK_GLSL = `varying float vBark;
+float bH(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float bN(vec2 p, float per) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); float i0 = mod(i.x, per), i1 = mod(i.x + 1.0, per);
+  return mix(mix(bH(vec2(i0, i.y)), bH(vec2(i1, i.y)), f.x), mix(bH(vec2(i0, i.y + 1.0)), bH(vec2(i1, i.y + 1.0)), f.x), f.y); }
+vec3 barkStyle(float s, vec2 uv, vec3 tex) {
+  if (s < 0.5) return tex;
+  float g = 0.25, t = dot(tex, vec3(0.333)) / g, u = uv.x, v = uv.y;
+  if (s < 1.5) return vec3(g) * (0.92 + 0.12 * bN(vec2(u * 8.0, v * 16.0), 8.0)) * mix(1.0, t, 0.2); // smooth, faintly mottled
+  if (s < 2.5) { // plates: flakes falling away, a camouflage of cream, olive and grey
+    float n = bN(vec2(u * 5.0, v * 7.7), 5.0) * 0.65 + bN(vec2(u * 11.0, v * 17.0), 11.0) * 0.35;
+    vec3 c = mix(vec3(0.62, 0.66, 0.52), vec3(1.0, 0.98, 0.9), smoothstep(0.42, 0.46, n)); c = mix(c, vec3(1.5, 1.42, 1.18), smoothstep(0.6, 0.64, n));
+    return vec3(g) * c * (0.94 + 0.1 * bN(vec2(u * 30.0, v * 46.0), 30.0)); }
+  if (s < 3.5) { // shaggy: long fibrous strips, weathering grey
+    float f = u * 16.0 + 1.2 * bN(vec2(u * 4.0, v * 1.5), 4.0), r = abs(fract(f) - 0.5) * 2.0;
+    vec3 c = mix(vec3(0.45, 0.38, 0.34), vec3(1.15, 1.0, 0.92), smoothstep(0.25, 0.7, r)) * (0.8 + 0.35 * bN(vec2(u * 48.0, v * 6.0), 48.0));
+    return vec3(g) * mix(c, vec3(1.25, 1.22, 1.18), smoothstep(0.62, 0.75, bN(vec2(u * 3.0, v * 2.0), 3.0)) * 0.6); }
+  if (s < 4.5) { // peeling: thin red bark curling off fresh green-cream underbark
+    float n = bN(vec2(u * 4.0, v * 5.3), 4.0) * 0.7 + bN(vec2(u * 9.0, v * 12.0), 9.0) * 0.3;
+    vec3 c = mix(vec3(1.0), vec3(1.15, 2.1, 1.9), smoothstep(0.57, 0.6, n)) * (1.0 - 0.45 * smoothstep(0.025, 0.0, abs(n - 0.565)));
+    return vec3(g) * c * (0.96 + 0.06 * bN(vec2(u * 20.0, v * 40.0), 20.0)); }
+  if (s < 5.5) { // cork: thick pale ridges in a net of deep, red-brown fissures
+    float n = bN(vec2(u * 7.0, v * 5.6), 7.0) * 0.6 + bN(vec2(u * 15.0, v * 12.0), 15.0) * 0.4;
+    return vec3(g) * mix(vec3(0.42, 0.26, 0.2), vec3(1.12, 1.06, 0.98) * (0.85 + 0.3 * bN(vec2(u * 40.0, v * 60.0), 40.0)), smoothstep(0.38, 0.5, n)); }
+  if (s < 6.5) { // banded: glossy, with rows of lenticels and peeling rings
+    float b = smoothstep(0.8, 0.9, fract(v * 14.0 + 0.4 * bN(vec2(u * 3.0, v * 4.0), 3.0))) * step(0.35, bN(vec2(u * 14.0, v * 14.0), 14.0));
+    vec3 c = mix(vec3(0.97 + 0.08 * bN(vec2(u * 10.0, v * 60.0), 10.0)), vec3(0.45, 0.38, 0.36), b);
+    return vec3(g) * mix(c, vec3(1.3, 1.15, 1.0), smoothstep(0.88, 0.94, bN(vec2(u * 2.0, v * 3.0), 2.0))); }
+  if (s < 7.5) { // papery: white, with dark lenticel dashes and black patches
+    float dash = smoothstep(0.86, 0.94, fract(v * 20.0 + 0.3 * bN(vec2(u * 5.0, v * 2.0), 5.0))) * step(0.45, bN(vec2(u * 10.0, v * 20.0), 10.0));
+    float pt = smoothstep(0.7, 0.78, bN(vec2(u * 3.0, v * 4.0), 3.0));
+    return vec3(g) * mix(vec3(0.97 + 0.06 * bN(vec2(u * 20.0, v * 80.0), 20.0)), vec3(0.22), max(dash * 0.8, pt * 0.85)); }
+  if (s < 8.5) { // strip bark: polished silver deadwood, live red-brown bark in a narrow twisting strip
+    float strip = smoothstep(0.2, 0.15, abs(fract(u + 0.15 * bN(vec2(u * 2.0, v), 2.0)) - 0.3));
+    float grain = 0.88 + 0.16 * sin(u * 140.0 + 4.0 * bN(vec2(u * 6.0, v * 4.0), 6.0));
+    return vec3(g) * mix(vec3(grain), vec3(0.5, 0.32, 0.25) * mix(1.0, t, 0.5), strip); }
+  if (s < 9.5) { // scaly: orange-red plates between dark fissures
+    vec2 q = vec2(u * 7.0, v * 7.0); q.x += 0.5 * floor(q.y); vec2 f = fract(q), i = floor(q);
+    float e = min(min(f.x, 1.0 - f.x) * 1.6, min(f.y, 1.0 - f.y)) + 0.06 * bN(vec2(u * 30.0, v * 30.0), 30.0);
+    return vec3(g) * mix(vec3(0.32, 0.27, 0.27), vec3(1.12, 1.0, 0.92) * (0.8 + 0.4 * bH(vec2(mod(i.x, 7.0), i.y))), smoothstep(0.05, 0.13, e)); }
+  float n = bN(vec2(u * 9.0, v * 6.0), 9.0) * 0.6 + bN(vec2(u * 20.0, v * 13.0), 20.0) * 0.4; // fissured: grey, deep wandering furrows
+  return vec3(g) * mix(vec3(0.4), vec3(1.1), smoothstep(0.35, 0.5, n)) * mix(1.0, t, 0.3);
+}
+`;
+function barkStylePatch(sh) {
+  sh.vertexShader = 'attribute float aBark;\nvarying float vBark;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vBark = aBark;');
+  sh.fragmentShader = BARK_GLSL + sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+    #ifdef USE_MAP
+    diffuseColor.rgb = barkStyle(vBark, vec2(vMapUv.x, vMapUv.y / 6.0), diffuseColor.rgb);
     #endif`);
 }
 function bendLocal(f, yu, H, zs = 1) {
@@ -881,7 +939,7 @@ function treeDepth(bend, hide) {
   return m;
 }
 const treeMats = {
-  bark: (() => { const m = new THREE.MeshLambertMaterial({ map: tex.bark }); m.onBeforeCompile = (sh) => { bendPatch(sh); pushPatch(sh, 0); }; m.customProgramCacheKey = () => 'treeNearBark'; return m; })(),
+  bark: (() => { const m = new THREE.MeshLambertMaterial({ map: tex.bark }); m.onBeforeCompile = (sh) => { bendPatch(sh); pushPatch(sh, 0); barkStylePatch(sh); }; m.customProgramCacheKey = () => 'treeNearBark'; return m; })(),
   farBark: (() => { const m = new THREE.MeshLambertMaterial({ map: tex.bark }); m.onBeforeCompile = (sh) => { bendPatch(sh); hidePatch(sh, 'instanceMatrix[3].xz'); }; m.customProgramCacheKey = () => 'treeFarBark'; return m; })(),
   leaf: treeFoliage(tex.leaf, 0.42, true), needle: treeFoliage(tex.needle, 0.38, true),
   farLeaf: treeFoliage(tex.leaf, 0.42, false), farNeedle: treeFoliage(tex.needle, 0.38, false),
@@ -898,8 +956,32 @@ function crownFrac(sp, d, light = 1) {
   const f = crownFraction(sp), young = clamp((25 - d) / 20, 0, 1);
   return f + (0.93 - f) * young * SPECIES[sp].keepLow * clamp(light, 0, 1);
 }
+// ---- seasons: leaf colour, and the flowers and fruit each species shows in its months (ARCH.show)
+const SEASON_MONTH = { spring: 5, summer: 7, autumn: 10 };
+const AUTUMN = { 2: [0.95, 0.28, 0.12], 3: [0.98, 0.82, 0.28], 5: [0.70, 0.40, 0.18], 6: [1.0, 0.76, 0.16], 7: [0.86, 0.82, 0.36], 9: [0.92, 0.34, 0.16], 10: [0.95, 0.30, 0.12], 11: [0.78, 0.58, 0.28], 16: [0.95, 0.74, 0.24] }; // deciduous species: maple red, birch yellow, oak russet, aspen gold, willow, cherry, rowan, plane, larch gold
+const month = () => SEASON_MONTH[W?.opt?.season] || 7;
+let texAvg = null; // mean linear colour of the leaf and needle textures (opaque texels): the colour a tint multiplies
+function textureMeans() {
+  if (texAvg) return texAvg; texAvg = {};
+  for (const [k, t] of [['leaf', tex.leaf], ['needle', tex.needle]]) {
+    const c = t.image, d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, a = [0, 0, 0]; let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 128) { a[0] += lin(d[i] / 255); a[1] += lin(d[i + 1] / 255); a[2] += lin(d[i + 2] / 255); n++; }
+    texAvg[k] = a.map((v) => v / Math.max(1, n));
+  }
+  return texAvg;
+}
+// a species' leaf tint (sRGB-ish, as TINT.leaf) in this world's season: autumn colours are set so texture x tint averages
+// to the named colour; spring leaves are fresher and yellower
+function leafTint(sp) {
+  const base = TINT.leaf[sp], m = month();
+  if (m >= 9 && AUTUMN[sp]) { const avg = textureMeans()[isConifer(sp) ? 'needle' : 'leaf'], A = AUTUMN[sp]; return [0, 1, 2].map((k) => Math.pow(lin(A[k]) / avg[k], 1 / 2.2)); }
+  if (m <= 5 && AUTUMN[sp]) return [base[0] * 1.06, base[1] * 1.1, base[2] * 0.9];
+  return base;
+}
+// flower and fruit cards: a vertex colour that, times the texture and the tree's leaf tint, averages to their own colour
+function showMul(sp, tint) { const avg = textureMeans()[isConifer(sp) ? 'needle' : 'leaf'], lt = leafTint(sp); return [0, 1, 2].map((k) => lin(tint[k]) / (avg[k] * lin(lt[k]))); }
 function plantVariant(sp, ci, shape, si) {
-  const key = `${sp}:${ci}:${shape}:${si}`; let v = plantLib.get(key); if (v) return v;
+  const key = `${sp}:${ci}:${shape}:${si}:${month()}`; let v = plantLib.get(key); if (v) return v;
   const dRep = Math.min(PCLASS[ci], SPECIES[sp].dmax * 0.75), hRep = treeHeight(sp, dRep), crRep = crownRadius(sp, dRep);
   const cf = crownFrac(sp, dRep, shape === 0 ? 0.3 : 1) * (shape === 0 ? 0.8 : 1) * (dRep < 6 ? 1.15 : 1), crownLen = Math.min(hRep * 0.95, hRep * cf);
   const seed = 1009 + sp * 7919 + ci * 613 + shape * 97 + si * 31;
@@ -908,8 +990,9 @@ function plantVariant(sp, ci, shape, si) {
   barkGeo.setAttribute('position', new THREE.Float32BufferAttribute(B.pos.map((q) => q / hRep), 3));
   barkGeo.setAttribute('normal', new THREE.Float32BufferAttribute(B.nor, 3)); barkGeo.setAttribute('uv', new THREE.Float32BufferAttribute(B.uv, 2)); barkGeo.setIndex(B.idx);
   barkGeo.setAttribute('aNode', new THREE.Float32BufferAttribute(B.node, 1)); // which segment each vertex belongs to: breaks leave out subtrees
+  barkGeo.setAttribute('aBark', new THREE.Float32BufferAttribute(new Float32Array(B.node.length).fill(PL.ARCH[sp].bark || 0), 1)); // the bark pattern
   const sc = (a) => a.map((q) => q / hRep);
-  const cards = PL.foliageCards(P, seed + 1), leafGeo = cardGeometry(cards.map((k) => ({ ...k, c: sc(k.c), u: sc(k.u), v: sc(k.v) })));
+  const cards = PL.foliageCards(P, seed + 1, { month: month() }), leafGeo = cardGeometry(cards.map((k) => ({ ...k, c: sc(k.c), u: sc(k.u), v: sc(k.v), mul: k.tint ? showMul(sp, k.tint) : null })));
   leafGeo.setAttribute('aNode', new THREE.Float32BufferAttribute(cards.flatMap((k) => [k.node, k.node, k.node, k.node]), 1));
   v = { key, sp, P, hRep, crRep, barkGeo, leafGeo, bark: null, leaf: null, cap: 0, n: 0, cast: ci >= 2 }; // saplings cast no shadow: small, and each caster is a draw call in the shadow pass
   plantLib.set(key, v); return v;
@@ -956,7 +1039,7 @@ function refreshPlants(px, pz, force) {
 // low solids your feet step on. All roots near the player are merged into one mesh.
 const ROOT_R = 24;
 let rootCells = new Map(), rootMeshObj = null;
-const ROOT_TINT = [[0.56, 0.50, 0.44], [0.60, 0.50, 0.42], [0.58, 0.54, 0.48], [0.58, 0.50, 0.44], [0.55, 0.49, 0.43], [0.54, 0.48, 0.42], [0.60, 0.56, 0.50]]; // weathered grey-brown, lighter than the soil
+const ROOT_TINT = [[0.56, 0.50, 0.44], [0.60, 0.50, 0.42], [0.58, 0.54, 0.48], [0.58, 0.50, 0.44], [0.55, 0.49, 0.43], [0.54, 0.48, 0.42], [0.60, 0.56, 0.50], [0.52, 0.47, 0.42], [0.62, 0.52, 0.44], [0.56, 0.46, 0.40], [0.58, 0.54, 0.48], [0.62, 0.58, 0.50], [0.56, 0.54, 0.50], [0.58, 0.50, 0.42], [0.62, 0.54, 0.46], [0.62, 0.46, 0.38], [0.58, 0.50, 0.44], [0.72, 0.66, 0.58]]; // weathered grey-brown, lighter than the soil
 function outcropTop(x, z) { let y = -Infinity; for (const o of solids.get(ckey8(x, z)) || []) if (o.kind === 'mesh' && o.big !== undefined) y = Math.max(y, topOf(o, x, z)); return y; }
 function rootSite(t) {
   const g = (x, z) => ground(x, z), gx = (g(t.x + 1.5, t.z) - g(t.x - 1.5, t.z)) / 3, gz = (g(t.x, t.z + 1.5) - g(t.x, t.z - 1.5)) / 3;
@@ -1227,7 +1310,7 @@ function customTree(rec) { // this tree's own mesh: the variant's buffers minus 
   const v = rec.v, keep = (g) => { const I = g.index.array, N = g.attributes.aNode.array, out = []; if (!rec.gone) return Array.from(I); for (let t = 0; t < I.length; t += 3) if (!rec.gone[N[I[t]]] && !rec.gone[N[I[t + 1]]] && !rec.gone[N[I[t + 2]]]) out.push(I[t], I[t + 1], I[t + 2]); return out; };
   const conifer = isConifer(v.sp);
   const make = (src, mat, col, depth) => {
-    const g = new THREE.BufferGeometry(); for (const k of ['position', 'normal', 'uv', 'color', 'aNode']) if (src.attributes[k]) g.setAttribute(k, src.attributes[k]);
+    const g = new THREE.BufferGeometry(); for (const k of ['position', 'normal', 'uv', 'color', 'aNode', 'aBark']) if (src.attributes[k]) g.setAttribute(k, src.attributes[k]);
     g.setIndex(keep(src)); g.setAttribute('aBend', new THREE.InstancedBufferAttribute(Float32Array.from(rec.bend), 4)); g.setAttribute('aWob', new THREE.InstancedBufferAttribute(Float32Array.from(rec.wob), 4));
     const m = new THREE.InstancedMesh(g, mat, 1); m.instanceMatrix.array.set(rec.m); m.instanceColor = new THREE.InstancedBufferAttribute(Float32Array.from(col), 3);
     m.frustumCulled = false; m.castShadow = true; m.receiveShadow = true; m.customDepthMaterial = depth; return m;
@@ -1962,7 +2045,7 @@ function ownerMats(o, tree, conifer) { // per object: the same programs, its own
   ownerTex(o, tree ? 'tree' : 'log');
   if (o.ph.mats) return o.ph.mats;
   const bark = new THREE.MeshLambertMaterial({ map: tex.bark, vertexColors: !tree });
-  bark.onBeforeCompile = (sh) => { if (tree) bendPatch(sh); nodePatch(sh, o.ph); }; bark.customProgramCacheKey = () => `actBark${tree ? 1 : 0}`;
+  bark.onBeforeCompile = (sh) => { if (tree) { bendPatch(sh); barkStylePatch(sh); } nodePatch(sh, o.ph); }; bark.customProgramCacheKey = () => `actBark${tree ? 1 : 0}`;
   const leaf = foliageMaterial(conifer ? tex.needle : tex.leaf, { alphaTest: conifer ? 0.38 : 0.42, wind: tree ? 0.012 : 0 }), base = leaf.onBeforeCompile;
   leaf.onBeforeCompile = (sh) => { base(sh); if (tree) bendPatch(sh); nodePatch(sh, o.ph); }; leaf.customProgramCacheKey = () => `actFol${tree ? 1 : 0}`;
   return (o.ph.mats = { bark, leaf });
@@ -2351,8 +2434,10 @@ const LITH = { granite: { kind: 'angular', round: 0.5, col: [0.50, 0.48, 0.46], 
 let hfTex = null, hcTex = null, ecoATex = null, ecoBTex = null, nearTerrain = null;
 
 const TINT = {
-  leaf: [[0.80, 0.86, 0.70], [0.86, 0.90, 0.62], [0.78, 0.92, 0.66], [0.98, 1.0, 0.70], [0.66, 0.78, 0.74], [0.74, 0.80, 0.52], [0.94, 1.02, 0.62]],   // per species (fir, pine, maple, birch, spruce: blue-green, oak: dark, aspen: bright yellow-green)
-  bark: [[0.48, 0.40, 0.35], [0.62, 0.44, 0.33], [0.55, 0.52, 0.48], [0.96, 0.94, 0.90], [0.50, 0.38, 0.32], [0.40, 0.38, 0.35], [0.84, 0.86, 0.76]], // spruce: scaly red-brown, oak: dark furrowed grey, aspen: greenish white
+  leaf: [[0.80, 0.86, 0.70], [0.86, 0.90, 0.62], [0.78, 0.92, 0.66], [0.98, 1.0, 0.70], [0.66, 0.78, 0.74], [0.74, 0.80, 0.52], [0.94, 1.02, 0.62],
+    [1.02, 1.06, 0.62], [0.62, 0.74, 0.70], [0.80, 0.90, 0.62], [0.84, 0.94, 0.66], [0.84, 0.92, 0.62], [0.86, 0.94, 0.92], [0.66, 0.76, 0.58], [0.74, 0.86, 0.60], [0.72, 0.84, 0.60], [0.96, 1.04, 0.70], [0.62, 0.72, 0.66]], // willow, juniper, cherry, rowan, plane, olive (silvery), cork oak, stone pine, strawberry tree, larch, bristlecone   // per species (fir, pine, maple, birch, spruce: blue-green, oak: dark, aspen: bright yellow-green)
+  bark: [[0.48, 0.40, 0.35], [0.62, 0.44, 0.33], [0.55, 0.52, 0.48], [0.96, 0.94, 0.90], [0.50, 0.38, 0.32], [0.40, 0.38, 0.35], [0.84, 0.86, 0.76],
+    [0.46, 0.42, 0.37], [0.62, 0.46, 0.38], [0.56, 0.34, 0.30], [0.62, 0.62, 0.60], [0.76, 0.74, 0.62], [0.56, 0.55, 0.52], [0.78, 0.68, 0.56], [0.66, 0.44, 0.34], [0.80, 0.36, 0.24], [0.60, 0.42, 0.34], [0.86, 0.80, 0.70]], // ... bristlecone: silver deadwood // spruce: scaly red-brown, oak: dark furrowed grey, aspen: greenish white
 };
 const mix3 = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
 
@@ -2457,8 +2542,10 @@ function buildWorld() {
     const gy = ground(t.x, t.z), kind = P.kind, rad = t.d / 100, f0 = t.form;
     // a tree at the edge of a gap, with a strong light gradient across it, grows a one-sided crown reaching into the light;
     // the variant reaches toward its +x, so turn the tree that way (broadleaves and pine: fir and spruce hold their shape)
-    const oneSided = t.st === 0 && t.d >= 6 && P.phot >= 0.6 && (f0?.pull ?? 0) / P.phot > 0.8; // about the most lopsided 15 %
-    let yaw = r() * Math.PI * 2; if (oneSided) yaw = Math.atan2(-f0.gz, f0.gx) + (yaw - Math.PI) * 0.08;
+    // wind-flagged: on an exposed ridge, any species loses the limbs on its windward side and its crown streams downwind
+    const flagged = t.st === 0 && t.d >= 6 && (t.ex ?? 0) > 0.45;
+    const oneSided = flagged || (t.st === 0 && t.d >= 6 && P.phot >= 0.6 && (f0?.pull ?? 0) / P.phot > 0.8); // about the most lopsided 15 %
+    let yaw = r() * Math.PI * 2; if (oneSided) yaw = (flagged ? -W.windDir : Math.atan2(-f0.gz, f0.gx)) + (yaw - Math.PI) * 0.08;
     const vari = 0.88 + 0.24 * r();
     const f = t.form || { lx: 0, lz: 0, sx: 0, sz: 0, A: 0, k: 1, ph: 0 };
     const cy0 = Math.cos(yaw), sy0 = Math.sin(yaw);
@@ -2471,7 +2558,7 @@ function buildWorld() {
       const crownLen = Math.min(h * 0.95, h * cf), cr = crownRadius(t.sp, t.d) * (0.85 + 0.3 * r());
       const bt = TINT.bark[t.sp], H = kind === 'conifer' ? h * 0.97 : h * 0.86;
       b.live.add(trs(t.x, gy - 0.15, t.z, yaw, rad, H, rad), bt[0] * vari, bt[1] * vari, bt[2] * vari, t.d, bendAttr, wobAttr);
-      const lt = TINT.leaf[t.sp], shadeDull = t.L !== undefined ? 0.82 + 0.18 * clamp(t.L * 3, 0, 1) : 1, cv = vari * shadeDull;
+      const lt = leafTint(t.sp), shadeDull = t.L !== undefined ? 0.82 + 0.18 * clamp(t.L * 3, 0, 1) : 1, cv = vari * shadeDull;
       const cy = gy + h - crownLen;
       // the crown sits on the bent stem: offset by the stem displacement at crown base (and a bit toward the top)
       const ub = clamp((h - crownLen) / H, 0, 1), um = clamp((h - crownLen * 0.5) / H, 0, 1);
@@ -4894,11 +4981,15 @@ function toggle(id, force) {
 for (const [p, b] of Object.entries(panels)) $(b).addEventListener('click', () => toggle(p));
 document.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('click', () => toggle(null)));
 
-const SPECIES_COLOR = ['#4f9fc0', '#d4ad3a', '#d0674a', '#e6e1d3', '#5a7fd6', '#8f6a3c', '#a8d05a']; // map identity colours: fir, pine, maple, birch, spruce, oak, aspen
-$('mapLegend').innerHTML = SPECIES.map((s, i) => `<span><i style="background:${SPECIES_COLOR[i]}"></i>${s.name}</span>`).join('') +
-  '<span><i class="line" style="background:#a0784e"></i>Log</span><span><i style="background:#8d8a84"></i>Snag</span><span><i class="line" style="background:#6fa3c9"></i>Stream</span>';
+const SPECIES_COLOR = ['#4f9fc0', '#d4ad3a', '#d0674a', '#e6e1d3', '#5a7fd6', '#8f6a3c', '#a8d05a', '#b7d36b', '#5f8f80', '#e05a7a', '#f08a30', '#c8c08a', '#9aa6a0', '#b4835a', '#3f8a4a', '#d0402a', '#e8c040', '#f0ece0']; // map identity colours, in SPECIES order
+function mapLegend() { // the species this world grows
+  const has = SPECIES.map(() => false); for (const t of W.trees) if (t.st === 0 && t.d >= 10) has[t.sp] = true;
+  $('mapLegend').innerHTML = SPECIES.map((s, i) => has[i] ? `<span><i style="background:${SPECIES_COLOR[i]}"></i>${s.name}</span>` : '').join('') +
+    '<span><i class="line" style="background:#a0784e"></i>Log</span><span><i style="background:#8d8a84"></i>Snag</span><span><i class="line" style="background:#6fa3c9"></i>Stream</span>';
+}
 
 function drawMapBase() {
+  mapLegend();
   const c = $('mapBase'), g = c.getContext('2d'), S = c.width, img = g.createImageData(S, S), k = S / WORLD;
   const L = new THREE.Vector3(-0.5, 0.8, -0.6).normalize();
   for (let py = 0; py < S; py++) for (let px = 0; px < S; px++) {
@@ -4958,7 +5049,7 @@ const REF = { stems: '300–700', ba: '25–50', snags: '10–60', logs: '50–4
 function fillStand() {
   const s = W.stats, f0 = (v) => Math.round(v).toLocaleString(), f1 = (v) => v.toFixed(1);
   const comp = SPECIES.map((p, i) => [p.name, s.bySpeciesBA[i] / (s.ba || 1)]).sort((a, b) => b[1] - a[1]).filter((a) => a[1] > 0.05).map(([n, v]) => `${n} ${Math.round(v * 100)}%`).join(' · ');
-  $('standSub').textContent = `${W.age} years after a stand-replacing fire, ${W.geology.name.toLowerCase()} bedrock, ${W.opt.moisture} climate, ${W.stats.storms} windstorm${W.stats.storms === 1 ? '' : 's'}. Basal area: ${comp}.`;
+  $('standSub').textContent = `${W.age} years after a stand-replacing fire, ${W.geology.name.toLowerCase()} bedrock, ${REGIONS[W.region || 'temperate'].name.toLowerCase()} region, ${W.opt.moisture} moisture, ${W.opt.season || 'summer'}, ${W.stats.storms} windstorm${W.stats.storms === 1 ? '' : 's'}. Basal area: ${comp}.`;
   const rows = [
     ['Live trees ≥ 10 cm', `${f0(s.stems)} /ha`, REF.stems],
     ['Saplings < 10 cm', `${f0(s.saplings)} /ha`, REF.saplings],
@@ -5017,9 +5108,10 @@ function drawFigures() {
 function roundTop(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x, y + h); g.lineTo(x, y + r); g.quadraticCurveTo(x, y, x + r, y); g.lineTo(x + w - r, y); g.quadraticCurveTo(x + w, y, x + w, y + r); g.lineTo(x + w, y + h); g.closePath(); g.fill(); }
 
 // world panel
+const fRegion = $('fRegion'), fSeason = $('fSeason');
 const fSeed = $('fSeed'), fAge = $('fAge'), fMoist = $('fMoist'), fStorm = $('fStorm'), fQual = $('fQual'), fGeo = $('fGeo'), fMotion = $('fMotion'), fView = $('fView'), fBody = $('fBody');
 const fPlace = $('fPlace');
-function syncForm() { fPlace.value = settings.place || 'forest'; fSeed.value = settings.seed; fAge.value = String(settings.age); fMoist.value = settings.moisture; fStorm.value = settings.storms; fQual.value = settings.quality; fGeo.value = settings.geology; fMotion.value = settings.motion || 'full'; }
+function syncForm() { fPlace.value = settings.place || 'forest'; fSeed.value = settings.seed; fAge.value = String(settings.age); fMoist.value = settings.moisture; fStorm.value = settings.storms; fQual.value = settings.quality; fGeo.value = settings.geology; fMotion.value = settings.motion || 'full'; fRegion.value = settings.region || 'temperate'; fSeason.value = settings.season || 'summer'; }
 fMotion.addEventListener('change', () => { settings.motion = fMotion.value; saveSettings(); });
 fView.value = settings.view || 'first'; fBody.value = settings.body || 'hidden';
 fView.addEventListener('change', () => { settings.view = fView.value; saveSettings(); });
@@ -5028,7 +5120,7 @@ syncForm();
 $('bDice').addEventListener('click', () => { fSeed.value = 1 + Math.floor(Math.random() * 99999); });
 $('bRegen').addEventListener('click', () => {
   const q = fQual.value !== settings.quality;
-  Object.assign(settings, { place: fPlace.value, seed: clamp(parseInt(fSeed.value, 10) || 1, 1, 999999), age: +fAge.value, moisture: fMoist.value, storms: fStorm.value, geology: fGeo.value, quality: fQual.value });
+  Object.assign(settings, { place: fPlace.value, seed: clamp(parseInt(fSeed.value, 10) || 1, 1, 999999), age: +fAge.value, moisture: fMoist.value, storms: fStorm.value, geology: fGeo.value, quality: fQual.value, region: fRegion.value, season: fSeason.value });
   saveSettings(); toggle(null);
   if (q && renderer.capabilities) { location.reload(); return; } // antialiasing is fixed at context creation
   start();
@@ -5243,7 +5335,7 @@ async function start() {
   try {
     applyQuality();
     if (settings.place === 'gym') W = buildGymWorld(loadCaptures());
-    else W = await generateWorld({ seed: settings.seed, age: settings.age, moisture: settings.moisture, storms: settings.storms, geology: settings.geology }, async (msg, p) => {
+    else W = await generateWorld({ seed: settings.seed, age: settings.age, moisture: settings.moisture, storms: settings.storms, geology: settings.geology, region: settings.region, season: settings.season }, async (msg, p) => {
       stage.textContent = msg; fill.style.width = `${Math.round(p * 100)}%`; await nextFrame();
     });
     $('gymNav').hidden = !W.gym;

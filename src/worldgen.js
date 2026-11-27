@@ -87,7 +87,34 @@ export const SPECIES = [
   { name: 'Spruce', kind: 'conifer', mOpt: 0.80, mW: 0.24, eBias: 0.2,   tol: 0.85, half: 0.06, G: 0.5,  dmax: 75,  life: 280, Hmax: 32, disp: 16, decay: 1.2,  fPref: 0.4,  phot: 0.2,  sinu: 0.02, crownA: 0.095, crownF: 0.75, keepLow: 1,   wind: 1.3 },
   { name: 'Oak',    kind: 'broad',   mOpt: 0.36, mW: 0.22, eBias: 0.25,  tol: 0.45, half: 0.16, G: 0.6,  dmax: 110, life: 350, Hmax: 27, disp: 9,  decay: 1.6,  fPref: 0.6,  phot: 0.9,  sinu: 0.14, crownA: 0.19,  crownF: 0.5,  keepLow: 0.6, wind: 0.7 },
   { name: 'Aspen',  kind: 'broad',   mOpt: 0.47, mW: 0.36, eBias: 0.05,  tol: 0.05, half: 0.45, G: 1.05, dmax: 55,  life: 90,  Hmax: 26, disp: 60, decay: 0.55, fPref: 0.55, phot: 1.1,  sinu: 0.05, crownA: 0.085, crownF: 0.3,  keepLow: 0.25, wind: 1.05, pale: true },
+  // ---- beyond the plain "normal tree": drooping, twisted, flowering and fruiting, lumpy or oddly barked, by region
+  { name: 'Willow',     kind: 'broad',   mOpt: 0.82, mW: 0.3,  eBias: -0.4,  tol: 0.3,  half: 0.3,  G: 1.2,  dmax: 90,  life: 90,  Hmax: 18, disp: 50, decay: 0.5,  fPref: 0.6,  phot: 1.2,  sinu: 0.2,  crownA: 0.2,   crownF: 0.7,  keepLow: 0.5, wind: 1.1, riparian: 1 },
+  { name: 'Juniper',    kind: 'pine',    mOpt: 0.2,  mW: 0.22, eBias: 0.4,   tol: 0.3,  half: 0.2,  G: 0.4,  dmax: 60,  life: 600, Hmax: 9,  disp: 30, decay: 3.0,  fPref: 0.1,  phot: 0.9,  sinu: 0.25, crownA: 0.11,  crownF: 0.8,  keepLow: 0.9, wind: 0.5, rocky: 0.8 },
+  { name: 'Cherry',     kind: 'broad',   mOpt: 0.5,  mW: 0.28, eBias: 0.0,   tol: 0.2,  half: 0.3,  G: 0.85, dmax: 60,  life: 100, Hmax: 20, disp: 45, decay: 0.7,  fPref: 0.7,  phot: 1.1,  sinu: 0.06, crownA: 0.14,  crownF: 0.45, keepLow: 0.4, wind: 1 },
+  { name: 'Rowan',      kind: 'broad',   mOpt: 0.55, mW: 0.32, eBias: 0.5,   tol: 0.35, half: 0.2,  G: 0.6,  dmax: 35,  life: 120, Hmax: 13, disp: 55, decay: 0.6,  fPref: 0.4,  phot: 1.0,  sinu: 0.1,  crownA: 0.13,  crownF: 0.55, keepLow: 0.5, wind: 0.8, rocky: 0.5 },
+  { name: 'Plane',      kind: 'broad',   mOpt: 0.68, mW: 0.14, eBias: -0.8,  tol: 0.2,  half: 0.22, G: 0.5,  dmax: 140, life: 300, Hmax: 30, disp: 25, decay: 0.9,  fPref: 0.75, phot: 1.0,  sinu: 0.1,  crownA: 0.18,  crownF: 0.55, keepLow: 0.6, wind: 0.9, riparian: 0.15 },
+  { name: 'Olive',      kind: 'broad',   mOpt: 0.3,  mW: 0.26, eBias: -0.1,  tol: 0.25, half: 0.2,  G: 0.35, dmax: 120, life: 900, Hmax: 10, disp: 12, decay: 2.0,  fPref: 0.45, phot: 1.0,  sinu: 0.3,  crownA: 0.15,  crownF: 0.7,  keepLow: 0.6, wind: 0.6, rocky: 0.4 },
+  { name: 'Cork oak',   kind: 'broad',   mOpt: 0.38, mW: 0.24, eBias: 0.1,   tol: 0.4,  half: 0.18, G: 0.5,  dmax: 110, life: 300, Hmax: 18, disp: 9,  decay: 1.4,  fPref: 0.35, phot: 0.9,  sinu: 0.18, crownA: 0.19,  crownF: 0.55, keepLow: 0.5, wind: 0.7 },
+  { name: 'Stone pine', kind: 'pine',    mOpt: 0.3,  mW: 0.25, eBias: -0.2,  tol: 0.15, half: 0.3,  G: 0.6,  dmax: 100, life: 250, Hmax: 22, disp: 15, decay: 1.2,  fPref: 0.2,  phot: 0.6,  sinu: 0.1,  crownA: 0.23,  crownF: 0.3,  keepLow: 0.2, wind: 0.9 },
+  { name: 'Strawberry tree', kind: 'broad', mOpt: 0.4, mW: 0.26, eBias: 0.2,  tol: 0.55, half: 0.12, G: 0.35, dmax: 45,  life: 150, Hmax: 9,  disp: 35, decay: 0.8,  fPref: 0.3,  phot: 1.1,  sinu: 0.25, crownA: 0.14,  crownF: 0.75, keepLow: 0.8, wind: 0.8, rocky: 0.4 },
+  { name: 'Larch',      kind: 'conifer', mOpt: 0.55, mW: 0.26, eBias: 0.6,   tol: 0.08, half: 0.4,  G: 0.7,  dmax: 90,  life: 400, Hmax: 30, disp: 30, decay: 1.5,  fPref: 0.35, phot: 0.4,  sinu: 0.05, crownA: 0.1,   crownF: 0.5,  keepLow: 0.3, wind: 0.9 },
+  { name: 'Bristlecone', kind: 'pine',   mOpt: 0.25, mW: 0.25, eBias: 1.0,   tol: 0.2,  half: 0.25, G: 0.3,  dmax: 100, life: 2000, Hmax: 11, disp: 20, decay: 5.0, fPref: 0.15, phot: 0.5,  sinu: 0.35, crownA: 0.12,  crownF: 0.75, keepLow: 0.9, wind: 0.4, rocky: 0.9 },
 ];
+// Where each species grows. A region sets the species pool and shifts the climate (moist: site moisture; snow:
+// snowpack and creep on slopes). Rows that name no regions are temperate.
+const POOL = {
+  temperate: ['Fir', 'Pine', 'Maple', 'Birch', 'Spruce', 'Oak', 'Aspen', 'Willow', 'Juniper', 'Cherry', 'Rowan', 'Plane'],
+  mediterranean: ['Pine', 'Oak', 'Juniper', 'Plane', 'Olive', 'Cork oak', 'Stone pine', 'Strawberry tree'],
+  mountain: ['Fir', 'Pine', 'Birch', 'Spruce', 'Aspen', 'Juniper', 'Rowan', 'Larch', 'Bristlecone'],
+};
+export const REGIONS = {
+  temperate: { name: 'Cool temperate', moist: 0, snow: 1 },
+  mediterranean: { name: 'Mediterranean', moist: -0.12, snow: 0.15 },
+  mountain: { name: 'Mountain', moist: 0.04, snow: 1.6 },
+};
+for (const [r, names] of Object.entries(POOL)) for (const n of names) { const P = SPECIES.find((q) => q.name === n); (P.regions ||= []).push(r); }
+// riparian 0..1: favours stream banks (willow, plane) instead of avoiding them; rocky 0..1: tolerates rock and thin
+// soil that keeps other trees out (juniper, bristlecone).
 // fPref: preferred soil fertility; phot: phototropic lean strength (conifers keep a straight leader through apical control);
 // sinu: typical stem sinuosity amplitude in metres.
 // kind: the far-crown archetype (conifer: a cone of cards; pine: a flat-topped cloud; broad: a rounded cloud), and needles
@@ -184,7 +211,8 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
   const moist = MOISTURE[opt.moisture ?? 'mesic'] ?? 0;
   const stormRate = STORMS[opt.storms ?? 'occasional'] ?? STORMS.occasional;
   const geo = GEOLOGY[opt.geology ?? 'granite'] ?? GEOLOGY.granite;
-  const snow = clamp(0.6 + moist * 2.5, 0.1, 1.2); // wetter climate: deeper snowpack, more soil and snow creep on slopes
+  const regionKey = REGIONS[opt.region] ? opt.region : 'temperate', region = REGIONS[regionKey];
+  const snow = clamp((0.6 + (moist + region.moist) * 2.5) * region.snow, 0.05, 1.6); // wetter climate: deeper snowpack, more soil and snow creep on slopes
   const t0 = Date.now();
   const R = (k) => mulberry32((seed * 2654435761 + k * 40503) >>> 0);
   const rand = R(1);
@@ -260,7 +288,7 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
   const nzR = makeNoise2D(R(8));
   for (let k = 0; k < moistF.length; k++) {
     const i = k % N, j = (k / N) | 0, x = i * CELL - HALF, z = j * CELL - HALF;
-    moistF[k] = clamp(0.14 + 0.72 * wet[k] + 0.12 * north[k] + moist + geo.drain + 0.06 * fbm(nzR, x / 90, z / 90, 2), 0, 1);
+    moistF[k] = clamp(0.14 + 0.72 * wet[k] + 0.12 * north[k] + moist + region.moist + geo.drain + 0.06 * fbm(nzR, x / 90, z / 90, 2), 0, 1);
     elev[k] = H[k] / hmax;
     rock[k] = clamp(smoothstep(0.5, 0.95, slope[k]) + geo.rockBias * smoothstep(0.25, 0.7, slope[k]) + 0.5 * smoothstep(0.25, 0.7, fbm(nzR, x / 35 + 9, z / 35, 3)) * smoothstep(0.65, 0.95, elev[k]), 0, 1);
     soil[k] = clamp(geo.soil * (1 - rock[k]) * (1 - 0.6 * smoothstep(0.3, 0.9, slope[k])) + 0.25 * wet[k], 0.05, 1);
@@ -268,14 +296,17 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
   }
   const site = (x, z) => ({
     m: sampleGrid(moistF, N, x, z), e: sampleGrid(elev, N, x, z),
-    r: sampleGrid(rock, N, x, z), s: sampleGrid(streamSoft, N, x, z),
+    r: sampleGrid(rock, N, x, z), s: sampleGrid(streamSoft, N, x, z), w: sampleGrid(wet, N, x, z),
     soil: sampleGrid(soil, N, x, z), ex: sampleGrid(expo, N, x, z),
   });
   const suit = (sp, st) => {
     const P = SPECIES[sp];
     const dm = (st.m - P.mOpt) / P.mW;
     const df = (geo.fert - P.fPref) / 0.6;
-    return Math.exp(-dm * dm - df * df) * Math.exp(P.eBias * (st.e - 0.5) * 2) * (1 - 0.85 * st.r) * (1 - 0.95 * st.s);
+    if (!P.regions.includes(regionKey)) return 0;
+    const rip = P.riparian || 0, rk = P.rocky || 0;
+    return Math.exp(-dm * dm - df * df) * Math.exp(P.eBias * (st.e - 0.5) * 2) * (1 - 0.85 * st.r * (1 - rk) + rk * st.r * 0.8)
+      * ((1 - 0.95 * st.s) * (1 - rip) + rip * (0.12 + 1.6 * Math.max(st.s, smoothstep(0.45, 0.8, st.w)))); // riparian: stream banks and wet hollows
   };
 
   // 4. stand simulation ----------------------------------------------------
@@ -519,7 +550,7 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
 
   const world = {
     seed, age: steps * dt, opt: { ...opt }, geology: geo, H, HF, hmax, slope, wet, stream: streamSoft, moist: moistF, rock, north, soil,
-    light, conShare, LN, trees, pits, windDir, stats: null, genMs: 0,
+    light, conShare, LN, trees, pits, windDir, region: regionKey, stats: null, genMs: 0,
   };
   world.stats = standStats(world);
   world.stats.storms = stats.storms;

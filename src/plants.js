@@ -101,7 +101,123 @@ export const ARCH = [
       { part: 'catkins', where: 'shoot tips', months: [3, 4], use: 'raw or cooked' },
     ],
     organ: { part: 'catkins', minD: 10, zone: [0.4, 1], per: 0.25, len: 0.05, r: 0.008, hang: true, months: [3, 5], mass: 0.003, tip: true } },
+  // ---- beyond the "normal tree". New fields (all optional; a row without them grows as before):
+  //   upright: gravitropism of the stem (default 0.6; low lets a stem wander and twist); stemZig: sympodial zig-zag of
+  //   the stem (deg); stems: extra stems from the base {n, lean (deg), len (share of height), p}; dieback: share of live
+  //   limbs that are dead (strip-bark and drought-killed crowns); sub.hangAll, sub.maxK, sub.seg: whips that hang from
+  //   every limb, longer and in more segments (weeping); bark: the bark pattern drawn by the game (0 furrowed, 1 smooth,
+  //   2 plates, 3 shaggy strips, 4 peeling, 5 cork, 6 banded, 7 papery, 8 strip bark, 9 scaly plates, 10 fissured);
+  //   twist: spiral grain (rad/m, turns the bark pattern and flutes); lumps: burls and bosses on the stem (share of
+  //   radius); flute: [ridges, depth] round the stem; swell: a swollen, bottle-like base; show: flowers and fruit drawn
+  //   in their months, {part, months, color (sRGB), size (x leaf), per (chance per foliage unit at a tip)}.
+  // Willow (weeping): arching limbs from a short, often divided trunk; long whips hang to the ground from every limb.
+  { name: 'Willow', shape: 'dome', phyllo: 'spiral', step: 0.7, maxSteps: 10, ang: [55, 32], curve: [0.75, -0.5], kink: 10, stemKink: 4, upright: 0.4,
+    stems: { n: [1, 3], lean: [15, 35], len: [0.6, 0.9], p: 0.5 }, lumps: 0.12, swell: 0.2,
+    sub: { n: 8, ang: 38, ratio: 1.5, plane: false, kink: 6, hang: 1.5, hangAll: true, maxK: 2.2, seg: 4 }, sub2: null,
+    split: { at: 0.3, n: [2, 4], spread: [25, 42], again: 0.5, p: 0.8, curve: [0, 0.35, -0.2, 0.1] }, fork: 0, leaf: 'spray', leafSize: 0.34, reachK: 1.1, rTip: 0.003,
+    dead: 0.3, deadLen: 0.6, wood: { E: 5.4, MOR: 33, sg: 0.36 }, bark: 0,
+    edible: [
+      { part: 'inner bark', where: 'stem', months: [4, 6], use: 'famine food' },
+      { part: 'bark', where: 'twigs', months: [1, 12], use: 'salicin: a bitter tea for pain and fever (not food)' },
+      { part: 'young shoots', where: 'whips', months: [3, 6], use: 'basketry and bindings' },
+    ],
+    organ: { part: 'catkins', minD: 6, zone: [0.3, 1], per: 0.2, len: 0.04, r: 0.008, hang: false, months: [3, 4], mass: 0.002, tip: true } },
+  // Juniper (twisted): a slow, long-lived tree of dry rocky ground; several leaning, twisting stems with shaggy strip
+  // bark, fluted and lumpy at the base; dense tufts of scale leaves; frosted blue berries (fleshy cones) all year.
+  { name: 'Juniper', shape: 'ovoid', phyllo: 'spiral', step: 0.35, maxSteps: 14, ang: [70, 45], curve: [0.3, 0.2], kink: 22, stemKink: 14, upright: 0.2, stemZig: 16, zig: 15,
+    stems: { n: [1, 3], lean: [20, 50], len: [0.5, 0.85], p: 0.7 }, bark: 3, twist: 0.25, lumps: 0.2, flute: [5, 0.15], swell: 0.3,
+    sub: { n: 5, ang: 50, ratio: 0.5, plane: false, kink: 20 }, sub2: { n: 3, ang: 45, ratio: 0.5 },
+    split: { at: 0.35, n: [2, 3], spread: [20, 40], again: 0.6, p: 0.6, curve: [-0.1, 0.3, 0, 0.4] }, fork: 0.2, leaf: 'brush', leafSize: 0.42, reachK: 1.1, rTip: 0.004,
+    dead: 0.7, deadLen: 0.6, dieback: 0.12, wood: { E: 4.5, MOR: 48, sg: 0.44 },
+    edible: [{ part: 'berries', where: 'shoot tips', months: [1, 12], use: 'seasoning, a few at a time (gin); not in pregnancy' }],
+    organ: { part: 'berries', minD: 4, zone: [0.2, 1], per: 0.4, len: 0.008, r: 0.004, hang: false, months: [1, 12], mass: 0.0005, tip: true },
+    show: [{ part: 'berries', months: [1, 12], color: [0.42, 0.52, 0.72], size: 0.24, per: 0.45 }] },
+  // Wild cherry (flowering, fruiting): a cone of horizontal tiers on a straight stem with glossy, banded, peeling bark;
+  // white blossom in spring, dark red cherries in summer, red leaves in autumn.
+  { name: 'Cherry', shape: 'ovoid', phyllo: 'whorl', per: [3, 4], step: 1.0, maxSteps: 8, ang: [78, 52], curve: [0.3, 0.05], kink: 9, stemKink: 1.5,
+    sub: { n: 4, ang: 45, ratio: 0.5, plane: false, kink: 10 }, sub2: { n: 3, ang: 40, ratio: 0.5 },
+    split: { at: 0.6, n: [2, 3], spread: [12, 25], again: 0.2, p: 0.4 }, fork: 0.1, leaf: 'shell', leafSize: 0.5, reachK: 1.0, rTip: 0.004,
+    dead: 0.25, deadLen: 0.4, wood: { E: 9.0, MOR: 55, sg: 0.47 }, bark: 6,
+    edible: [{ part: 'cherries', where: 'shoot tips', months: [6, 8], use: 'raw, small and tart; the stones, wilted leaves and bark are poisonous (cyanogenic)' }],
+    organ: { part: 'cherries', minD: 8, zone: [0.3, 1], per: 0.5, len: 0.012, r: 0.006, hang: true, months: [6, 8], mass: 0.004, tip: true },
+    show: [{ part: 'blossom', months: [4, 5], color: [1.0, 0.95, 0.97], size: 1.0, per: 1.0 }, { part: 'blossom', months: [4, 5], color: [1.0, 0.9, 0.94], size: 0.8, per: 0.7 }, { part: 'cherries', months: [6, 8], color: [0.55, 0.04, 0.08], size: 0.22, per: 0.6 }] },
+  // Rowan (mountain ash): a small, often two-stemmed tree of rocky uplands; smooth grey bark, feathery leaves, flat heads
+  // of cream flowers in early summer and heavy orange-red berry clusters from late summer.
+  { name: 'Rowan', shape: 'ovoid', phyllo: 'spiral', step: 0.5, maxSteps: 10, ang: [50, 34], curve: [0.5, 0.1], kink: 10, stemKink: 2,
+    stems: { n: [1, 2], lean: [8, 20], len: [0.7, 0.95], p: 0.35 },
+    sub: { n: 4, ang: 40, ratio: 0.5, plane: false, kink: 10 }, sub2: null,
+    split: { at: 0.45, n: [2, 3], spread: [12, 25], again: 0.3, p: 0.6 }, fork: 0.1, leaf: 'shell', leafSize: 0.45, reachK: 1.0, rTip: 0.004,
+    dead: 0.2, deadLen: 0.3, wood: { E: 8, MOR: 50, sg: 0.5 }, bark: 1,
+    edible: [{ part: 'berries', where: 'shoot tips', months: [8, 11], use: 'cooked or frozen first (raw ones upset the gut); jelly' }],
+    organ: { part: 'berries', minD: 5, zone: [0.3, 1], per: 0.6, len: 0.01, r: 0.005, hang: true, months: [8, 11], mass: 0.05, tip: true },
+    show: [{ part: 'flowers', months: [5, 6], color: [1.0, 0.97, 0.86], size: 0.6, per: 0.6 }, { part: 'berries', months: [8, 11], color: [0.92, 0.25, 0.04], size: 0.38, per: 0.75 }] },
+  // Plane (sycamore): a massive, lumpy-based riverside tree whose bark flakes off in plates, leaving a camouflage of
+  // cream, olive and grey; huge leaves; hanging seed balls into winter.
+  { name: 'Plane', shape: 'dome', phyllo: 'spiral', step: 0.85, maxSteps: 11, ang: [72, 50], curve: [0.35, -0.15], kink: 14, stemKink: 3, zig: 12, sag: 0.3,
+    bark: 2, lumps: 0.15, swell: 0.35,
+    sub: { n: 5, ang: 50, ratio: 0.55, plane: false, kink: 14 }, sub2: { n: 3, ang: 45, ratio: 0.55 },
+    split: { at: 0.32, n: [2, 4], spread: [24, 44], again: 0.6, p: 0.8, curve: [-0.05, 0.25, 0, 0.3] }, fork: 0, leaf: 'shell', leafSize: 0.75, reachK: 1.05, rTip: 0.005,
+    dead: 0.3, deadLen: 0.6, wood: { E: 7.3, MOR: 45, sg: 0.46 },
+    edible: [{ part: 'sap', where: 'stem', months: [2, 3], use: 'drunk or boiled to syrup, thinner than maple' }],
+    organ: { part: 'seed balls', minD: 20, zone: [0.3, 1], per: 0.2, len: 0.03, r: 0.015, hang: true, months: [9, 3], mass: 0.01, tip: true },
+    show: [{ part: 'seed balls', months: [8, 12], color: [0.5, 0.38, 0.22], size: 0.2, per: 0.3 }] },
+  // Olive (contorted, lumpy): a short, hollowing, many-stemmed trunk, fluted and spiralled and bulging with burls,
+  // splitting low into crooked limbs; dense small silvery leaves; olives darkening through autumn.
+  { name: 'Olive', shape: 'spread', phyllo: 'opposite', step: 0.4, maxSteps: 12, ang: [66, 46], curve: [0.3, -0.1], kink: 18, stemKink: 16, upright: 0.15, stemZig: 18, zig: 16,
+    stems: { n: [1, 3], lean: [15, 40], len: [0.5, 0.8], p: 0.6 }, bark: 10, twist: 0.35, lumps: 0.55, flute: [4, 0.25], swell: 0.6,
+    sub: { n: 6, ang: 50, ratio: 0.55, plane: false, kink: 18, zig: 12 }, sub2: { n: 3, ang: 45, ratio: 0.5 },
+    split: { at: 0.3, n: [2, 4], spread: [25, 45], again: 0.6, p: 0.9, curve: [-0.05, 0.25, 0, 0.3] }, fork: 0, leaf: 'shell', leafSize: 0.42, reachK: 1.05, rTip: 0.004,
+    dead: 0.3, deadLen: 0.4, dieback: 0.05, wood: { E: 10, MOR: 90, sg: 0.85 },
+    edible: [{ part: 'olives', where: 'shoot tips', months: [9, 12], use: 'bitter raw: cured in brine or lye first; pressed for oil' }, { part: 'leaves', where: 'shoots', months: [1, 12], use: 'tea' }],
+    organ: { part: 'olives', minD: 8, zone: [0.2, 1], per: 0.5, len: 0.02, r: 0.009, hang: true, months: [9, 12], mass: 0.004, tip: true },
+    show: [{ part: 'flowers', months: [5, 6], color: [0.96, 0.94, 0.78], size: 0.35, per: 0.4 }, { part: 'olives', months: [9, 12], color: [0.2, 0.16, 0.22], size: 0.2, per: 0.7 }] },
+  // Cork oak: a low, broad, crooked crown on a trunk clad in thick, deeply fissured pale cork.
+  { name: 'Cork oak', shape: 'spread', phyllo: 'spiral', step: 0.7, maxSteps: 10, ang: [78, 55], curve: [0.2, -0.1], kink: 16, stemKink: 6, upright: 0.35, zig: 22, sag: 0.35,
+    bark: 5, lumps: 0.2, swell: 0.15,
+    sub: { n: 5, ang: 55, ratio: 0.55, plane: false, kink: 18, zig: 18 }, sub2: { n: 3, ang: 50, ratio: 0.5 },
+    split: { at: 0.3, n: [2, 4], spread: [30, 50], again: 0.6, p: 0.9, curve: [-0.05, 0.2, 0, 0.35] }, fork: 0, leaf: 'shell', leafSize: 0.45, reachK: 1.05, rTip: 0.005,
+    dead: 0.3, deadLen: 0.6, wood: { E: 9, MOR: 60, sg: 0.7 },
+    edible: [{ part: 'acorns', where: 'shoot tips', months: [10, 1], use: 'sweeter than most: roasted, or leached and ground' }, { part: 'cork', where: 'stem', months: [6, 8], use: 'floats, stoppers, insulation (not food); regrows after stripping' }],
+    organ: { part: 'acorns', minD: 20, zone: [0.3, 1], per: 0.3, len: 0.03, r: 0.012, hang: true, months: [10, 1], mass: 0.006, tip: true },
+    show: [{ part: 'acorns', months: [10, 12], color: [0.45, 0.33, 0.18], size: 0.18, per: 0.35 }] },
+  // Stone pine (umbrella pine): a clean, plated stem that breaks into several leaders, carrying a flat-topped umbrella.
+  { name: 'Stone pine', shape: 'umbrella', phyllo: 'whorl', per: [3, 5], step: 0.7, maxSteps: 10, ang: [82, 76], curve: [0.25, -0.15], kink: 8, stemKink: 2.5,
+    bark: 9,
+    sub: { n: 4, ang: 45, ratio: 0.42, plane: false, kink: 10 }, sub2: null,
+    split: { at: 0.55, n: [3, 5], spread: [32, 48], again: 0.8, p: 0.95, curve: [0.05, 0.3, -0.45, -0.15] }, fork: 0, leaf: 'brush', leafSize: 0.6, reachK: 1.15, rTip: 0.006,
+    dead: 0.1, deadLen: 0.4, wood: { E: 7, MOR: 40, sg: 0.5 },
+    edible: [{ part: 'pine nuts', where: 'cones', months: [9, 4], use: 'the best of the pine nuts: raw or roasted' }],
+    organ: { part: 'cone', minD: 15, zone: [0.5, 1], per: 0.3, len: 0.1, r: 0.045, hang: false, months: [1, 12], mass: 0.3 } },
+  // Strawberry tree (madrone kin): a crooked, many-stemmed small tree whose thin red bark peels in curls; white bell
+  // flowers and red, warty fruit together in autumn (the fruit takes a year to ripen).
+  { name: 'Strawberry tree', shape: 'ovoid', phyllo: 'spiral', step: 0.35, maxSteps: 12, ang: [55, 40], curve: [0.4, 0.1], kink: 18, stemKink: 14, upright: 0.3, stemZig: 16, zig: 14,
+    stems: { n: [2, 4], lean: [15, 40], len: [0.6, 0.9], p: 0.85 }, bark: 4, twist: 0.2, lumps: 0.12,
+    sub: { n: 5, ang: 45, ratio: 0.5, plane: false, kink: 16 }, sub2: { n: 3, ang: 40, ratio: 0.5 },
+    split: { at: 0.4, n: [2, 3], spread: [18, 35], again: 0.5, p: 0.7 }, fork: 0, leaf: 'shell', leafSize: 0.45, reachK: 1.0, rTip: 0.004,
+    dead: 0.25, deadLen: 0.4, wood: { E: 8, MOR: 60, sg: 0.7 },
+    edible: [{ part: 'fruit', where: 'shoot tips', months: [10, 12], use: 'sweet and mealy when deep red; jam (eaten in excess, mildly intoxicating)' }],
+    organ: { part: 'fruit', minD: 5, zone: [0.3, 1], per: 0.5, len: 0.02, r: 0.01, hang: true, months: [10, 12], mass: 0.006, tip: true },
+    show: [{ part: 'flowers', months: [10, 12], color: [1.0, 0.96, 0.9], size: 0.35, per: 0.4 }, { part: 'fruit', months: [10, 12], color: [0.92, 0.18, 0.06], size: 0.3, per: 0.6 }] },
+  // Larch (drooping, deciduous conifer): a narrow open spire; limbs sweep down and up again, and their branchlets hang;
+  // soft tufts of needles that turn gold and fall in autumn.
+  { name: 'Larch', shape: 'cone', phyllo: 'spiral', step: 0.5, maxSteps: 18, ang: [96, 70], curve: [-0.5, 0.4], kink: 6, stemKink: 1,
+    bark: 9,
+    sub: { n: 7, ang: 60, ratio: 0.5, plane: false, kink: 6, hang: 1.0 }, sub2: null, split: null, fork: 0.05, leaf: 'brush', leafSize: 0.42, reachK: 1.05, rTip: 0.005,
+    dead: 0.4, deadLen: 0.5, wood: { E: 9.7, MOR: 53, sg: 0.48 },
+    edible: [{ part: 'inner bark', where: 'stem', months: [4, 6], use: 'famine food' }, { part: 'gum', where: 'bark wounds', months: [1, 12], use: 'chewed' }],
+    organ: { part: 'cone', minD: 10, zone: [0.3, 1], per: 0.4, len: 0.03, r: 0.012, hang: false, months: [9, 12], mass: 0.005 } },
+  // Bristlecone (contorted, ancient): a squat, many-limbed tree whose stems twist like rope; most of the trunk is bare,
+  // polished deadwood, with living bark in narrow strips; dense foxtails of needles on the live limbs.
+  { name: 'Bristlecone', shape: 'ovoid', phyllo: 'spiral', step: 0.3, maxSteps: 12, ang: [72, 50], curve: [0.3, 0.4], kink: 25, stemKink: 20, upright: 0.1, stemZig: 22, zig: 20,
+    stems: { n: [1, 2], lean: [25, 55], len: [0.4, 0.8], p: 0.6 }, bark: 8, twist: 0.6, lumps: 0.35, flute: [3, 0.3], swell: 0.45,
+    sub: { n: 4, ang: 45, ratio: 0.45, plane: false, kink: 20 }, sub2: null,
+    split: { at: 0.3, n: [2, 3], spread: [30, 55], again: 0.5, p: 0.8, curve: [-0.2, 0.2, 0, 0.3] }, fork: 0.3, leaf: 'spray', leafSize: 0.4, reachK: 1.1, rTip: 0.005,
+    dead: 0.9, deadLen: 1.0, dieback: 0.35, wood: { E: 7, MOR: 40, sg: 0.5 },
+    edible: [{ part: 'seeds', where: 'cones', months: [9, 10], use: 'small pine nuts' }],
+    organ: { part: 'cone', minD: 10, zone: [0.3, 1], per: 0.3, len: 0.07, r: 0.025, hang: false, months: [1, 12], mass: 0.02 } },
 ];
+// bark patterns for the original rows (a later addition): birch papery, aspen smooth, pine and spruce scaly plates
+ARCH[1].bark = 9; ARCH[3].bark = 7; ARCH[4].bark = 9; ARCH[6].bark = 1;
 
 // relative crown radius at fraction f of the live crown (0 crown base, 1 top)
 function envelope(shape, f, d) {
@@ -113,6 +229,7 @@ function envelope(shape, f, d) {
     case 'ovoid': return Math.pow(Math.max(0, Math.sin(Math.PI * (0.06 + 0.9 * f))), 0.75) * (1 - 0.2 * f) + 0.06;
     case 'spire': return 0.06 + 0.94 * Math.pow(1 - f, 1.3); // narrower toward the top than a fir's cone
     case 'spread': return Math.sqrt(Math.max(0, 1 - ((f - 0.3) / 0.76) ** 2)) * 0.95 + 0.05; // widest low, flat-topped
+    case 'umbrella': return f < 0.45 ? 0.15 + 0.85 * Math.pow(f / 0.45, 0.6) : f < 0.8 ? 1 : 0.35 + 0.65 * Math.sqrt(Math.max(0, 1 - ((f - 0.8) / 0.2) ** 2)); // flat-topped, widest high up
     case 'column': return Math.pow(Math.max(0, Math.sin(Math.PI * (0.04 + 0.92 * f))), 0.55) * 0.9 + 0.08; // short and round
   }
   return 1 - f;
@@ -159,7 +276,7 @@ export function growPlant(spec) {
       if (zig && i > 0) { // sympodial: the tip aborts and a side bud takes over, turning the axis to alternate sides
         const sd = cross(dv, UP); if (len3(sd) > 1e-3) dv = norm(rotate(dv, norm(cross(sd, dv)), (i % 2 ? 1 : -1) * zig * R(0.6, 1.25) * D2R));
       }
-      if (upright) dv = bendToward(dv, UP, 0.6 * Math.acos(clamp(dv[1], -1, 1))); // gravitropism: the leader recovers vertical
+      if (upright) dv = bendToward(dv, UP, (A.upright ?? 0.6) * Math.acos(clamp(dv[1], -1, 1))); // gravitropism: the leader recovers vertical (weakly in twisted species)
       const q = add(p, dv, sl);
       prev = node(prev, p, q, ord, ai, st, born + (age - born) * (i / n));
       ax.nodes.push(prev); p = q;
@@ -175,7 +292,7 @@ export function growPlant(spec) {
   const stemSeg = Math.max(0.5, h / 22);
   const split = forked ? { at: R(0.35, 0.7), n: [2, 2], spread: [9, 16], again: 0 } : A.split && rnd() < A.split.p ? A.split : null;
   const ySplit = split ? Math.max(Math.min(hb * 0.95, h * 0.8), h * split.at * R(0.85, 1.15)) : h;
-  const stemAxes = [growAxis(-1, [0, 0, 0], UP, split ? ySplit : h, 0, LIVE, { kink: A.stemKink, maxSeg: 40, segLen: stemSeg, upright: true })];
+  const stemAxes = [growAxis(-1, [0, 0, 0], UP, split ? ySplit : h, 0, LIVE, { kink: A.stemKink, maxSeg: 40, segLen: stemSeg, upright: true, zig: A.stemZig || 0 })];
   if (split) {
     // a decurrent crown: the trunk carries on as one dominant leader, and the others leave it one after another at
     // staggered heights (sympodial forks), each at its own angle, curving up and kinking; one in a few forks again
@@ -205,6 +322,17 @@ export function growPlant(spec) {
     }
   }
 
+  // 1b. more stems from the base (juniper, olive, willow, strawberry tree): each leans out and wanders like the first.
+  // They hang off the first stem segment, so the pipe model fattens the shared base into one swollen bole.
+  if (A.stems && rnd() < A.stems.p) {
+    const nS = Math.round(R(A.stems.n[0], A.stems.n[1] + 0.99) - 0.49), az0 = rnd() * 6.283;
+    for (let k = 0; k < nS; k++) {
+      const az = az0 + (k + 0.5) / nS * 6.283 + gauss() * 0.5, lean = R(A.stems.lean[0], A.stems.lean[1]) * D2R;
+      const dir = [Math.sin(lean) * Math.cos(az), Math.cos(lean), Math.sin(lean) * Math.sin(az)], L = h * R(A.stems.len[0], A.stems.len[1]);
+      const p0 = [Math.cos(az) * 0.04, 0.05, Math.sin(az) * 0.04];
+      stemAxes.push(growAxis(axes[stemAxes[0]].nodes[0], p0, dir, L, 0, LIVE, { kink: A.stemKink, maxSeg: 30, segLen: stemSeg, upright: true, zig: A.stemZig || 0 }));
+    }
+  }
   // 2. limbs on each stem axis: live in the crown, dead (or broken-off stubs) below it
   const yDead = Math.max(0.4, hb * (1 - A.dead));
   const stepY = Math.max(A.step * Math.sqrt(sz), crownLen / A.maxSteps, 0.12);
@@ -243,7 +371,8 @@ export function growPlant(spec) {
         const Lb = Math.min(reach / Math.max(0.35, Math.sin(ang)) * R(0.85, 1.12) * A.reachK, cr * 1.8 * (1 + 0.4 * side));
         if (Lb < 0.12) continue;
         const sag = (A.sag || 0) * clamp(Lb / 3, 0, 2) * Math.sin(ang); // long, level limbs bow under their own weight
-        limbs.push(growAxis(m.id, m.p, dir, Lb, 1, LIVE, { curve: [A.curve[0] * (0.6 + 0.4 * Lb / 3), A.curve[1] - sag], kink: A.kink, zig: A.zig || 0, maxSeg: 6, segLen: Math.max(0.35, 0.75 * sz), born: age * (y / h) }));
+        const lst = A.dieback && rnd() < A.dieback ? DEAD : LIVE; // dieback: limbs killed by drought or cambium loss, kept bare in the crown
+        limbs.push(growAxis(m.id, m.p, dir, Lb, 1, lst, { curve: [A.curve[0] * (0.6 + 0.4 * Lb / 3), A.curve[1] - sag], kink: A.kink, zig: A.zig || 0, maxSeg: 6, segLen: Math.max(0.35, 0.75 * sz), born: age * (y / h) }));
       }
     }
   }
@@ -256,22 +385,23 @@ export function growPlant(spec) {
       if (ax.st === STUB) continue;
       for (let k = 0; k < n; k++) {
         const s = L * (0.18 + 0.75 * (k + R(0.2, 0.8)) / n), m = at(ai, s);
-        const Lc = Math.min((B.ratio * (L - s) * R(0.7, 1.3) + 0.12) * (st === DEAD ? 0.5 : 1), maxL);
+        const rr = R(0.7, 1.3), Lc = B.hangAll && st === LIVE ? maxL * (rr - 0.25) * clamp(L / 2, 0.4, 1) // weeping whips: long wherever they start
+          : Math.min((B.ratio * (L - s) * rr + 0.12) * (st === DEAD ? 0.5 : 1), maxL);
         if (Lc < 0.1) continue;
         const pd = m.dir, side = norm(cross(pd, UP).every((q) => Math.abs(q) < 1e-6) ? [1, 0, 0] : cross(pd, UP));
         let pp;
         if (B.plane) pp = add(side, UP, 0.12 * (k % 2 ? 1 : -1)).map((q) => q * (k % 2 ? 1 : -1));
         else { const up2 = norm(cross(side, pd)), a = k * PHI + rnd() * 0.8; pp = add(side.map((q) => q * Math.cos(a)), up2, Math.sin(a)); if (pp[1] < -0.55) pp = pp.map((q) => -q); }
         const ang = (B.ang + gauss() * 8) * D2R; let dir = norm(add(pd.map((q) => q * Math.cos(ang)), pp, Math.sin(ang)));
-        const hang = B.hang && st === LIVE ? B.hang * clamp((L - 0.6) / 1.8, 0, 1) : 0; // curtains hang from long limbs; short ones near the top keep theirs level
+        const hang = B.hang && st === LIVE ? B.hang * (B.hangAll ? 1 : clamp((L - 0.6) / 1.8, 0, 1)) : 0; // curtains hang from long limbs; short ones near the top keep theirs level
         if (hang) dir = bendToward(dir, [0, -1, 0], hang * R(0.7, 1.2));
         const curve = hang ? [-0.15 * hang, -0.1 * hang] : [A.curve[0] * 0.5, A.curve[1] * 0.6];
-        out.push(growAxis(m.id, m.p, dir, Lc, ord, st, { curve, kink: (B.kink ?? A.kink), zig: B.zig || 0, maxSeg: ord === 2 ? 2 : 1, segLen: 0.5, born: nodes[m.id].born + 1 }));
+        out.push(growAxis(m.id, m.p, dir, Lc, ord, st, { curve, kink: (B.kink ?? A.kink), zig: B.zig || 0, maxSeg: B.seg || (ord === 2 ? 2 : 1), segLen: 0.5, born: nodes[m.id].born + 1 }));
       }
     }
     return out;
   };
-  const branches = sideBranches(limbs, A.sub, 2, 2.6 * Math.sqrt(sz));
+  const branches = sideBranches(limbs, A.sub, 2, 2.6 * Math.sqrt(sz) * (A.sub.maxK || 1));
   const shoots = A.sub2 ? sideBranches(branches.filter((ai) => axes[ai].st === LIVE), A.sub2, 3, 1.0) : [];
 
   // 4. radii from the pipe model, the exponent fitted so the stem at breast height matches dbh
@@ -339,28 +469,57 @@ export function plantStats(P) {
 // Bark: a tapered tube per axis, rings at each node; the stem flares at the collar.
 export function barkMesh(P, { minR = 0 } = {}) {
   const pos = [], nor = [], uv = [], idx = [], node = []; // node: the segment each vertex belongs to (a break removes a subtree's vertices)
+  // rough stems (ARCH lumps, flute, twist, swell): the radius is modulated round and along the stem, burls as a few
+  // interfering waves, flutes as ridges, both turning with the spiral grain; the base swells like a bottle
+  const AR = ARCH[P.sp], lumps = AR.lumps || 0, fl = AR.flute, tw = AR.twist || 0, swell = AR.swell || 0;
+  const ph1 = (P.seed * 1.618) % 6.283, ph2 = (P.seed * 2.414) % 6.283, ph3 = (P.seed * 0.577) % 6.283;
+  let axi = 0;
   for (const ax of P.axes) {
-    const ids = ax.nodes, i0 = ids[0];
+    const ids = ax.nodes, i0 = ids[0]; axi++;
     if (ax.st === LIVE && ax.ord >= 2 && P.r0[i0] < minR) continue; // thin live twigs: hidden in the foliage
-    const rb = P.r0[i0], sides = rb > 0.12 ? 7 : rb > 0.04 ? 5 : 3;
-    const pts = [], rad = [], rn = [];
+    const rb = P.r0[i0], rough = (lumps || fl || swell) && (ax.ord === 0 || (ax.ord === 1 && rb > 0.05)) ? (ax.ord === 0 ? 1 : 0.45) : 0;
+    const sides = rough && ax.ord === 0 && rb > 0.04 ? 12 : rough && rb > 0.06 ? 8 : rb > 0.12 ? 7 : rb > 0.04 ? 5 : 3;
+    const pts = [], rad = [], rn = []; let skipTo = -1;
     const p = (i, e) => (e ? [P.p1[i * 3], P.p1[i * 3 + 1], P.p1[i * 3 + 2]] : [P.p0[i * 3], P.p0[i * 3 + 1], P.p0[i * 3 + 2]]);
     if (ax.ord === 0 && P.par[i0] < 0) { // the collar: extra rings for the root flare
       const a = p(i0, 0), b = p(i0, 1), L = len3([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
-      for (const y of [0, 0.08, 0.22, 0.45]) if (y < L * 0.8) { const t = y / L; pts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]); rad.push((P.r0[i0] + (P.r1[i0] - P.r0[i0]) * t) * (1 + 0.3 * Math.exp(-y / 0.25))); rn.push(i0); } // modest: the buttress roots make the rest of the flare
+      for (const y of [0, 0.08, 0.22, 0.45]) if (y < L * 0.8) { const t = y / L; skipTo = y; pts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]); rad.push((P.r0[i0] + (P.r1[i0] - P.r0[i0]) * t) * (1 + 0.3 * Math.exp(-y / 0.25))); rn.push(i0); } // modest: the buttress roots make the rest of the flare
     } else { pts.push(p(i0, 0)); rad.push(P.r0[i0]); rn.push(i0); }
-    for (const i of ids) { pts.push(p(i, 1)); rad.push(P.r1[i]); rn.push(i); }
+    for (const i of ids) {
+      if (rough) { // rough stems: extra rings within each segment, so burls along the stem are resolved (about every 0.18 m)
+        const a = p(i, 0), b = p(i, 1), L = len3([b[0] - a[0], b[1] - a[1], b[2] - a[2]]), k = clamp(Math.ceil(L / 0.18), 1, ax.ord === 0 ? 8 : 3);
+        for (let q = 1; q < k; q++) { const t = q / k; if (i === i0 && t * L <= skipTo + 0.05) continue; pts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]); rad.push(P.r0[i] + (P.r1[i] - P.r0[i]) * t); rn.push(i); }
+      }
+      pts.push(p(i, 1)); rad.push(P.r1[i]); rn.push(i);
+    }
     const base = pos.length / 3;
-    let nPrev = null, vacc = 0;
+    let nPrev = null, vacc = 0, sacc = 0;
     for (let j = 0; j < pts.length; j++) {
       const t = norm(j < pts.length - 1 ? [pts[j + 1][0] - pts[j][0], pts[j + 1][1] - pts[j][1], pts[j + 1][2] - pts[j][2]] : [pts[j][0] - pts[j - 1][0], pts[j][1] - pts[j - 1][1], pts[j][2] - pts[j - 1][2]]);
       let nv = nPrev ? norm(add(nPrev, t, -dot(nPrev, t))) : perp(t); if (len3(nv) < 0.5) nv = perp(t);
       const bv = cross(t, nv); nPrev = nv;
-      if (j > 0) vacc += len3([pts[j][0] - pts[j - 1][0], pts[j][1] - pts[j - 1][1], pts[j][2] - pts[j - 1][2]]) / Math.max(0.3, rad[0] * 6.283) * 0.5;
+      if (j > 0) { const dl = len3([pts[j][0] - pts[j - 1][0], pts[j][1] - pts[j - 1][1], pts[j][2] - pts[j - 1][2]]); vacc += dl / Math.max(0.3, rad[0] * 6.283) * 0.5; sacc += dl; }
       for (let s = 0; s <= sides; s++) {
         const a = (s / sides) * 6.283, c = Math.cos(a), sn = Math.sin(a), dn = [nv[0] * c + bv[0] * sn, nv[1] * c + bv[1] * sn, nv[2] * c + bv[2] * sn];
-        pos.push(pts[j][0] + dn[0] * rad[j], pts[j][1] + dn[1] * rad[j], pts[j][2] + dn[2] * rad[j]); nor.push(...dn); uv.push(s / sides, vacc); node.push(rn[j]);
+        let rr = rad[j];
+        if (rough) {
+          const g = a + tw * sacc, big = Math.min(1, rad[j] / 0.05);
+          let m = 1 + rough * big * (lumps * (0.55 * Math.sin(3 * g + 1.9 * sacc + ph1) * Math.sin(1.3 * sacc + ph2 + axi) + 0.45 * Math.sin(5 * g - 2.7 * sacc + ph3 + axi))
+            + (fl ? fl[1] * Math.cos(fl[0] * g) : 0));
+          if (ax.ord === 0) m *= 1 + swell * Math.exp(-Math.max(0, pts[j][1]) / 1.0);
+          rr *= Math.max(0.5, m);
+        }
+        pos.push(pts[j][0] + dn[0] * rr, pts[j][1] + dn[1] * rr, pts[j][2] + dn[2] * rr); nor.push(...dn); uv.push(s / sides + tw * sacc / 6.283, vacc); node.push(rn[j]);
       }
+    }
+    if (rough) for (let j = 0; j < pts.length; j++) for (let s = 0; s <= sides; s++) { // normals from the bumped surface
+      const V = (jj, ss) => (base + clamp(jj, 0, pts.length - 1) * (sides + 1) + ((ss + sides) % sides)) * 3;
+      const a0 = V(j, s - 1), a1 = V(j, s + 1), b0 = V(j - 1, s), b1 = V(j + 1, s), q = V(j, s);
+      const T = [pos[a1] - pos[a0], pos[a1 + 1] - pos[a0 + 1], pos[a1 + 2] - pos[a0 + 2]], B = [pos[b1] - pos[b0], pos[b1 + 1] - pos[b0 + 1], pos[b1 + 2] - pos[b0 + 2]];
+      let nn = norm(cross(T, B)); const o = base * 3 + (j * (sides + 1) + s) * 3;
+      if (dot(nn, [nor[o], nor[o + 1], nor[o + 2]]) < 0) nn = nn.map((v) => -v);
+      if (len3(nn) > 0.5) { nor[o] = nn[0]; nor[o + 1] = nn[1]; nor[o + 2] = nn[2]; }
+      void q;
     }
     for (let j = 0; j < pts.length - 1; j++) for (let s = 0; s < sides; s++) {
       const a = base + j * (sides + 1) + s, b = a + sides + 1;
@@ -383,8 +542,11 @@ export function barkMesh(P, { minR = 0 } = {}) {
 
 // Foliage: cards ({c, u, v, n, ao0, ao1}; u, v half-extent vectors) from the foliage units, oriented by leaf kind.
 // Normals radiate from the crown's axis so the crown shades as a volume; a crown-depth gradient darkens the inside.
-export function foliageCards(P, seed = 7) {
+export const inMonths = (m, [a, b]) => (a <= b ? m >= a && m <= b : m >= a || m <= b); // ranges may wrap the new year
+// month (1-12): flowers and fruit (ARCH.show) in season are added as tinted cards ({tint: sRGB colour, part}).
+export function foliageCards(P, seed = 7, { month = 0 } = {}) {
   const rnd = mulberry32(seed), cards = [], A = ARCH[P.sp];
+  const shows = month ? (A.show || []).filter((q) => inMonths(month, q.months) && P.d >= 3) : [];
   for (const L of P.leaves) {
     const i = L.node, u = L.u, c0 = cards.length;
     const a = [P.p0[i * 3], P.p0[i * 3 + 1], P.p0[i * 3 + 2]], b = [P.p1[i * 3], P.p1[i * 3 + 1], P.p1[i * 3 + 2]];
@@ -416,6 +578,17 @@ export function foliageCards(P, seed = 7) {
         cards.push({ c: add(add(c, t, s * 0.2), face, k * 0.06), u: U.map((q) => q * s * 0.5), v: V.map((q) => q * s * 0.5), n: nC, ao0: ao * 0.85, ao1: ao });
       }
     }
+    if (shows.length) for (const q of shows) {
+      const z = s * q.size, small = q.size < 0.45;
+      if (!(L.u >= 0.9 || L.kind === 'spray' || L.kind === 'brush' || !small) || rnd() > q.per) continue; // flower heads all over the crown; fruit at the tips // small: berries and fruit hang in a bunch; large: flower heads face out
+      const cc = add(add(c, out, s * (small ? 0.15 : 0.3)), UP, small ? -s * 0.12 : s * 0.1);
+      for (let k = 0; k < 2; k++) {
+        const face = small ? norm([out[0] + (rnd() - 0.5) * 1.5, (rnd() - 0.5) * 0.6, out[2] + (rnd() - 0.5) * 1.5]) : norm([out[0] + (rnd() - 0.5) * 0.8, 0.7 + rnd() * 0.5, out[2] + (rnd() - 0.5) * 0.8]);
+        const p0 = norm(cross(face, Math.abs(face[1]) > 0.95 ? [1, 0, 0] : UP)), p1 = cross(face, p0), an = rnd() * Math.PI;
+        const U = add(p0.map((v) => v * Math.cos(an)), p1, Math.sin(an)), V = add(p0.map((v) => v * -Math.sin(an)), p1, Math.cos(an));
+        cards.push({ c: add(cc, face, k * 0.03), u: U.map((v) => v * z * 0.5), v: V.map((v) => v * z * 0.5), n: nC, ao0: ao, ao1: Math.min(1.1, ao * 1.1), tint: q.color, part: q.part });
+      }
+    }
     for (let k = c0; k < cards.length; k++) cards[k].node = i;
   }
   return cards;
@@ -437,6 +610,17 @@ export const ROOTS = [
   { n: [5, 8], depthRate: 0.06, tap: 0, sinkers: 0.15, expose: 0.18 }, // spruce: a thin, shallow plate (why spruce blows over)
   { n: [5, 7], depthRate: 0.2, tap: 1, sinkers: 0.7, expose: -0.15 }, // oak: deep, a taproot and many sinkers
   { n: [4, 6], depthRate: 0.09, tap: 0, sinkers: 0.3, expose: 0.05 },  // aspen: shallow, wide-running laterals
+  { n: [6, 9], depthRate: 0.06, tap: 0, sinkers: 0.3, expose: 0.25 },  // willow: a mat of shallow roots along wet banks
+  { n: [5, 8], depthRate: 0.12, tap: 1, sinkers: 0.6, expose: 0.35 },  // juniper: gripping rock, deep where cracks allow
+  { n: [4, 6], depthRate: 0.12, tap: 0, sinkers: 0.4, expose: 0.0 },   // cherry
+  { n: [4, 7], depthRate: 0.1, tap: 0, sinkers: 0.4, expose: 0.2 },    // rowan: wedged among rocks
+  { n: [6, 9], depthRate: 0.1, tap: 0, sinkers: 0.5, expose: 0.25 },   // plane: big buttress roots along streams
+  { n: [5, 8], depthRate: 0.14, tap: 1, sinkers: 0.5, expose: 0.3 },   // olive: a knotted stool of surface roots
+  { n: [5, 7], depthRate: 0.2, tap: 1, sinkers: 0.6, expose: 0.0 },    // cork oak: deep
+  { n: [4, 6], depthRate: 0.18, tap: 1, sinkers: 0.5, expose: 0.05 },  // stone pine: a taproot in sand
+  { n: [5, 8], depthRate: 0.1, tap: 0, sinkers: 0.4, expose: 0.15 },   // strawberry tree
+  { n: [4, 6], depthRate: 0.14, tap: 1, sinkers: 0.5, expose: 0.0 },   // larch: deeper than spruce
+  { n: [4, 7], depthRate: 0.1, tap: 1, sinkers: 0.4, expose: 0.45 },   // bristlecone: roots crawling over bare rock
 ];
 // spec: { sp, d, seed, soil 0..1, slope [dh/dx, dh/dz], wet 0..1, rocky 0..1 }
 export function growRoots(spec) {
