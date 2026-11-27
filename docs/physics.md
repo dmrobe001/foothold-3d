@@ -620,3 +620,31 @@ Rocks and fallen sticks are unaffected. Measured on a 30 s walk with plant colli
 - Foliage shown: about 21 ground-cover plants bending at any moment.
 - Foliage hidden: none, with every ground-cover buffer empty.
 - The median step time was the same either way (2.1 ms).
+
+## Two speed-ups for walking over fallen crowns
+
+Profiled on a scripted walk across six young fallen crowns (collisions on, foliage off), 89 % of the step was movement
+planning:
+- 44 % was planning ways over the crown;
+- most of that bottomed out in `topOf`, which scans every solid in an 8 m cell. One crown's cell held 282 solids, 230 of
+  them branch pieces.
+
+Two changes, neither altering behaviour:
+1. **A 1 m grid for point queries** (`solidsAt`). Each solid is also listed in the 1 m cells its footprint touches:
+   - a capsule within its radius along its length;
+   - a rock or box by its bounding box padded 0.5 m;
+   - root-wad soil by its extent.
+
+   Every "what is here?" query reads that cell. Region scans (the standing stems around the body) keep the 8 m grid. The
+   grid is swapped with the collision switches like the 8 m one.
+2. **Planning stops early.** `overCheck` checks every fourth pose first, then the rest, and returns at the first pose
+   more than 2 cm inside something. A candidate that passes is still checked at every pose, so choices are unchanged.
+   The planner's diagnostic list now shows the first failing pose rather than the worst.
+
+| crown | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| worst step before (ms) | 588 | 93 | 96 | 18 | 119 | 26 |
+| worst step now (ms) | 45 | 12 | 17 | 19 | 18 | 17 |
+
+Median steps fell from 2–5 ms to 1.3–2.9 ms (software GL machine, so read the ratios). The gym is unchanged (30/33, the
+same three stations).

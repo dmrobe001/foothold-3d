@@ -1135,7 +1135,7 @@ function refreshPlants(px, pz, force) {
 const ROOT_R = 24;
 let rootCells = new Map(), rootMeshObj = null;
 const ROOT_TINT = [[0.56, 0.50, 0.44], [0.60, 0.50, 0.42], [0.58, 0.54, 0.48], [0.58, 0.50, 0.44], [0.55, 0.49, 0.43], [0.54, 0.48, 0.42], [0.60, 0.56, 0.50], [0.52, 0.47, 0.42], [0.62, 0.52, 0.44], [0.56, 0.46, 0.40], [0.58, 0.54, 0.48], [0.62, 0.58, 0.50], [0.56, 0.54, 0.50], [0.58, 0.50, 0.42], [0.62, 0.54, 0.46], [0.62, 0.46, 0.38], [0.58, 0.50, 0.44], [0.72, 0.66, 0.58]]; // weathered grey-brown, lighter than the soil
-function outcropTop(x, z) { let y = -Infinity; for (const o of solids.get(ckey8(x, z)) || []) if (o.kind === 'mesh' && o.big !== undefined) y = Math.max(y, topOf(o, x, z)); return y; }
+function outcropTop(x, z) { let y = -Infinity; for (const o of solidsAt(x, z)) if (o.kind === 'mesh' && o.big !== undefined) y = Math.max(y, topOf(o, x, z)); return y; }
 function rootSite(t) {
   const g = (x, z) => ground(x, z), gx = (g(t.x + 1.5, t.z) - g(t.x - 1.5, t.z)) / 3, gz = (g(t.x, t.z + 1.5) - g(t.x, t.z - 1.5)) / 3;
   return { soil: t.soil ?? 0.6, slope: [gx, gz], wet: sampleGrid(W.wet, N, t.x, t.z), rocky: sampleGrid(W.rock, N, t.x, t.z) };
@@ -1255,7 +1255,10 @@ function treeSegs(rec) { // world segments of the tree's graph, cached: [x0,y0,z
   }
   return (rec.ws = ws);
 }
-function removeSolid(o) { for (const M of [solidsAll, solidsRock]) if (M) for (const a of M.values()) { const k = a.indexOf(o); if (k >= 0) a.splice(k, 1); } }
+function removeSolid(o) {
+  for (const M of [solidsAll, solidsRock]) if (M) for (const a of M.values()) { const k = a.indexOf(o); if (k >= 0) a.splice(k, 1); }
+  for (const F of [fineAll, fineRock]) if (F) for (const key of o._fk || []) { const a = F.get(key); if (!a) continue; const k = a.indexOf(o); if (k >= 0) a.splice(k, 1); }
+}
 // thick low limbs become solids, tapered like logs, so the body ducks under, steps over or stands on them
 function limbSolids(rec) {
   if (rec.solids) return;
@@ -1345,7 +1348,7 @@ const NO_SOLIDS = new Map();
 function applyCollide() { // swap the collider maps: everything, everything but plant matter, or nothing (terrain only)
   if (!solidsAll) return;
   bodyOn = PHYS.body; plantsOn = bodyOn && (PHYS.plants || !!W?.gym); // the testing gym's logs and rails are its obstacles: solid there
-  solids = !bodyOn ? NO_SOLIDS : plantsOn ? solidsAll : solidsRock; colTrunks = plantsOn ? colTrunksAll : new Map(); saplingCells = plantsOn ? saplingAll : new Map();
+  solids = !bodyOn ? NO_SOLIDS : plantsOn ? solidsAll : solidsRock; fine = !bodyOn ? NO_FINE : plantsOn ? fineAll : fineRock; colTrunks = plantsOn ? colTrunksAll : new Map(); saplingCells = plantsOn ? saplingAll : new Map();
   crunchList = null; for (const ft of body.feet || []) ft.stack = null;
 }
 function setPlantCollide(on) { PHYS.plants = !!on; applyCollide(); }
@@ -1374,7 +1377,7 @@ function standLoad() {
   if (!PHYS.breaks) return;
   for (let k = 0; k < 7; k++) {
     const a = (k / 6) * 6.283, x = player.x + (k ? Math.cos(a) * FOOT : 0), z = player.z + (k ? Math.sin(a) * FOOT : 0);
-    for (const o of solids.get(ckey8(x, z)) || []) {
+    for (const o of solidsAt(x, z)) {
       if (!(o.limb || o.branch) || tested.has(o) || Math.abs(topOf(o, x, z) - rig.feet) > 0.05) continue;
       tested.add(o); const b = branchOf(o); if (!b) continue;
       const w = b.ws, q = b.i * 7, vx = w[q + 3] - w[q], vz = w[q + 5] - w[q + 2], u = clamp(((x - w[q]) * vx + (z - w[q + 2]) * vz) / (vx * vx + vz * vz || 1), 0, 1), r = branchLoad(b, u);
@@ -1705,7 +1708,7 @@ function freeUpdate(st) { // poses from the solver
 }
 function topSurface(x, z) { // ground and the static solids on it (logs, rocks, stumps, fallen branches), not standing trees' limbs
   let y = ground(x, z);
-  for (const o of solids.get(ckey8(x, z)) || []) if (!o.limb && o.free === undefined && o.logPiece?._free === undefined) y = Math.max(y, topOf(o, x, z)); // (logs near you are objects: they meet each other as objects)
+  for (const o of solidsAt(x, z)) if (!o.limb && o.free === undefined && o.logPiece?._free === undefined) y = Math.max(y, topOf(o, x, z)); // (logs near you are objects: they meet each other as objects)
   return y;
 }
 function dropPiece(o) {
@@ -2263,7 +2266,7 @@ function clipScan(depth = 0.01) {
   }
   for (const c of caps) for (const f of [0, 0.5, 1]) { // rocks and stumps: below their top surface
     const px = c.a[0] + (c.b[0] - c.a[0]) * f, py = c.a[1] + (c.b[1] - c.a[1]) * f, pz = c.a[2] + (c.b[2] - c.a[2]) * f;
-    for (const so of solids.get(ckey8(px, pz)) || []) {
+    for (const so of solidsAt(px, pz)) {
       if (so.kind !== 'mesh' || px < so.x0 || px > so.x1 || pz < so.z0 || pz > so.z1) continue;
       const top = topOf(so, px, pz), pen = top - (py - c.r); if (top === -Infinity || pen <= depth || pen > 0.6) continue;
       out.rock++; if (out.list.length < 40) out.list.push({ cat: 'rock', cap: c.name, pen: +pen.toFixed(3), what: so.big !== undefined ? 'outcrop' : 'rock/stump' });
@@ -2377,7 +2380,7 @@ function freeForces() {
   if (rig.over) for (const c of body.overContacts || []) if (c.o !== 'ground' && c.o.free !== undefined) out.push({ id: c.o.free, b: c.o.fb, p: c.p, F: [0, -c.F, 0] }); // (a way over: its planted hands and feet press what they rest on)
   for (const ft of stance) {
     let best = null, bd = Infinity; const was = ft.onFree;
-    for (const so of solids.get(ckey8(ft.x, ft.z)) || []) {
+    for (const so of solidsAt(ft.x, ft.z)) {
       if (so.free === undefined) continue; const t = topOf(so, ft.x, ft.z); if (t === -Infinity) continue;
       const same = was && so.free === was.free && so.fb === was.fb, d = Math.abs(t - ft.y);
       if (same ? d < 0.6 : t < ft.y + 0.08 && t > ft.y - 0.3) { const sc = same ? d - 1 : d; if (sc < bd) { bd = sc; best = so; } } // a foot stays on what it stands on as that moves
@@ -2645,7 +2648,7 @@ function buildWorld() {
   const impKeys = new Map(), impItems = [];
   const B = Array.from({ length: NT * NT }, () => ({ imp: new Batch(), live: new Batch(), trunk: new Batch(), piece: new Batch(), butt: new Batch(), broad: new Batch(), cone: new Batch(), pine: new Batch(), plate: new Batch(), stumpLo: new Batch(), stumpHi: new Batch(), wad: { pos: [], nor: [], uv: [], col: [], idx: [] }, rk: [new Batch(), new Batch(), new Batch(), new Batch()] }));
   const tileOf = (x, z) => clamp(Math.floor((z + HALF) / TILE), 0, NT - 1) * NT + clamp(Math.floor((x + HALF) / TILE), 0, NT - 1);
-  colTrunksAll = colTrunks = new Map(); colLogs = []; logCells = new Map(); solidsAll = solids = new Map(); solidsRock = new Map(); pieceCells = new Map(); saplingAll = saplingCells = new Map(); plantCells = new Map(); rootCells = new Map(); branchLogCells = new Map();
+  colTrunksAll = colTrunks = new Map(); colLogs = []; logCells = new Map(); solidsAll = solids = new Map(); solidsRock = new Map(); fineAll = fine = new Map(); fineRock = new Map(); pieceCells = new Map(); saplingAll = saplingCells = new Map(); plantCells = new Map(); rootCells = new Map(); branchLogCells = new Map();
   for (const r of brokenTrees) { plantGroup.remove(r.custom.bark, r.custom.leaf); } brokenTrees = []; logPick = []; logQueue = []; physReset();
   if (!plantGroup) { plantGroup = new THREE.Group(); scene.add(plantGroup); }
   const ckey = (ci, cj) => ci * 4096 + cj;
@@ -3179,6 +3182,22 @@ const SLOW = 1.0, CAREFUL = 0.45; // below SLOW m/s you step onto what is in the
 const STEP = 0.55, SCRAMBLE = 1.35, MAX_SLOPE = 0.95, MAX_GROUND_SLOPE = 1.15, FOOT = 0.22;
 let solids = null; // 8 m hash of static solids (one of the two below)
 let solidsAll = null, solidsRock = null, colTrunksAll = null, saplingAll = null; // with and without plant matter
+// A 1 m grid of the same solids, for point queries ("what is here?"): a fallen crown packs hundreds of branch pieces into
+// one 8 m cell, and every point query used to scan them all. Each solid is listed in the 1 m cells its footprint
+// touches (a capsule within its radius along its length; a rock or box by its bounding box, padded 0.5 m).
+let fine = null, fineAll = null, fineRock = null; const NO_FINE = new Map(), NO_LIST = [];
+const ckey1 = (x, z) => Math.floor(x + HALF) * 4096 + Math.floor(z + HALF);
+const solidsAt = (x, z) => fine.get(ckey1(x, z)) || NO_LIST;
+function fineKeys(o) {
+  const keys = new Set(), box = (x0, z0, x1, z1) => { for (let i = Math.floor(x0 + HALF); i <= Math.floor(x1 + HALF); i++) for (let j = Math.floor(z0 + HALF); j <= Math.floor(z1 + HALF); j++) keys.add(i * 4096 + j); };
+  if (o.kind === 'mesh' || o.kind === 'box') box(o.x0 - 0.5, o.z0 - 0.5, o.x1 + 0.5, o.z1 + 0.5);
+  else if (o.kind === 'ell') { const m = Math.max(o.ax, o.az) + 0.1; box(o.x - m, o.z - m, o.x + m, o.z + m); }
+  else if (o.x0 !== undefined) {
+    const R = Math.max(o.r || 0, o.r0 || 0, o.r1 || 0) + 0.1, L = Math.hypot(o.x1 - o.x0, o.z1 - o.z0), n = Math.max(1, Math.ceil(L / 0.5));
+    for (let k = 0; k <= n; k++) { const x = o.x0 + (o.x1 - o.x0) * k / n, z = o.z0 + (o.z1 - o.z0) * k / n; box(x - R, z - R, x + R, z + R); }
+  } else { const R = (o.r || 0.5) + 0.1; box(o.x - R, o.z - R, o.x + R, o.z + R); }
+  return [...keys];
+}
 const isPlantSolid = (o) => o.kind === 'log' || o.stump;
 let saplingCells = null; // small simulated trees (dbh < 8 cm): stems to walk around, crowns to push
 const ckey8 = (x, z) => Math.floor((x + HALF) / 8) * 4096 + Math.floor((z + HALF) / 8);
@@ -3224,6 +3243,7 @@ function boxSpan(o, x, z) { // the vertical line at (x, z) through the box: [lo,
 function addSolid(o, r) {
   if (solidSink) solidSink.push(o);
   const maps = isPlantSolid(o) ? [solidsAll] : [solidsAll, solidsRock]; // the rock-only map leaves plant matter out
+  o._fk = fineKeys(o); for (const F of isPlantSolid(o) ? [fineAll] : [fineAll, fineRock]) for (const k of o._fk) { let a = F.get(k); if (!a) F.set(k, (a = [])); a.push(o); }
   if (o.kind === 'mesh' || o.kind === 'box') { // every 8 m cell the world box touches
     for (let ci = Math.floor((o.x0 + HALF) / 8); ci <= Math.floor((o.x1 + HALF) / 8); ci++)
       for (let cj = Math.floor((o.z0 + HALF) / 8); cj <= Math.floor((o.z1 + HALF) / 8); cj++) {
@@ -3358,7 +3378,7 @@ function nearRockSolid(it) { // near-field rock item -> mesh solid, using exactl
 }
 function rockSupport(x, z) { // ground and the static solids registered so far (outcrops, when deadfall settles)
   let y = ground(x, z);
-  const list = solids.get(ckey8(x, z));
+  const list = solidsAt(x, z);
   if (list) for (const o of list) { const t = topOf(o, x, z); if (t > y) y = t; }
   return y;
 }
@@ -3371,7 +3391,7 @@ let supportRef = Infinity, logUnder = 0, logBottom = 0; // logUnder: a stem's un
 let supKind = 'soil', footKind = 'soil'; // what the last supportAt / footSupport stood on: soil, rock or wood
 function supportAt(x, z) {
   let y = ground(x, z), kind = 'soil';
-  const list = solids.get(ckey8(x, z));
+  const list = solidsAt(x, z);
   const clear = Math.max(supportRef, y) + CLEAR4; // y is the ground here; a stem with more headroom under it than that is passed beneath
   if (list) for (const o of list) { logUnder = -Infinity; const t = topOf(o, x, z); if (t > y && logUnder < clear) { y = t; kind = o.kind === 'log' ? 'wood' : o.kind === 'ell' ? 'soil' : 'rock'; } }
   const ci = Math.floor((x + HALF) / NC), cj = Math.floor((z + HALF) / NC);
@@ -3389,7 +3409,7 @@ function supportAt(x, z) {
 // lowest underside of a stem passing overhead that a duck could get under. With `along` (a heading), a stem rising
 // along that heading is the one being climbed, not something overhead, and is skipped.
 function ceilingAt(x, z, feet, along) {
-  let c = Infinity; const list = solids.get(ckey8(x, z)); if (!list) return c;
+  let c = Infinity; const list = solidsAt(x, z); if (!list) return c;
   for (const o of list) {
     if (!(o.kind === 'log' && o.r0 !== undefined) && o.kind !== 'box') continue;
     if (along && o.kind === 'log') { const vx = o.x1 - o.x0, vz = o.z1 - o.z0, l = Math.hypot(vx, vz) || 1; if (Math.abs(vx * along[0] + vz * along[1]) / l > 0.85 && Math.abs(o.ya1 - o.ya0) / l > 0.3) continue; }
@@ -3646,7 +3666,7 @@ const LIMB = [{ hand: true, side: -1 }, { hand: true, side: 1 }, { hand: false, 
 let colWhy = ''; // (what blocked the last column asked: for tests)
 function colBlocked(px, pz, lo, hi) { // is any solid in the column at (px, pz) between heights lo and hi?
   for (const t of nearbyTrunks(px, pz)) if (Math.hypot(t.x - px, t.z - pz) < t.r - 0.25) { colWhy = 'trunk'; return true; } // (the bark itself: t.r carries the body's own 0.25 m, for its centre)
-  for (const o of solids.get(ckey8(px, pz)) || []) {
+  for (const o of solidsAt(px, pz)) {
     logUnder = -Infinity; const t = topOf(o, px, pz); if (t === -Infinity) continue;
     const b = o.kind === 'box' || (o.kind === 'log' && o.r0 !== undefined) ? logUnder : -Infinity; // meshes (rocks) are solid to the ground
     if (t > lo && b < hi) { colWhy = `${o.kind} top ${(t - lo).toFixed(2)} above the band's foot, bottom ${b === -Infinity ? 'ground' : (b - lo).toFixed(2)}`; return true; }
@@ -3810,7 +3830,7 @@ function underOK(px, pz, ux, uz) {
 }
 let overPlan = null; // going over something ahead: its overhead part is not ducked under
 function stemAlong(x, z, ux, uz) { // a stem under (x, z) running within ~50° of the way you go: climbed, not vaulted
-  const list = solids.get(ckey8(x, z)); if (!list) return false;
+  const list = solidsAt(x, z); if (!list.length) return false;
   for (const o of list) {
     if (o.kind !== 'log' || topOf(o, x, z) === -Infinity) continue;
     const vx = o.x1 - o.x0, vz = o.z1 - o.z0, l = Math.hypot(vx, vz) || 1;
@@ -3840,7 +3860,7 @@ function startVault(px, pz, h) {
 const OVER_S = RIG.leg - 0.04, OVER_A = 0.06; // pelvis above the feet standing; an ankle above its footing
 function colSpans(x, z) { // the solids in the column at (x, z): [bottom, top] of each (rocks reach the ground)
   const out = [];
-  for (const o of solids.get(ckey8(x, z)) || []) { logUnder = -Infinity; const t = topOf(o, x, z); if (t === -Infinity) continue; out.push([o.kind === 'box' || (o.kind === 'log' && o.r0 !== undefined) ? logUnder : -Infinity, t]); }
+  for (const o of solidsAt(x, z)) { logUnder = -Infinity; const t = topOf(o, x, z); if (t === -Infinity) continue; out.push([o.kind === 'box' || (o.kind === 'log' && o.r0 !== undefined) ? logUnder : -Infinity, t]); }
   return out;
 }
 function barrierTop(x, z, feet) { // the top of what rises from your footing here (not something overhead), above the feet
@@ -4049,12 +4069,16 @@ function capsPen(C, x, z) { // the deepest any capsule is inside a solid: gym bo
   }
   return { pen: worst, what };
 }
-function overCheck(keys, n = 72) { // the script solved pose by pose: how deep any capsule goes, how short a planted foot falls
+const OVER_ORDER = (n) => { const a = []; for (let i = 4; i <= n; i += 4) a.push(i); for (let i = 1; i <= n; i++) if (i % 4) a.push(i); return a; }; // every 4th pose first, then the rest
+function overCheck(keys, n = 72, stop = 0.02) { // the script solved pose by pose: how deep any capsule goes, how short a planted foot falls
+  // stops at the first pose deeper than `stop` (a candidate that fails is usually rejected within a few poses); one that
+  // passes is checked at every pose. (The reported depth is then the first over the limit, not the worst.)
   let pen = 0, what = '', at = 0, short = 0;
-  for (let i = 1; i <= n; i++) {
+  for (const i of OVER_ORDER(n)) {
     const t = i / n, sol = SK.solvePose(overPose(keys, t)), g = capsPen(capsOf(sol.J), sol.J.pelvis[0], sol.J.pelvis[2]);
     if (g.pen > pen) { pen = g.pen; what = g.what; at = t; }
-    short = Math.max(short, sol.short.footL, sol.short.footR) * (t > 0.9 ? 1 : 0); // (at the end the feet must be down)
+    short = Math.max(short, t > 0.9 ? Math.max(sol.short.footL, sol.short.footR) : 0); // (at the end the feet must be down)
+    if (pen > stop) break;
   }
   return { pen, what, at, short };
 }
@@ -4086,12 +4110,12 @@ function planOver(B, P0) {
 // object is pressed (freeForces). If what a planted hand or foot rests on breaks or moves out from under it, the
 // script ends there and you drop.
 function restTop(x, z, y) { // the highest footing at (x, z) no higher than just above y: the ground or a solid's top
-  let t = ground(x, z); for (const o of solids.get(ckey8(x, z)) || []) { const v = topOf(o, x, z); if (v > t && v < y + 0.1) t = v; }
+  let t = ground(x, z); for (const o of solidsAt(x, z)) { const v = topOf(o, x, z); if (v > t && v < y + 0.1) t = v; }
   return t;
 }
 function restOn(x, z, y) { // what a hand or foot at height y rests on: a solid, 'ground', or nothing (in the air)
   if (Math.abs(ground(x, z) - y) < 0.04) return 'ground';
-  for (const o of solids.get(ckey8(x, z)) || []) if (Math.abs(topOf(o, x, z) - y) < 0.04) return o;
+  for (const o of solidsAt(x, z)) if (Math.abs(topOf(o, x, z) - y) < 0.04) return o;
   return null;
 }
 function branchOf(o) { // a solid that is a branch, as the foot-stack check describes one (crunchSegs)
@@ -4695,7 +4719,7 @@ function staticResolve(st, C, S) { // rigid things: the body part takes the whol
     }
     for (let f = 0; f <= 1.0001; f += 0.25) { // boxes: out through the nearest face (a wall at the side, a roof above)
       const px = a[0] + (b[0] - a[0]) * f, py = a[1] + (b[1] - a[1]) * f, pz = a[2] + (b[2] - a[2]) * f;
-      for (const so of solids.get(ckey8(px, pz)) || []) {
+      for (const so of solidsAt(px, pz)) {
         if (so.kind !== 'box' || px < so.x0 - R || px > so.x1 + R || pz < so.z0 - R || pz > so.z1 + R || py < so.y0 - R || py > so.y1 + R) continue;
         const e = so.e, lx = e[0] * px + e[4] * py + e[8] * pz + e[12], ly = e[1] * px + e[5] * py + e[9] * pz + e[13], lz = e[2] * px + e[6] * py + e[10] * pz + e[14];
         const cx = clamp(lx, -so.hw, so.hw), cy = clamp(ly, 0, so.h), cz = clamp(lz, -so.hl, so.hl), dx = lx - cx, dy = ly - cy, dz = lz - cz, d = Math.hypot(dx, dy, dz);
@@ -4709,7 +4733,7 @@ function staticResolve(st, C, S) { // rigid things: the body part takes the whol
     }
     for (const f of [0, 0.5, 1]) { // rocks and stumps (mesh solids): a limb below their top is pushed out of it, as a falling piece is
       const px = a[0] + (b[0] - a[0]) * f, py = a[1] + (b[1] - a[1]) * f, pz = a[2] + (b[2] - a[2]) * f;
-      for (const so of solids.get(ckey8(px, pz)) || []) {
+      for (const so of solidsAt(px, pz)) {
         if (so.kind !== 'mesh' || px < so.x0 || px > so.x1 || pz < so.z0 || pz > so.z1) continue;
         const top = topOf(so, px, pz), pen = top - (py - R); if (top === -Infinity || pen <= 0 || pen > 0.6) continue;
         o[1] += pen * (f === 0.5 ? 1 : 0.5); moved += pen; st.hit[i] = { p: [px, top, pz], n: [0, 1, 0], kind: 'rock' };
