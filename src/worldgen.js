@@ -80,13 +80,23 @@ export function sampleGrid(G, n, x, z) {
 // tol: shade tolerance 0..1, half: light level giving half-maximal growth, disp: seed dispersal length (m),
 // decay: multiplier on log residence time.
 export const SPECIES = [
-  { name: 'Fir',   kind: 'conifer', mOpt: 0.68, mW: 0.26, eBias: 0.35,  tol: 0.9,  half: 0.05, G: 0.58, dmax: 90, life: 300, Hmax: 36, disp: 14, decay: 1.3,  fPref: 0.5,  phot: 0.25, sinu: 0.02 },
-  { name: 'Pine',  kind: 'pine',    mOpt: 0.22, mW: 0.22, eBias: 0.15,  tol: 0.15, half: 0.35, G: 0.75, dmax: 85, life: 260, Hmax: 31, disp: 28, decay: 1.25, fPref: 0.15, phot: 0.6,  sinu: 0.07 },
-  { name: 'Maple', kind: 'broad',   mOpt: 0.50, mW: 0.24, eBias: -0.35, tol: 0.75, half: 0.09, G: 0.66, dmax: 95, life: 240, Hmax: 29, disp: 11, decay: 0.8,  fPref: 0.85, phot: 1.0,  sinu: 0.08 },
-  { name: 'Birch', kind: 'birch',   mOpt: 0.55, mW: 0.34, eBias: 0.0,   tol: 0.1,  half: 0.4,  G: 0.95, dmax: 50, life: 110, Hmax: 23, disp: 40, decay: 0.6,  fPref: 0.5,  phot: 1.3,  sinu: 0.1 },
+  { name: 'Fir',    kind: 'conifer', mOpt: 0.68, mW: 0.26, eBias: 0.35,  tol: 0.9,  half: 0.05, G: 0.58, dmax: 90,  life: 300, Hmax: 36, disp: 14, decay: 1.3,  fPref: 0.5,  phot: 0.25, sinu: 0.02, crownA: 0.12,  crownF: 0.7,  keepLow: 1,   wind: 1 },
+  { name: 'Pine',   kind: 'pine',    mOpt: 0.22, mW: 0.22, eBias: 0.15,  tol: 0.15, half: 0.35, G: 0.75, dmax: 85,  life: 260, Hmax: 31, disp: 28, decay: 1.25, fPref: 0.15, phot: 0.6,  sinu: 0.07, crownA: 0.11,  crownF: 0.3,  keepLow: 0.3, wind: 0.85 },
+  { name: 'Maple',  kind: 'broad',   mOpt: 0.50, mW: 0.24, eBias: -0.35, tol: 0.75, half: 0.09, G: 0.66, dmax: 95,  life: 240, Hmax: 29, disp: 11, decay: 0.8,  fPref: 0.85, phot: 1.0,  sinu: 0.08, crownA: 0.16,  crownF: 0.48, keepLow: 0.8, wind: 0.9 },
+  { name: 'Birch',  kind: 'broad',   mOpt: 0.55, mW: 0.34, eBias: 0.0,   tol: 0.1,  half: 0.4,  G: 0.95, dmax: 50,  life: 110, Hmax: 23, disp: 40, decay: 0.6,  fPref: 0.5,  phot: 1.3,  sinu: 0.1,  crownA: 0.12,  crownF: 0.45, keepLow: 0.4, wind: 1, pale: true },
+  { name: 'Spruce', kind: 'conifer', mOpt: 0.80, mW: 0.24, eBias: 0.2,   tol: 0.85, half: 0.06, G: 0.5,  dmax: 75,  life: 280, Hmax: 32, disp: 16, decay: 1.2,  fPref: 0.4,  phot: 0.2,  sinu: 0.02, crownA: 0.095, crownF: 0.75, keepLow: 1,   wind: 1.3 },
+  { name: 'Oak',    kind: 'broad',   mOpt: 0.36, mW: 0.22, eBias: 0.25,  tol: 0.45, half: 0.16, G: 0.6,  dmax: 110, life: 350, Hmax: 27, disp: 9,  decay: 1.6,  fPref: 0.6,  phot: 0.9,  sinu: 0.14, crownA: 0.19,  crownF: 0.5,  keepLow: 0.6, wind: 0.7 },
+  { name: 'Aspen',  kind: 'broad',   mOpt: 0.47, mW: 0.36, eBias: 0.05,  tol: 0.05, half: 0.45, G: 1.05, dmax: 55,  life: 90,  Hmax: 26, disp: 60, decay: 0.55, fPref: 0.55, phot: 1.1,  sinu: 0.05, crownA: 0.085, crownF: 0.3,  keepLow: 0.25, wind: 1.05, pale: true },
 ];
 // fPref: preferred soil fertility; phot: phototropic lean strength (conifers keep a straight leader through apical control);
 // sinu: typical stem sinuosity amplitude in metres.
+// kind: the far-crown archetype (conifer: a cone of cards; pine: a flat-topped cloud; broad: a rounded cloud), and needles
+// (conifer, pine) versus leaves. crownA: crown radius coefficient (crownRadius); crownF: live crown share of height in a
+// stand; keepLow: how far a young open-grown tree keeps live limbs toward the ground (shade tolerance of its own lower
+// crown); wind: storm-kill multiplier (shallow-rooted spruce high, deep-rooted oak low); pale: white bark (birch, aspen).
+// The new species (spruce, oak, aspen) extend the northern mixed forest: spruce wetter and cooler than fir, oak on
+// drier, fertile ground with a long-lived, decay-resistant log, aspen a short-lived pioneer that seeds in from afar.
+export const isConifer = (sp) => SPECIES[sp].kind !== 'broad';
 
 // Bedrock sets soil fertility, drainage, depth on slopes, and how rocks look.
 // fert 0..1 shifts species composition and growth; drain shifts site moisture; soil scales soil depth, which controls
@@ -99,17 +109,14 @@ export const GEOLOGY = {
 export const NF = 1025;              // fine heightmap vertices per side (0.5 m)
 export function treeHeight(sp, d) { return 1.3 + SPECIES[sp].Hmax * Math.pow(1 - Math.exp(-0.035 * d), 1.15); }
 export function crownRadius(sp, d) {
-  const k = SPECIES[sp].kind;
-  const a = k === 'conifer' ? 0.12 : k === 'pine' ? 0.11 : k === 'birch' ? 0.12 : 0.16;
-  return 0.35 + a * Math.pow(d, 0.85);
+  return 0.35 + SPECIES[sp].crownA * Math.pow(d, 0.85);
 }
 // root plate radius (m) for dbh d (cm) and soil depth index 0..1: what tears out when the tree tips over. Shared by the
 // pits written here, the root wads the game draws, and the root graphs in plants.js.
 export function plateRadius(d, soil = 0.6) { return 0.45 + 0.025 * d * (0.75 + 0.5 * soil); }
 export const plateThickness = (d, soil = 0.6) => Math.min(0.2 + 0.01 * d, 0.25 + 0.7 * soil);
 export function crownFraction(sp) {
-  const k = SPECIES[sp].kind;
-  return k === 'conifer' ? 0.7 : k === 'pine' ? 0.3 : k === 'birch' ? 0.45 : 0.48;
+  return SPECIES[sp].crownF;
 }
 
 // ---------------------------------------------------------------- terrain
@@ -360,7 +367,7 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
         if (t.st !== 0 || t.h < 8) continue;
         const dx = wrap(t.x - cx), dz = wrap(t.z - cz), q = (dx * dx + dz * dz) / (r * r);
         if (q > 1) continue;
-        if (rand() < (1 - q) * Math.pow(clamp(t.h / 26, 0, 1), 1.5) * (1.25 - 0.45 * t.soil) * (0.8 + 0.4 * t.ex)) killTree(t, year, true, dir + (rand() - 0.5) * 0.5);
+        if (rand() < (1 - q) * Math.pow(clamp(t.h / 26, 0, 1), 1.5) * (1.25 - 0.45 * t.soil) * (0.8 + 0.4 * t.ex) * SPECIES[t.sp].wind) killTree(t, year, true, dir + (rand() - 0.5) * 0.5);
       }
     }
     // snags fall, logs decay
@@ -436,7 +443,7 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
     for (const t of trees) if (t.st === 0 && t.d > 5) {
       const i = Math.round(((t.x + HALF) / WORLD) * (LN - 1)), j = Math.round(((t.z + HALF) / WORLD) * (LN - 1));
       const k = j * LN + i, k2 = SPECIES[t.sp].kind;
-      tAcc[k] += t.ba; if (k2 === 'conifer' || k2 === 'pine') cAcc[k] += t.ba;
+      tAcc[k] += t.ba; if (k2 !== 'broad') cAcc[k] += t.ba;
     }
     blur(cAcc, LN, 3); blur(tAcc, LN, 3);
     for (let k = 0; k < conShare.length; k++) conShare[k] = tAcc[k] > 1e-5 ? cAcc[k] / tAcc[k] : 0.5;
@@ -456,6 +463,7 @@ export async function generateWorld(opt = {}, progress = async () => {}) {
         const gx = shade(t.x + e, t.z, y, t) - shade(t.x - e, t.z, y, t), gz = shade(t.x, t.z + e, y, t) - shade(t.x, t.z - e, y, t);
         const gm = Math.hypot(gx, gz) + 1e-6, pull = clamp(gm * 4, 0, 1) * (1 - 0.6 * (t.L ?? 0.5)) * P.phot;
         f.lx = (gx / gm) * pull * t.h * 0.09; f.lz = (gz / gm) * pull * t.h * 0.09;
+        f.gx = gx / gm; f.gz = gz / gm; f.pull = pull; // toward the light, and how strongly (a one-sided crown in the game)
         const wl = t.ex * t.h * 0.03; f.lx += Math.cos(windDir) * wl; f.lz += Math.sin(windDir) * wl;
         f.lx += (fr() - 0.5) * t.h * 0.02; f.lz += (fr() - 0.5) * t.h * 0.02;
       }

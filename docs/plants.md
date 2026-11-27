@@ -1,6 +1,6 @@
 # Plants: design for a branched, rooted, breakable plant model
 
-Status: **steps 1 and 2 built**; **step 3 mostly built** (branch obstacles, breaking, branches on fallen trees; pushing through foliage by branch is not yet); step 4 is design. This replaces the "Trees: forks, branch hierarchy, stubs" sketch in
+Status: **steps 1 and 2 built**, with seven species (§8e); **step 3 mostly built** (branch obstacles, breaking, branches on fallen trees; pushing through foliage by branch is not yet); step 4 is design. This replaces the "Trees: forks, branch hierarchy, stubs" sketch in
 `extensibility.md` and folds in five requirements:
 
 1. leaf placement differs by plant;
@@ -346,6 +346,71 @@ the button picks the nearest branch roughly in front of you within 2.4 m, and sh
 
 The gym gains two stations, "Fallen fir, 2 years" and "Fallen maple, 12 years". Both are for looking; nothing is
 scored.
+
+## 8e. More species and more variety (built)
+
+Seven species now, up from four. Following §2, each new species is a table row, not new code: a row in `SPECIES`
+(stand simulation, `worldgen.js`), `ARCH` (architecture, `plants.js`) and `ROOTS`, plus colours in the game.
+
+| | Spruce | Oak | Aspen |
+|---|---|---|---|
+| niche (stand simulation) | wetter, cooler, poorer ground than fir; very shade tolerant | drier, fertile ground and upper slopes; mid tolerance; long-lived | a short-lived pioneer that seeds in from afar; intolerant of shade |
+| crown | a narrow spire (`spire` envelope) | wide, low and open (`spread`), splitting low into 3–4 leaders | short and round, high on a clean pale bole (`column`) |
+| habit | limbs droop from the stem and turn up at the tips; branchlets hang in curtains from the long limbs | sympodial: limbs and leaders zig-zag, and long level limbs sag | short upswept limbs, sparse small leaves |
+| roots | a thin, shallow plate | deep, with a taproot and many sinkers | shallow, wide-running laterals |
+| wood (USDA Wood Handbook, green) | white spruce: E 7.4 GPa, MOR 39 MPa | northern red oak: E 9.3 GPa, MOR 69 MPa | quaking aspen: E 5.9 GPa, MOR 35 MPa |
+| edible or useful | new tips, inner bark, gum | acorns (leached), bark tannin | inner bark, catkins |
+
+Other stand traits: storm-kill multiplier `wind` (spruce 1.3, oak 0.7, the rest 0.85–1.05); log decay (oak 1.6×,
+aspen 0.55×).
+
+**Traits instead of switches** [choice] (the "practical structure change" in `extensibility.md`). Code that branched on a
+species' `kind` now reads row traits:
+- `crownA`: the crown radius coefficient;
+- `crownF`: the live crown share in a stand;
+- `keepLow`: how far a young open-grown tree keeps live limbs low;
+- `pale`: white bark;
+- `isConifer(sp)`: needles versus leaves.
+
+`kind` now only picks the far-crown card archetype.
+
+**New growth rules**, each a field on an `ARCH` row. A row without the field grows exactly as before: the four original
+species give identical node lists, checked by hash at six sizes each.
+- `zig` (degrees): **sympodial** growth. At each node the shoot tip aborts and a side bud carries on, so the axis turns
+  to alternate sides. Used for oak limbs, branches (`sub.zig`) and, at 60 %, its leaders.
+- `sag`: long, level limbs bow under their own weight. The far-half curve drops by sag × (length / 3 m) × sin(angle).
+  This is a growth-time stand-in for the static deflection in §2, step 6.
+- `sub.hang` (radians): branchlets turn toward the ground, scaled by the length of their limb, so long lower limbs carry
+  curtains and short top limbs don't (spruce).
+- `split.curve`: how co-dominant leaders bend; the old fixed range is the default.
+
+**One-sided crowns** (gap-seeking, §2). The stand simulation already leans a stem toward the light gradient across its
+crown. It now also keeps that gradient's direction and strength (`form.gx`, `gz`, `pull`). A broadleaf or pine with
+normalised pull above 0.8 (about the most lopsided 15 % of candidates) uses a fourth library shape, `one-sided`
+(`growPlant({ side: 0.75 })`):
+- limbs toward the light grow up to 55 % longer;
+- those on the far side are shorter or missing;
+- leaders swing toward the light.
+
+The tree is turned so that side faces the gradient. Fir and spruce keep their shape (strong apical control).
+
+**Measured** (seed 1, `standStats`, basal area share of stems ≥ 10 cm):
+
+| world | Fir | Pine | Maple | Birch | Spruce | Oak | Aspen |
+|---|---|---|---|---|---|---|---|
+| mesic granite (default) | 27 % | 14 % | 11 % | 11 % | 9 % | 17 % | 12 % |
+| dry sandstone | 1 % | 79 % | 2 % | 4 % | 0 % | 8 % | 6 % |
+| wet basalt | 32 % | 0 % | 44 % | 5 % | 12 % | 4 % | 4 % |
+| mesic basalt | 14 % | 0 % | 60 % | 3 % | 3 % | 15 % | 5 % |
+
+Before, the default world was fir 40 %, pine 22 %, maple 19 % and birch 19 %.
+
+Other measurements, default world:
+- One-sided crowns: 1,007 trees. The mean cosine between each crown's offset and its light direction is 0.93.
+- Grown variants in the library: 253, against at most 144 before.
+- Load time and frame time are unchanged within run-to-run noise: about 6 s and 16–22 ms in software rendering, both
+  builds.
+- Generation takes 0.4–14 ms per plant for the new species. A mature oak has about 1,300 segments.
 
 ## 9. How we check it (the plant gym)
 

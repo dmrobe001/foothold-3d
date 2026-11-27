@@ -10,6 +10,8 @@
 // envelope set by the stand simulation's crown length and radius. Radii then follow the pipe model (Shinozaki et al.
 // 1964): r_parent^a = sum r_child^a, with the exponent fitted so the stem matches the simulated dbh.
 // Roots, vines and mechanics are designed for (docs/plants.md) but not grown yet.
+// Variety comes from the species rows (ARCH): crown envelope, phyllotaxis, branch angles and curves, sympodial zig-zag
+// (zig), limb sag (sag), hanging branchlets (sub.hang), co-dominant splits; and per tree from a one-sided crown (side).
 import { mulberry32, clamp, plateRadius } from './worldgen.js';
 
 export const LIVE = 0;
@@ -65,6 +67,40 @@ export const ARCH = [
       { part: 'young leaves and catkins', where: 'shoot tips', months: [4, 5], use: 'tea, cooked' },
     ],
     organ: { part: 'catkins', minD: 8, zone: [0.3, 1], per: 0.3, len: 0.04, r: 0.008, hang: true, months: [4, 9], mass: 0.003, tip: true } },
+  // Spruce: a narrow spire; limbs droop from the stem and turn up at the tips, and the branchlets on them hang in curtains
+  // (hang: how far side branches are turned toward the ground, radians). Wood after white spruce.
+  { name: 'Spruce', shape: 'spire', phyllo: 'whorl', per: [4, 6], step: 0.36, maxSteps: 26, ang: [104, 76], curve: [-0.6, 0.42], kink: 3, stemKink: 0.4,
+    sub: { n: 7, ang: 64, ratio: 0.46, plane: false, kink: 7, hang: 0.85 }, sub2: null, split: null, fork: 0.03, leaf: 'spray', leafSize: 0.5, reachK: 1.1, rTip: 0.005,
+    dead: 0.85, deadLen: 0.5, wood: { E: 7.4, MOR: 39, sg: 0.33 },
+    edible: [
+      { part: 'new tips', where: 'shoot tips', months: [5, 6], use: 'raw, tea or syrup; vitamin C' },
+      { part: 'inner bark', where: 'stem', months: [4, 6], use: 'famine food: dried and ground' },
+      { part: 'gum', where: 'bark wounds', months: [1, 12], use: 'chewed; pitch for glue' },
+    ],
+    organ: { part: 'cone', minD: 12, zone: [0.75, 1], per: 0.55, len: 0.05, r: 0.016, hang: true, months: [8, 10], mass: 0.015 } },
+  // Oak: low apical dominance and sympodial limbs. Each shoot's tip aborts and a side bud carries on, so limbs zig-zag
+  // (zig: the turn at each node, degrees); long limbs reach out nearly level and sag under their weight (sag). The trunk
+  // breaks up low into several crooked leaders, and the crown is wide and open. Wood after northern red oak.
+  { name: 'Oak', shape: 'spread', phyllo: 'spiral', step: 0.8, maxSteps: 10, ang: [82, 56], curve: [0.2, -0.05], kink: 16, stemKink: 3.5, zig: 28, sag: 0.45,
+    sub: { n: 5, ang: 55, ratio: 0.55, plane: false, kink: 18, zig: 20 }, sub2: { n: 3, ang: 50, ratio: 0.55 },
+    split: { at: 0.34, n: [3, 4], spread: [30, 46], again: 0.7, p: 0.85, curve: [-0.05, 0.2, 0.1, 0.4] }, fork: 0, leaf: 'shell', leafSize: 0.6, reachK: 1.05, rTip: 0.005,
+    dead: 0.35, deadLen: 0.7, wood: { E: 9.3, MOR: 69, sg: 0.56 },
+    edible: [
+      { part: 'acorns', where: 'shoot tips', months: [9, 10], use: 'shelled, leached of tannin in water, then roasted or ground to flour' },
+      { part: 'bark', where: 'stem', months: [1, 12], use: 'tannin: tanning hides, an astringent wash (not food)' },
+    ],
+    organ: { part: 'acorns', minD: 20, zone: [0.3, 1], per: 0.3, len: 0.025, r: 0.012, hang: true, months: [9, 10], mass: 0.005, tip: true } },
+  // Aspen: a pioneer that sheds its lower limbs early, leaving a clean pale bole under a small, high, round crown of short
+  // upswept limbs; small leaves, sparse enough to see sky through. Wood after quaking aspen.
+  { name: 'Aspen', shape: 'column', phyllo: 'spiral', step: 0.55, maxSteps: 12, ang: [56, 36], curve: [0.5, 0.15], kink: 10, stemKink: 1.1,
+    sub: { n: 4, ang: 44, ratio: 0.45, plane: false, kink: 10 }, sub2: null,
+    split: { at: 0.82, n: [2, 2], spread: [8, 14], again: 0, p: 0.15 }, fork: 0.08, leaf: 'shell', leafSize: 0.42, reachK: 0.95, rTip: 0.004,
+    dead: 0.08, deadLen: 0.3, wood: { E: 5.9, MOR: 35, sg: 0.35 },
+    edible: [
+      { part: 'inner bark', where: 'stem', months: [4, 6], use: 'raw or dried; sweet in spring' },
+      { part: 'catkins', where: 'shoot tips', months: [3, 4], use: 'raw or cooked' },
+    ],
+    organ: { part: 'catkins', minD: 10, zone: [0.4, 1], per: 0.25, len: 0.05, r: 0.008, hang: true, months: [3, 5], mass: 0.003, tip: true } },
 ];
 
 // relative crown radius at fraction f of the live crown (0 crown base, 1 top)
@@ -75,6 +111,9 @@ function envelope(shape, f, d) {
     case 'pine': return d < 25 ? 0.1 + 0.9 * Math.pow(1 - f, 0.9) : Math.sqrt(Math.max(0, 1 - ((f - 0.55) / 0.62) ** 2)) * 0.95 + 0.05;
     case 'dome': return Math.sqrt(Math.max(0, 1 - ((f - 0.42) / 0.64) ** 2)) * 0.92 + 0.08;
     case 'ovoid': return Math.pow(Math.max(0, Math.sin(Math.PI * (0.06 + 0.9 * f))), 0.75) * (1 - 0.2 * f) + 0.06;
+    case 'spire': return 0.06 + 0.94 * Math.pow(1 - f, 1.3); // narrower toward the top than a fir's cone
+    case 'spread': return Math.sqrt(Math.max(0, 1 - ((f - 0.3) / 0.76) ** 2)) * 0.95 + 0.05; // widest low, flat-topped
+    case 'column': return Math.pow(Math.max(0, Math.sin(Math.PI * (0.04 + 0.92 * f))), 0.55) * 0.9 + 0.08; // short and round
   }
   return 1 - f;
 }
@@ -100,7 +139,7 @@ function bendToward(d, target, th) { // turn d toward target by th (negative: aw
 // ---- growing
 // spec: { sp, d (dbh, cm), h (m), crownLen (m), cr (crown radius, m), seed, forked, age (years, optional) }
 export function growPlant(spec) {
-  const { sp, d, h, crownLen, cr, seed = 1, forked = false } = spec;
+  const { sp, d, h, crownLen, cr, seed = 1, forked = false, side = 0 } = spec; // side 0..1: a one-sided crown, reaching toward +x (a gap's light)
   const A = ARCH[sp], rnd = mulberry32(seed >>> 0 || 1);
   const R = (a, b) => a + (b - a) * rnd(), gauss = () => (rnd() + rnd() + rnd() - 1.5) * 1.15;
   const age = spec.age ?? Math.max(5, d * 3);
@@ -109,7 +148,7 @@ export function growPlant(spec) {
   const node = (par, p0, p1, ord, axis, st, born) => { nodes.push({ par, p0, p1, ord, axis, st, born, kids: [] }); const i = nodes.length - 1; if (par >= 0) nodes[par].kids.push(i); return i; };
 
   // grow one axis: n segments from `start` along `dir`, bending by `curve` (total, over the axis) and kinking at random
-  function growAxis(par, start, dir, L, ord, st, { curve = [0, 0], kink = 0, maxSeg = 6, segLen = 0.7, born = 0, upright = false } = {}) {
+  function growAxis(par, start, dir, L, ord, st, { curve = [0, 0], kink = 0, maxSeg = 6, segLen = 0.7, born = 0, upright = false, zig = 0 } = {}) {
     const n = clamp(Math.ceil(L / segLen), 1, maxSeg), sl = L / n, ax = { nodes: [], ord, st, L, sl };
     axes.push(ax); const ai = axes.length - 1;
     let p = start, dv = norm(dir), prev = par;
@@ -117,6 +156,9 @@ export function growPlant(spec) {
       const t = (i + 0.5) / n, c = (t < 0.5 ? curve[0] : curve[1]) * 2 / n;
       if (i > 0 || ord > 0) dv = bendToward(dv, UP, c);
       if (kink) { const k = norm(rotate(perp(dv), dv, rnd() * 6.283)); dv = norm(rotate(dv, k, gauss() * kink * D2R)); }
+      if (zig && i > 0) { // sympodial: the tip aborts and a side bud takes over, turning the axis to alternate sides
+        const sd = cross(dv, UP); if (len3(sd) > 1e-3) dv = norm(rotate(dv, norm(cross(sd, dv)), (i % 2 ? 1 : -1) * zig * R(0.6, 1.25) * D2R));
+      }
       if (upright) dv = bendToward(dv, UP, 0.6 * Math.acos(clamp(dv[1], -1, 1))); // gravitropism: the leader recovers vertical
       const q = add(p, dv, sl);
       prev = node(prev, p, q, ord, ai, st, born + (age - born) * (i / n));
@@ -146,10 +188,12 @@ export function growPlant(spec) {
     let s = R(0, 0.3), az = rnd() * 6.283;
     for (let k = 1; k < n; k++) {
       const m = at(dom, Math.min(s, axL(dom) * 0.6)); az += 6.283 / n + gauss() * 0.7;
+      if (side) az = Math.atan2(Math.sin(az), Math.cos(az) + side * 1.2); // leaders swing toward the light
       const sp = R(split.spread[0], split.spread[1]) * D2R, dir = norm(add(m.dir.map((q) => q * Math.cos(sp)), horiz(az), Math.sin(sp)));
       const L = (h * R(0.8, 0.96) - m.p[1]) / Math.cos(sp * 0.6);
       if (L > 0.6) {
-        const ai = growAxis(m.id, m.p, dir, L, 0, LIVE, { curve: [R(0, 0.35), R(0.1, 0.55)], kink: A.kink * 0.8, maxSeg: 22, segLen: segL });
+        const lc = split.curve || [0, 0.35, 0.1, 0.55]; // how the leader bends: [near half min, max, far half min, max] (radians, + up)
+        const ai = growAxis(m.id, m.p, dir, L, 0, LIVE, { curve: [R(lc[0], lc[1]), R(lc[2], lc[3])], kink: A.kink * 0.8, maxSeg: 22, segLen: segL, zig: (A.zig || 0) * 0.6 });
         stemAxes.push(ai);
         if (rnd() < split.again) { // a second, smaller fork part way up this leader
           const q = at(ai, L * R(0.3, 0.6)), sp2 = R(14, 28) * D2R, d2 = norm(add(q.dir.map((v) => v * Math.cos(sp2)), horiz(az + R(-1.6, 1.6)), Math.sin(sp2)));
@@ -193,10 +237,13 @@ export function growPlant(spec) {
         let dir = [Math.sin(ang) * Math.cos(a), Math.cos(ang), Math.sin(ang) * Math.sin(a)];
         const rad = Math.hypot(m.p[0], m.p[2]);
         if (rad > 0.25 && (dir[0] * m.p[0] + dir[2] * m.p[2]) / rad < -0.25 * Math.sin(ang)) continue; // don't grow back into the crown
-        const reach = Math.max(0.12, reachTo - rad * 0.8);
-        const Lb = Math.min(reach / Math.max(0.35, Math.sin(ang)) * R(0.85, 1.12) * A.reachK, cr * 1.8);
+        const toLight = side ? Math.cos(a) : 0; // a one-sided crown: limbs toward the gap grow long, those on the shaded side short or not at all
+        if (side && toLight < 0 && rnd() < side * 0.55 * -toLight) continue;
+        const reach = Math.max(0.12, reachTo * (1 + side * 0.55 * toLight) - rad * 0.8);
+        const Lb = Math.min(reach / Math.max(0.35, Math.sin(ang)) * R(0.85, 1.12) * A.reachK, cr * 1.8 * (1 + 0.4 * side));
         if (Lb < 0.12) continue;
-        limbs.push(growAxis(m.id, m.p, dir, Lb, 1, LIVE, { curve: [A.curve[0] * (0.6 + 0.4 * Lb / 3), A.curve[1]], kink: A.kink, maxSeg: 6, segLen: Math.max(0.35, 0.75 * sz), born: age * (y / h) }));
+        const sag = (A.sag || 0) * clamp(Lb / 3, 0, 2) * Math.sin(ang); // long, level limbs bow under their own weight
+        limbs.push(growAxis(m.id, m.p, dir, Lb, 1, LIVE, { curve: [A.curve[0] * (0.6 + 0.4 * Lb / 3), A.curve[1] - sag], kink: A.kink, zig: A.zig || 0, maxSeg: 6, segLen: Math.max(0.35, 0.75 * sz), born: age * (y / h) }));
       }
     }
   }
@@ -215,8 +262,11 @@ export function growPlant(spec) {
         let pp;
         if (B.plane) pp = add(side, UP, 0.12 * (k % 2 ? 1 : -1)).map((q) => q * (k % 2 ? 1 : -1));
         else { const up2 = norm(cross(side, pd)), a = k * PHI + rnd() * 0.8; pp = add(side.map((q) => q * Math.cos(a)), up2, Math.sin(a)); if (pp[1] < -0.55) pp = pp.map((q) => -q); }
-        const ang = (B.ang + gauss() * 8) * D2R, dir = norm(add(pd.map((q) => q * Math.cos(ang)), pp, Math.sin(ang)));
-        out.push(growAxis(m.id, m.p, dir, Lc, ord, st, { curve: [A.curve[0] * 0.5, A.curve[1] * 0.6], kink: (B.kink ?? A.kink) , maxSeg: ord === 2 ? 2 : 1, segLen: 0.5, born: nodes[m.id].born + 1 }));
+        const ang = (B.ang + gauss() * 8) * D2R; let dir = norm(add(pd.map((q) => q * Math.cos(ang)), pp, Math.sin(ang)));
+        const hang = B.hang && st === LIVE ? B.hang * clamp((L - 0.6) / 1.8, 0, 1) : 0; // curtains hang from long limbs; short ones near the top keep theirs level
+        if (hang) dir = bendToward(dir, [0, -1, 0], hang * R(0.7, 1.2));
+        const curve = hang ? [-0.15 * hang, -0.1 * hang] : [A.curve[0] * 0.5, A.curve[1] * 0.6];
+        out.push(growAxis(m.id, m.p, dir, Lc, ord, st, { curve, kink: (B.kink ?? A.kink), zig: B.zig || 0, maxSeg: ord === 2 ? 2 : 1, segLen: 0.5, born: nodes[m.id].born + 1 }));
       }
     }
     return out;
@@ -384,6 +434,9 @@ export const ROOTS = [
   { n: [4, 6], depthRate: 0.16, tap: 1, sinkers: 0.5, expose: -0.1 }, // pine: deeper, with a taproot
   { n: [6, 9], depthRate: 0.14, tap: 0, sinkers: 0.6, expose: 0.0 },  // maple: a heart-shaped mass
   { n: [5, 8], depthRate: 0.08, tap: 0, sinkers: 0.2, expose: 0.1 },  // birch: shallow, spreading
+  { n: [5, 8], depthRate: 0.06, tap: 0, sinkers: 0.15, expose: 0.18 }, // spruce: a thin, shallow plate (why spruce blows over)
+  { n: [5, 7], depthRate: 0.2, tap: 1, sinkers: 0.7, expose: -0.15 }, // oak: deep, a taproot and many sinkers
+  { n: [4, 6], depthRate: 0.09, tap: 0, sinkers: 0.3, expose: 0.05 },  // aspen: shallow, wide-running laterals
 ];
 // spec: { sp, d, seed, soil 0..1, slope [dh/dx, dh/dz], wet 0..1, rocky 0..1 }
 export function growRoots(spec) {

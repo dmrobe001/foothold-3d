@@ -265,13 +265,23 @@ function sampleGrid(G, n, x, z) {
 // tol: shade tolerance 0..1, half: light level giving half-maximal growth, disp: seed dispersal length (m),
 // decay: multiplier on log residence time.
 const SPECIES = [
-  { name: 'Fir',   kind: 'conifer', mOpt: 0.68, mW: 0.26, eBias: 0.35,  tol: 0.9,  half: 0.05, G: 0.58, dmax: 90, life: 300, Hmax: 36, disp: 14, decay: 1.3,  fPref: 0.5,  phot: 0.25, sinu: 0.02 },
-  { name: 'Pine',  kind: 'pine',    mOpt: 0.22, mW: 0.22, eBias: 0.15,  tol: 0.15, half: 0.35, G: 0.75, dmax: 85, life: 260, Hmax: 31, disp: 28, decay: 1.25, fPref: 0.15, phot: 0.6,  sinu: 0.07 },
-  { name: 'Maple', kind: 'broad',   mOpt: 0.50, mW: 0.24, eBias: -0.35, tol: 0.75, half: 0.09, G: 0.66, dmax: 95, life: 240, Hmax: 29, disp: 11, decay: 0.8,  fPref: 0.85, phot: 1.0,  sinu: 0.08 },
-  { name: 'Birch', kind: 'birch',   mOpt: 0.55, mW: 0.34, eBias: 0.0,   tol: 0.1,  half: 0.4,  G: 0.95, dmax: 50, life: 110, Hmax: 23, disp: 40, decay: 0.6,  fPref: 0.5,  phot: 1.3,  sinu: 0.1 },
+  { name: 'Fir',    kind: 'conifer', mOpt: 0.68, mW: 0.26, eBias: 0.35,  tol: 0.9,  half: 0.05, G: 0.58, dmax: 90,  life: 300, Hmax: 36, disp: 14, decay: 1.3,  fPref: 0.5,  phot: 0.25, sinu: 0.02, crownA: 0.12,  crownF: 0.7,  keepLow: 1,   wind: 1 },
+  { name: 'Pine',   kind: 'pine',    mOpt: 0.22, mW: 0.22, eBias: 0.15,  tol: 0.15, half: 0.35, G: 0.75, dmax: 85,  life: 260, Hmax: 31, disp: 28, decay: 1.25, fPref: 0.15, phot: 0.6,  sinu: 0.07, crownA: 0.11,  crownF: 0.3,  keepLow: 0.3, wind: 0.85 },
+  { name: 'Maple',  kind: 'broad',   mOpt: 0.50, mW: 0.24, eBias: -0.35, tol: 0.75, half: 0.09, G: 0.66, dmax: 95,  life: 240, Hmax: 29, disp: 11, decay: 0.8,  fPref: 0.85, phot: 1.0,  sinu: 0.08, crownA: 0.16,  crownF: 0.48, keepLow: 0.8, wind: 0.9 },
+  { name: 'Birch',  kind: 'broad',   mOpt: 0.55, mW: 0.34, eBias: 0.0,   tol: 0.1,  half: 0.4,  G: 0.95, dmax: 50,  life: 110, Hmax: 23, disp: 40, decay: 0.6,  fPref: 0.5,  phot: 1.3,  sinu: 0.1,  crownA: 0.12,  crownF: 0.45, keepLow: 0.4, wind: 1, pale: true },
+  { name: 'Spruce', kind: 'conifer', mOpt: 0.80, mW: 0.24, eBias: 0.2,   tol: 0.85, half: 0.06, G: 0.5,  dmax: 75,  life: 280, Hmax: 32, disp: 16, decay: 1.2,  fPref: 0.4,  phot: 0.2,  sinu: 0.02, crownA: 0.095, crownF: 0.75, keepLow: 1,   wind: 1.3 },
+  { name: 'Oak',    kind: 'broad',   mOpt: 0.36, mW: 0.22, eBias: 0.25,  tol: 0.45, half: 0.16, G: 0.6,  dmax: 110, life: 350, Hmax: 27, disp: 9,  decay: 1.6,  fPref: 0.6,  phot: 0.9,  sinu: 0.14, crownA: 0.19,  crownF: 0.5,  keepLow: 0.6, wind: 0.7 },
+  { name: 'Aspen',  kind: 'broad',   mOpt: 0.47, mW: 0.36, eBias: 0.05,  tol: 0.05, half: 0.45, G: 1.05, dmax: 55,  life: 90,  Hmax: 26, disp: 60, decay: 0.55, fPref: 0.55, phot: 1.1,  sinu: 0.05, crownA: 0.085, crownF: 0.3,  keepLow: 0.25, wind: 1.05, pale: true },
 ];
 // fPref: preferred soil fertility; phot: phototropic lean strength (conifers keep a straight leader through apical control);
 // sinu: typical stem sinuosity amplitude in metres.
+// kind: the far-crown archetype (conifer: a cone of cards; pine: a flat-topped cloud; broad: a rounded cloud), and needles
+// (conifer, pine) versus leaves. crownA: crown radius coefficient (crownRadius); crownF: live crown share of height in a
+// stand; keepLow: how far a young open-grown tree keeps live limbs toward the ground (shade tolerance of its own lower
+// crown); wind: storm-kill multiplier (shallow-rooted spruce high, deep-rooted oak low); pale: white bark (birch, aspen).
+// The new species (spruce, oak, aspen) extend the northern mixed forest: spruce wetter and cooler than fir, oak on
+// drier, fertile ground with a long-lived, decay-resistant log, aspen a short-lived pioneer that seeds in from afar.
+const isConifer = (sp) => SPECIES[sp].kind !== 'broad';
 
 // Bedrock sets soil fertility, drainage, depth on slopes, and how rocks look.
 // fert 0..1 shifts species composition and growth; drain shifts site moisture; soil scales soil depth, which controls
@@ -284,17 +294,14 @@ const GEOLOGY = {
 const NF = 1025;              // fine heightmap vertices per side (0.5 m)
 function treeHeight(sp, d) { return 1.3 + SPECIES[sp].Hmax * Math.pow(1 - Math.exp(-0.035 * d), 1.15); }
 function crownRadius(sp, d) {
-  const k = SPECIES[sp].kind;
-  const a = k === 'conifer' ? 0.12 : k === 'pine' ? 0.11 : k === 'birch' ? 0.12 : 0.16;
-  return 0.35 + a * Math.pow(d, 0.85);
+  return 0.35 + SPECIES[sp].crownA * Math.pow(d, 0.85);
 }
 // root plate radius (m) for dbh d (cm) and soil depth index 0..1: what tears out when the tree tips over. Shared by the
 // pits written here, the root wads the game draws, and the root graphs in plants.js.
 function plateRadius(d, soil = 0.6) { return 0.45 + 0.025 * d * (0.75 + 0.5 * soil); }
 const plateThickness = (d, soil = 0.6) => Math.min(0.2 + 0.01 * d, 0.25 + 0.7 * soil);
 function crownFraction(sp) {
-  const k = SPECIES[sp].kind;
-  return k === 'conifer' ? 0.7 : k === 'pine' ? 0.3 : k === 'birch' ? 0.45 : 0.48;
+  return SPECIES[sp].crownF;
 }
 
 // ---------------------------------------------------------------- terrain
@@ -545,7 +552,7 @@ async function generateWorld(opt = {}, progress = async () => {}) {
         if (t.st !== 0 || t.h < 8) continue;
         const dx = wrap(t.x - cx), dz = wrap(t.z - cz), q = (dx * dx + dz * dz) / (r * r);
         if (q > 1) continue;
-        if (rand() < (1 - q) * Math.pow(clamp(t.h / 26, 0, 1), 1.5) * (1.25 - 0.45 * t.soil) * (0.8 + 0.4 * t.ex)) killTree(t, year, true, dir + (rand() - 0.5) * 0.5);
+        if (rand() < (1 - q) * Math.pow(clamp(t.h / 26, 0, 1), 1.5) * (1.25 - 0.45 * t.soil) * (0.8 + 0.4 * t.ex) * SPECIES[t.sp].wind) killTree(t, year, true, dir + (rand() - 0.5) * 0.5);
       }
     }
     // snags fall, logs decay
@@ -621,7 +628,7 @@ async function generateWorld(opt = {}, progress = async () => {}) {
     for (const t of trees) if (t.st === 0 && t.d > 5) {
       const i = Math.round(((t.x + HALF) / WORLD) * (LN - 1)), j = Math.round(((t.z + HALF) / WORLD) * (LN - 1));
       const k = j * LN + i, k2 = SPECIES[t.sp].kind;
-      tAcc[k] += t.ba; if (k2 === 'conifer' || k2 === 'pine') cAcc[k] += t.ba;
+      tAcc[k] += t.ba; if (k2 !== 'broad') cAcc[k] += t.ba;
     }
     blur(cAcc, LN, 3); blur(tAcc, LN, 3);
     for (let k = 0; k < conShare.length; k++) conShare[k] = tAcc[k] > 1e-5 ? cAcc[k] / tAcc[k] : 0.5;
@@ -641,6 +648,7 @@ async function generateWorld(opt = {}, progress = async () => {}) {
         const gx = shade(t.x + e, t.z, y, t) - shade(t.x - e, t.z, y, t), gz = shade(t.x, t.z + e, y, t) - shade(t.x, t.z - e, y, t);
         const gm = Math.hypot(gx, gz) + 1e-6, pull = clamp(gm * 4, 0, 1) * (1 - 0.6 * (t.L ?? 0.5)) * P.phot;
         f.lx = (gx / gm) * pull * t.h * 0.09; f.lz = (gz / gm) * pull * t.h * 0.09;
+        f.gx = gx / gm; f.gz = gz / gm; f.pull = pull; // toward the light, and how strongly (a one-sided crown in the game)
         const wl = t.ex * t.h * 0.03; f.lx += Math.cos(windDir) * wl; f.lz += Math.sin(windDir) * wl;
         f.lx += (fr() - 0.5) * t.h * 0.02; f.lz += (fr() - 0.5) * t.h * 0.02;
       }
@@ -1322,6 +1330,8 @@ const PL = (() => {
 // envelope set by the stand simulation's crown length and radius. Radii then follow the pipe model (Shinozaki et al.
 // 1964): r_parent^a = sum r_child^a, with the exponent fitted so the stem matches the simulated dbh.
 // Roots, vines and mechanics are designed for (docs/plants.md) but not grown yet.
+// Variety comes from the species rows (ARCH): crown envelope, phyllotaxis, branch angles and curves, sympodial zig-zag
+// (zig), limb sag (sag), hanging branchlets (sub.hang), co-dominant splits; and per tree from a one-sided crown (side).
 
 const LIVE = 0;
 const DEAD = 1;
@@ -1376,6 +1386,40 @@ const ARCH = [
       { part: 'young leaves and catkins', where: 'shoot tips', months: [4, 5], use: 'tea, cooked' },
     ],
     organ: { part: 'catkins', minD: 8, zone: [0.3, 1], per: 0.3, len: 0.04, r: 0.008, hang: true, months: [4, 9], mass: 0.003, tip: true } },
+  // Spruce: a narrow spire; limbs droop from the stem and turn up at the tips, and the branchlets on them hang in curtains
+  // (hang: how far side branches are turned toward the ground, radians). Wood after white spruce.
+  { name: 'Spruce', shape: 'spire', phyllo: 'whorl', per: [4, 6], step: 0.36, maxSteps: 26, ang: [104, 76], curve: [-0.6, 0.42], kink: 3, stemKink: 0.4,
+    sub: { n: 7, ang: 64, ratio: 0.46, plane: false, kink: 7, hang: 0.85 }, sub2: null, split: null, fork: 0.03, leaf: 'spray', leafSize: 0.5, reachK: 1.1, rTip: 0.005,
+    dead: 0.85, deadLen: 0.5, wood: { E: 7.4, MOR: 39, sg: 0.33 },
+    edible: [
+      { part: 'new tips', where: 'shoot tips', months: [5, 6], use: 'raw, tea or syrup; vitamin C' },
+      { part: 'inner bark', where: 'stem', months: [4, 6], use: 'famine food: dried and ground' },
+      { part: 'gum', where: 'bark wounds', months: [1, 12], use: 'chewed; pitch for glue' },
+    ],
+    organ: { part: 'cone', minD: 12, zone: [0.75, 1], per: 0.55, len: 0.05, r: 0.016, hang: true, months: [8, 10], mass: 0.015 } },
+  // Oak: low apical dominance and sympodial limbs. Each shoot's tip aborts and a side bud carries on, so limbs zig-zag
+  // (zig: the turn at each node, degrees); long limbs reach out nearly level and sag under their weight (sag). The trunk
+  // breaks up low into several crooked leaders, and the crown is wide and open. Wood after northern red oak.
+  { name: 'Oak', shape: 'spread', phyllo: 'spiral', step: 0.8, maxSteps: 10, ang: [82, 56], curve: [0.2, -0.05], kink: 16, stemKink: 3.5, zig: 28, sag: 0.45,
+    sub: { n: 5, ang: 55, ratio: 0.55, plane: false, kink: 18, zig: 20 }, sub2: { n: 3, ang: 50, ratio: 0.55 },
+    split: { at: 0.34, n: [3, 4], spread: [30, 46], again: 0.7, p: 0.85, curve: [-0.05, 0.2, 0.1, 0.4] }, fork: 0, leaf: 'shell', leafSize: 0.6, reachK: 1.05, rTip: 0.005,
+    dead: 0.35, deadLen: 0.7, wood: { E: 9.3, MOR: 69, sg: 0.56 },
+    edible: [
+      { part: 'acorns', where: 'shoot tips', months: [9, 10], use: 'shelled, leached of tannin in water, then roasted or ground to flour' },
+      { part: 'bark', where: 'stem', months: [1, 12], use: 'tannin: tanning hides, an astringent wash (not food)' },
+    ],
+    organ: { part: 'acorns', minD: 20, zone: [0.3, 1], per: 0.3, len: 0.025, r: 0.012, hang: true, months: [9, 10], mass: 0.005, tip: true } },
+  // Aspen: a pioneer that sheds its lower limbs early, leaving a clean pale bole under a small, high, round crown of short
+  // upswept limbs; small leaves, sparse enough to see sky through. Wood after quaking aspen.
+  { name: 'Aspen', shape: 'column', phyllo: 'spiral', step: 0.55, maxSteps: 12, ang: [56, 36], curve: [0.5, 0.15], kink: 10, stemKink: 1.1,
+    sub: { n: 4, ang: 44, ratio: 0.45, plane: false, kink: 10 }, sub2: null,
+    split: { at: 0.82, n: [2, 2], spread: [8, 14], again: 0, p: 0.15 }, fork: 0.08, leaf: 'shell', leafSize: 0.42, reachK: 0.95, rTip: 0.004,
+    dead: 0.08, deadLen: 0.3, wood: { E: 5.9, MOR: 35, sg: 0.35 },
+    edible: [
+      { part: 'inner bark', where: 'stem', months: [4, 6], use: 'raw or dried; sweet in spring' },
+      { part: 'catkins', where: 'shoot tips', months: [3, 4], use: 'raw or cooked' },
+    ],
+    organ: { part: 'catkins', minD: 10, zone: [0.4, 1], per: 0.25, len: 0.05, r: 0.008, hang: true, months: [3, 5], mass: 0.003, tip: true } },
 ];
 
 // relative crown radius at fraction f of the live crown (0 crown base, 1 top)
@@ -1386,6 +1430,9 @@ function envelope(shape, f, d) {
     case 'pine': return d < 25 ? 0.1 + 0.9 * Math.pow(1 - f, 0.9) : Math.sqrt(Math.max(0, 1 - ((f - 0.55) / 0.62) ** 2)) * 0.95 + 0.05;
     case 'dome': return Math.sqrt(Math.max(0, 1 - ((f - 0.42) / 0.64) ** 2)) * 0.92 + 0.08;
     case 'ovoid': return Math.pow(Math.max(0, Math.sin(Math.PI * (0.06 + 0.9 * f))), 0.75) * (1 - 0.2 * f) + 0.06;
+    case 'spire': return 0.06 + 0.94 * Math.pow(1 - f, 1.3); // narrower toward the top than a fir's cone
+    case 'spread': return Math.sqrt(Math.max(0, 1 - ((f - 0.3) / 0.76) ** 2)) * 0.95 + 0.05; // widest low, flat-topped
+    case 'column': return Math.pow(Math.max(0, Math.sin(Math.PI * (0.04 + 0.92 * f))), 0.55) * 0.9 + 0.08; // short and round
   }
   return 1 - f;
 }
@@ -1411,7 +1458,7 @@ function bendToward(d, target, th) { // turn d toward target by th (negative: aw
 // ---- growing
 // spec: { sp, d (dbh, cm), h (m), crownLen (m), cr (crown radius, m), seed, forked, age (years, optional) }
 function growPlant(spec) {
-  const { sp, d, h, crownLen, cr, seed = 1, forked = false } = spec;
+  const { sp, d, h, crownLen, cr, seed = 1, forked = false, side = 0 } = spec; // side 0..1: a one-sided crown, reaching toward +x (a gap's light)
   const A = ARCH[sp], rnd = mulberry32(seed >>> 0 || 1);
   const R = (a, b) => a + (b - a) * rnd(), gauss = () => (rnd() + rnd() + rnd() - 1.5) * 1.15;
   const age = spec.age ?? Math.max(5, d * 3);
@@ -1420,7 +1467,7 @@ function growPlant(spec) {
   const node = (par, p0, p1, ord, axis, st, born) => { nodes.push({ par, p0, p1, ord, axis, st, born, kids: [] }); const i = nodes.length - 1; if (par >= 0) nodes[par].kids.push(i); return i; };
 
   // grow one axis: n segments from `start` along `dir`, bending by `curve` (total, over the axis) and kinking at random
-  function growAxis(par, start, dir, L, ord, st, { curve = [0, 0], kink = 0, maxSeg = 6, segLen = 0.7, born = 0, upright = false } = {}) {
+  function growAxis(par, start, dir, L, ord, st, { curve = [0, 0], kink = 0, maxSeg = 6, segLen = 0.7, born = 0, upright = false, zig = 0 } = {}) {
     const n = clamp(Math.ceil(L / segLen), 1, maxSeg), sl = L / n, ax = { nodes: [], ord, st, L, sl };
     axes.push(ax); const ai = axes.length - 1;
     let p = start, dv = norm(dir), prev = par;
@@ -1428,6 +1475,9 @@ function growPlant(spec) {
       const t = (i + 0.5) / n, c = (t < 0.5 ? curve[0] : curve[1]) * 2 / n;
       if (i > 0 || ord > 0) dv = bendToward(dv, UP, c);
       if (kink) { const k = norm(rotate(perp(dv), dv, rnd() * 6.283)); dv = norm(rotate(dv, k, gauss() * kink * D2R)); }
+      if (zig && i > 0) { // sympodial: the tip aborts and a side bud takes over, turning the axis to alternate sides
+        const sd = cross(dv, UP); if (len3(sd) > 1e-3) dv = norm(rotate(dv, norm(cross(sd, dv)), (i % 2 ? 1 : -1) * zig * R(0.6, 1.25) * D2R));
+      }
       if (upright) dv = bendToward(dv, UP, 0.6 * Math.acos(clamp(dv[1], -1, 1))); // gravitropism: the leader recovers vertical
       const q = add(p, dv, sl);
       prev = node(prev, p, q, ord, ai, st, born + (age - born) * (i / n));
@@ -1457,10 +1507,12 @@ function growPlant(spec) {
     let s = R(0, 0.3), az = rnd() * 6.283;
     for (let k = 1; k < n; k++) {
       const m = at(dom, Math.min(s, axL(dom) * 0.6)); az += 6.283 / n + gauss() * 0.7;
+      if (side) az = Math.atan2(Math.sin(az), Math.cos(az) + side * 1.2); // leaders swing toward the light
       const sp = R(split.spread[0], split.spread[1]) * D2R, dir = norm(add(m.dir.map((q) => q * Math.cos(sp)), horiz(az), Math.sin(sp)));
       const L = (h * R(0.8, 0.96) - m.p[1]) / Math.cos(sp * 0.6);
       if (L > 0.6) {
-        const ai = growAxis(m.id, m.p, dir, L, 0, LIVE, { curve: [R(0, 0.35), R(0.1, 0.55)], kink: A.kink * 0.8, maxSeg: 22, segLen: segL });
+        const lc = split.curve || [0, 0.35, 0.1, 0.55]; // how the leader bends: [near half min, max, far half min, max] (radians, + up)
+        const ai = growAxis(m.id, m.p, dir, L, 0, LIVE, { curve: [R(lc[0], lc[1]), R(lc[2], lc[3])], kink: A.kink * 0.8, maxSeg: 22, segLen: segL, zig: (A.zig || 0) * 0.6 });
         stemAxes.push(ai);
         if (rnd() < split.again) { // a second, smaller fork part way up this leader
           const q = at(ai, L * R(0.3, 0.6)), sp2 = R(14, 28) * D2R, d2 = norm(add(q.dir.map((v) => v * Math.cos(sp2)), horiz(az + R(-1.6, 1.6)), Math.sin(sp2)));
@@ -1504,10 +1556,13 @@ function growPlant(spec) {
         let dir = [Math.sin(ang) * Math.cos(a), Math.cos(ang), Math.sin(ang) * Math.sin(a)];
         const rad = Math.hypot(m.p[0], m.p[2]);
         if (rad > 0.25 && (dir[0] * m.p[0] + dir[2] * m.p[2]) / rad < -0.25 * Math.sin(ang)) continue; // don't grow back into the crown
-        const reach = Math.max(0.12, reachTo - rad * 0.8);
-        const Lb = Math.min(reach / Math.max(0.35, Math.sin(ang)) * R(0.85, 1.12) * A.reachK, cr * 1.8);
+        const toLight = side ? Math.cos(a) : 0; // a one-sided crown: limbs toward the gap grow long, those on the shaded side short or not at all
+        if (side && toLight < 0 && rnd() < side * 0.55 * -toLight) continue;
+        const reach = Math.max(0.12, reachTo * (1 + side * 0.55 * toLight) - rad * 0.8);
+        const Lb = Math.min(reach / Math.max(0.35, Math.sin(ang)) * R(0.85, 1.12) * A.reachK, cr * 1.8 * (1 + 0.4 * side));
         if (Lb < 0.12) continue;
-        limbs.push(growAxis(m.id, m.p, dir, Lb, 1, LIVE, { curve: [A.curve[0] * (0.6 + 0.4 * Lb / 3), A.curve[1]], kink: A.kink, maxSeg: 6, segLen: Math.max(0.35, 0.75 * sz), born: age * (y / h) }));
+        const sag = (A.sag || 0) * clamp(Lb / 3, 0, 2) * Math.sin(ang); // long, level limbs bow under their own weight
+        limbs.push(growAxis(m.id, m.p, dir, Lb, 1, LIVE, { curve: [A.curve[0] * (0.6 + 0.4 * Lb / 3), A.curve[1] - sag], kink: A.kink, zig: A.zig || 0, maxSeg: 6, segLen: Math.max(0.35, 0.75 * sz), born: age * (y / h) }));
       }
     }
   }
@@ -1526,8 +1581,11 @@ function growPlant(spec) {
         let pp;
         if (B.plane) pp = add(side, UP, 0.12 * (k % 2 ? 1 : -1)).map((q) => q * (k % 2 ? 1 : -1));
         else { const up2 = norm(cross(side, pd)), a = k * PHI + rnd() * 0.8; pp = add(side.map((q) => q * Math.cos(a)), up2, Math.sin(a)); if (pp[1] < -0.55) pp = pp.map((q) => -q); }
-        const ang = (B.ang + gauss() * 8) * D2R, dir = norm(add(pd.map((q) => q * Math.cos(ang)), pp, Math.sin(ang)));
-        out.push(growAxis(m.id, m.p, dir, Lc, ord, st, { curve: [A.curve[0] * 0.5, A.curve[1] * 0.6], kink: (B.kink ?? A.kink) , maxSeg: ord === 2 ? 2 : 1, segLen: 0.5, born: nodes[m.id].born + 1 }));
+        const ang = (B.ang + gauss() * 8) * D2R; let dir = norm(add(pd.map((q) => q * Math.cos(ang)), pp, Math.sin(ang)));
+        const hang = B.hang && st === LIVE ? B.hang * clamp((L - 0.6) / 1.8, 0, 1) : 0; // curtains hang from long limbs; short ones near the top keep theirs level
+        if (hang) dir = bendToward(dir, [0, -1, 0], hang * R(0.7, 1.2));
+        const curve = hang ? [-0.15 * hang, -0.1 * hang] : [A.curve[0] * 0.5, A.curve[1] * 0.6];
+        out.push(growAxis(m.id, m.p, dir, Lc, ord, st, { curve, kink: (B.kink ?? A.kink), zig: B.zig || 0, maxSeg: ord === 2 ? 2 : 1, segLen: 0.5, born: nodes[m.id].born + 1 }));
       }
     }
     return out;
@@ -1695,6 +1753,9 @@ const ROOTS = [
   { n: [4, 6], depthRate: 0.16, tap: 1, sinkers: 0.5, expose: -0.1 }, // pine: deeper, with a taproot
   { n: [6, 9], depthRate: 0.14, tap: 0, sinkers: 0.6, expose: 0.0 },  // maple: a heart-shaped mass
   { n: [5, 8], depthRate: 0.08, tap: 0, sinkers: 0.2, expose: 0.1 },  // birch: shallow, spreading
+  { n: [5, 8], depthRate: 0.06, tap: 0, sinkers: 0.15, expose: 0.18 }, // spruce: a thin, shallow plate (why spruce blows over)
+  { n: [5, 7], depthRate: 0.2, tap: 1, sinkers: 0.7, expose: -0.15 }, // oak: deep, a taproot and many sinkers
+  { n: [4, 6], depthRate: 0.09, tap: 0, sinkers: 0.3, expose: 0.05 },  // aspen: shallow, wide-running laterals
 ];
 // spec: { sp, d, seed, soil 0..1, slope [dh/dx, dh/dz], wet 0..1, rocky 0..1 }
 function growRoots(spec) {
@@ -3641,7 +3702,7 @@ class NearBatch { // fixed-capacity instanced mesh refilled as the player moves
 // Live trees and saplings within PLANT_R of the player are drawn from a library of grown plants (src/plants.js): per
 // species, size class and crown shape, two seeded skeletons (plus a forked one), normalised to unit height and instanced.
 // Beyond the ring, the tiles' card crowns draw them, and those hide the trees inside it (uNear), so each tree is drawn once.
-let PLANT_R = 32; const PCLASS = [1.5, 4, 10, 20, 35, 60], PSHAPE = ['shaded', 'open', 'forked'];
+let PLANT_R = 32; const PCLASS = [1.5, 4, 10, 20, 35, 60], PSHAPE = ['shaded', 'open', 'forked', 'one-sided'];
 const uNear = { value: new THREE.Vector3(1e9, 1e9, 0) };
 function hidePatch(sh, origin, declare = false) {
   sh.uniforms.uNear = uNear;
@@ -3676,17 +3737,16 @@ function plantClass(d) { let best = 0; for (let i = 1; i < PCLASS.length; i++) i
 // Live crown length as a share of height. Grown in a stand, a tree sheds its shaded lower limbs (the species
 // fraction from worldgen); a young one in the open keeps live limbs nearly to the ground, how nearly depending on
 // shade tolerance (fir and spruce keep them, maple mostly, birch and pine shed them anyway).
-const TOLERANCE = { conifer: 1, broad: 0.8, birch: 0.4, pine: 0.3 };
 function crownFrac(sp, d, light = 1) {
   const f = crownFraction(sp), young = clamp((25 - d) / 20, 0, 1);
-  return f + (0.93 - f) * young * (TOLERANCE[SPECIES[sp].kind] ?? 0.6) * clamp(light, 0, 1);
+  return f + (0.93 - f) * young * SPECIES[sp].keepLow * clamp(light, 0, 1);
 }
 function plantVariant(sp, ci, shape, si) {
   const key = `${sp}:${ci}:${shape}:${si}`; let v = plantLib.get(key); if (v) return v;
   const dRep = Math.min(PCLASS[ci], SPECIES[sp].dmax * 0.75), hRep = treeHeight(sp, dRep), crRep = crownRadius(sp, dRep);
   const cf = crownFrac(sp, dRep, shape === 0 ? 0.3 : 1) * (shape === 0 ? 0.8 : 1) * (dRep < 6 ? 1.15 : 1), crownLen = Math.min(hRep * 0.95, hRep * cf);
   const seed = 1009 + sp * 7919 + ci * 613 + shape * 97 + si * 31;
-  const P = PL.growPlant({ sp, d: dRep, h: hRep, crownLen, cr: crRep, seed, forked: shape === 2 });
+  const P = PL.growPlant({ sp, d: dRep, h: hRep, crownLen, cr: crRep, seed, forked: shape === 2, side: shape === 3 ? 0.75 : 0 });
   const B = PL.barkMesh(P, { minR: Math.max(0.005, 0.012 * Math.min(1, dRep / 20)) }), barkGeo = new THREE.BufferGeometry();
   barkGeo.setAttribute('position', new THREE.Float32BufferAttribute(B.pos.map((q) => q / hRep), 3));
   barkGeo.setAttribute('normal', new THREE.Float32BufferAttribute(B.nor, 3)); barkGeo.setAttribute('uv', new THREE.Float32BufferAttribute(B.uv, 2)); barkGeo.setIndex(B.idx);
@@ -3703,7 +3763,7 @@ function plantMeshes(v, need) { // (re)allocate a variant's instanced meshes to 
   const cap = Math.max(16, 1 << Math.ceil(Math.log2(need)));
   const bend = new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4), wob = new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4);
   for (const g of [v.barkGeo, v.leafGeo]) { g.setAttribute('aBend', bend); g.setAttribute('aWob', wob); }
-  const conifer = SPECIES[v.sp].kind === 'conifer' || SPECIES[v.sp].kind === 'pine';
+  const conifer = isConifer(v.sp);
   v.bark = new THREE.InstancedMesh(v.barkGeo, treeMats.bark, cap); v.leaf = new THREE.InstancedMesh(v.leafGeo, conifer ? treeMats.needle : treeMats.leaf, cap);
   v.leaf.instanceMatrix = v.bark.instanceMatrix;
   v.bark.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3); v.leaf.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
@@ -3739,7 +3799,7 @@ function refreshPlants(px, pz, force) {
 // low solids your feet step on. All roots near the player are merged into one mesh.
 const ROOT_R = 24;
 let rootCells = new Map(), rootMeshObj = null;
-const ROOT_TINT = [[0.56, 0.50, 0.44], [0.60, 0.50, 0.42], [0.58, 0.54, 0.48], [0.58, 0.50, 0.44]]; // weathered grey-brown, lighter than the soil
+const ROOT_TINT = [[0.56, 0.50, 0.44], [0.60, 0.50, 0.42], [0.58, 0.54, 0.48], [0.58, 0.50, 0.44], [0.55, 0.49, 0.43], [0.54, 0.48, 0.42], [0.60, 0.56, 0.50]]; // weathered grey-brown, lighter than the soil
 function outcropTop(x, z) { let y = -Infinity; for (const o of solids.get(ckey8(x, z)) || []) if (o.kind === 'mesh' && o.big !== undefined) y = Math.max(y, topOf(o, x, z)); return y; }
 function rootSite(t) {
   const g = (x, z) => ground(x, z), gx = (g(t.x + 1.5, t.z) - g(t.x - 1.5, t.z)) / 3, gz = (g(t.x, t.z + 1.5) - g(t.x, t.z - 1.5)) / 3;
@@ -3964,7 +4024,7 @@ function logBreak(r, node, drop) {
   const fresh = Array.from(g, (x, i) => x && !r.gone[i] && M.segs[i * 7 + 6] > 0);
   for (let i = 0; i < P.n; i++) if (g[i]) r.gone[i] = 1;
   for (const o of M.solids) removeSolid(o);
-  if (drop) fallOrDrop({ trunkR: 0, src: logSources(M), toW: (x, y, z) => M.W3(x, y, z), nrm: (x, y, z) => [x * M.X.x + y * M.a.x + z * M.Z.x, x * M.X.y + y * M.a.y + z * M.Z.y, x * M.X.z + y * M.a.z + z * M.Z.z], ws: M.segs, xf, P, s: M.s, gone: fresh, node, tint: mix3(TINT.bark[r.t.sp], [0.55, 0.50, 0.44], 0.6).map(lin), conifer: SPECIES[r.t.sp].kind === 'conifer' || SPECIES[r.t.sp].kind === 'pine', leaves: M.T < 3 });
+  if (drop) fallOrDrop({ trunkR: 0, src: logSources(M), toW: (x, y, z) => M.W3(x, y, z), nrm: (x, y, z) => [x * M.X.x + y * M.a.x + z * M.Z.x, x * M.X.y + y * M.a.y + z * M.Z.y, x * M.X.z + y * M.a.z + z * M.Z.z], ws: M.segs, xf, P, s: M.s, gone: fresh, node, tint: mix3(TINT.bark[r.t.sp], [0.55, 0.50, 0.44], 0.6).map(lin), conifer: isConifer(r.t.sp), leaves: M.T < 3 });
   r.m = logBranches(r.t, r.gone); for (const o of r.m.solids) { o.lrec = r; addSolid(o, o.reach); }
   if (r.ph) { physRegroup(r, r.m.segs, (i) => r.m.segs[i * 7 + 6] > 0 && !r.gone[i]); logMesh(r); } // the rest keep moving where they are
   logDirty = true; rootWork(0);
@@ -4002,13 +4062,13 @@ function breakBranch(rec, node) {
   const v = rec.v, X = treeXf(rec), M3 = new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().fromArray(rec.m)), nv = new THREE.Vector3();
   fallOrDrop({ trunkR: rec.t ? rec.t.d / 200 : 0, src: { bark: { pos: v.barkGeo.attributes.position.array, nor: v.barkGeo.attributes.normal.array, uv: v.barkGeo.attributes.uv.array, idx: v.barkGeo.index.array, node: v.barkGeo.attributes.aNode.array, ps: v.hRep },
     leaf: { pos: v.leafGeo.attributes.position.array, nor: v.leafGeo.attributes.normal.array, uv: v.leafGeo.attributes.uv.array, col: v.leafGeo.attributes.color.array, idx: v.leafGeo.index.array, node: v.leafGeo.attributes.aNode.array, ps: v.hRep } },
-    toW: X.toW, nrm: (x, y, z) => { nv.set(x, y, z).applyMatrix3(M3).normalize(); return [nv.x, nv.y, nv.z]; }, ws: treeSegs(rec), xf, P, s: X.s, gone: fresh, node, tint: rec.bc, conifer: SPECIES[v.sp].kind === 'conifer' || SPECIES[v.sp].kind === 'pine', leaves: true });
+    toW: X.toW, nrm: (x, y, z) => { nv.set(x, y, z).applyMatrix3(M3).normalize(); return [nv.x, nv.y, nv.z]; }, ws: treeSegs(rec), xf, P, s: X.s, gone: fresh, node, tint: rec.bc, conifer: isConifer(v.sp), leaves: true });
   customTree(rec);
   plantNear.cx = 1e9; refreshPlants(player.x, player.z, true);
 }
 function customTree(rec) { // this tree's own mesh: the variant's buffers minus what broke off
   const v = rec.v, keep = (g) => { const I = g.index.array, N = g.attributes.aNode.array, out = []; if (!rec.gone) return Array.from(I); for (let t = 0; t < I.length; t += 3) if (!rec.gone[N[I[t]]] && !rec.gone[N[I[t + 1]]] && !rec.gone[N[I[t + 2]]]) out.push(I[t], I[t + 1], I[t + 2]); return out; };
-  const conifer = SPECIES[v.sp].kind === 'conifer' || SPECIES[v.sp].kind === 'pine';
+  const conifer = isConifer(v.sp);
   const make = (src, mat, col, depth) => {
     const g = new THREE.BufferGeometry(); for (const k of ['position', 'normal', 'uv', 'color', 'aNode']) if (src.attributes[k]) g.setAttribute(k, src.attributes[k]);
     g.setIndex(keep(src)); g.setAttribute('aBend', new THREE.InstancedBufferAttribute(Float32Array.from(rec.bend), 4)); g.setAttribute('aWob', new THREE.InstancedBufferAttribute(Float32Array.from(rec.wob), 4));
@@ -5088,7 +5148,7 @@ function logBranches(t, gone = null) {
   // foliage while it lasts: green in the first year, rust-brown to about the third, then gone
   if (T < 3) {
     const lf = { pos: [], nor: [], uv: [], col: [], idx: [], node: [] }, G = v.leafGeo, LI = G.index.array, LN = G.attributes.aNode.array, LP = G.attributes.position.array, LNr = G.attributes.normal.array, LU = G.attributes.uv.array, LC = G.attributes.color.array, lmap = new Map();
-    const green = TINT.leaf[t.sp], brown = SPECIES[t.sp].kind === 'broad' || SPECIES[t.sp].kind === 'birch' ? [0.62, 0.45, 0.28] : [0.66, 0.40, 0.24], tt = clamp((T - 0.5) / 1.5, 0, 1);
+    const green = TINT.leaf[t.sp], brown = !isConifer(t.sp) ? [0.62, 0.45, 0.28] : [0.66, 0.40, 0.24], tt = clamp((T - 0.5) / 1.5, 0, 1);
     const tc = mix3(green, [brown[0] * 2.6, brown[1] * 2.2, brown[2] * 2.1], tt); // relative to the green texture: rust needs red pushed up, not everything pushed down
     for (let k = 0; k < LI.length; k += 3) {
       if (!keep[LN[LI[k]]] || !keep[LN[LI[k + 1]]] || !keep[LN[LI[k + 2]]] || keep[LN[LI[k]]] === 2 || (T > 1.5 && hash3(k, LN[LI[k]], 7) % 1000 < (T - 1.5) * 500)) continue; // thinning as it drops (hashed, so a rebuild after a break keeps the same leaves)
@@ -5103,7 +5163,7 @@ function logBranches(t, gone = null) {
         lf.idx.push(o);
       }
     }
-    out.leaves = lf; out.leafKind = SPECIES[t.sp].kind === 'conifer' || SPECIES[t.sp].kind === 'pine' ? 'needle' : 'leaf';
+    out.leaves = lf; out.leafKind = isConifer(t.sp) ? 'needle' : 'leaf';
   }
   out.keep = keep;
   return out;
@@ -5134,8 +5194,8 @@ const LITH = { granite: { kind: 'angular', round: 0.5, col: [0.50, 0.48, 0.46], 
 let hfTex = null, hcTex = null, ecoATex = null, ecoBTex = null, nearTerrain = null;
 
 const TINT = {
-  leaf: [[0.80, 0.86, 0.70], [0.86, 0.90, 0.62], [0.78, 0.92, 0.66], [0.98, 1.0, 0.70]],   // per species (fir, pine, maple, birch)
-  bark: [[0.48, 0.40, 0.35], [0.62, 0.44, 0.33], [0.55, 0.52, 0.48], [0.96, 0.94, 0.90]],
+  leaf: [[0.80, 0.86, 0.70], [0.86, 0.90, 0.62], [0.78, 0.92, 0.66], [0.98, 1.0, 0.70], [0.66, 0.78, 0.74], [0.74, 0.80, 0.52], [0.94, 1.02, 0.62]],   // per species (fir, pine, maple, birch, spruce: blue-green, oak: dark, aspen: bright yellow-green)
+  bark: [[0.48, 0.40, 0.35], [0.62, 0.44, 0.33], [0.55, 0.52, 0.48], [0.96, 0.94, 0.90], [0.50, 0.38, 0.32], [0.40, 0.38, 0.35], [0.84, 0.86, 0.76]], // spruce: scaly red-brown, oak: dark furrowed grey, aspen: greenish white
 };
 const mix3 = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
 
@@ -5237,7 +5297,11 @@ function buildWorld() {
   for (const t of W.trees) {
     if (t.crushed) continue;
     const r = mulberry32(hash3(Math.round(t.x * 10), Math.round(t.z * 10), 77)), b = B[tileOf(t.x, t.z)], P = SPECIES[t.sp];
-    const gy = ground(t.x, t.z), kind = P.kind, yaw = r() * Math.PI * 2, rad = t.d / 100;
+    const gy = ground(t.x, t.z), kind = P.kind, rad = t.d / 100, f0 = t.form;
+    // a tree at the edge of a gap, with a strong light gradient across it, grows a one-sided crown reaching into the light;
+    // the variant reaches toward its +x, so turn the tree that way (broadleaves and pine: fir and spruce hold their shape)
+    const oneSided = t.st === 0 && t.d >= 6 && P.phot >= 0.6 && (f0?.pull ?? 0) / P.phot > 0.8; // about the most lopsided 15 %
+    let yaw = r() * Math.PI * 2; if (oneSided) yaw = Math.atan2(-f0.gz, f0.gx) + (yaw - Math.PI) * 0.08;
     const vari = 0.88 + 0.24 * r();
     const f = t.form || { lx: 0, lz: 0, sx: 0, sz: 0, A: 0, k: 1, ph: 0 };
     const cy0 = Math.cos(yaw), sy0 = Math.sin(yaw);
@@ -5261,7 +5325,7 @@ function buildWorld() {
       else (kind === 'pine' ? b.pine : b.broad).add(trs(t.x + dx, cy, t.z + dz, yaw, cr, crownLen, cr * (0.85 + 0.3 * r())), lt[0] * cv, lt[1] * cv, lt[2] * cv, t.d, base);
       { // the grown plant drawn near the player: a library variant by size class and crown shape, scaled to this tree
         const r2 = mulberry32(hash3(Math.round(t.x * 10), Math.round(t.z * 10), 91)), A = PL.ARCH[t.sp];
-        const shape = r2() < A.fork ? 2 : shadeK < 0.9 ? 0 : 1;
+        const shape = r2() < A.fork ? 2 : oneSided ? 3 : shadeK < 0.9 ? 0 : 1;
         const v = plantVariant(t.sp, plantClass(Math.max(1, t.d)), shape, r2() < 0.5 ? 0 : 1), sx = v.hRep * (cr / v.crRep);
         const rec = { x: t.x, z: t.z, v, m: trs(t.x, gy - 0.15, t.z, yaw, sx, h, sx).elements.slice(), bc: [lin(bt[0] * vari), lin(bt[1] * vari), lin(bt[2] * vari)], lc: [lin(lt[0] * cv), lin(lt[1] * cv), lin(lt[2] * cv)], bend: bendAttr, wob: wobAttr };
         pushCol(plantCells, t.x, t.z, rec, 16); rec.t = t; t._prec = rec;
@@ -5284,7 +5348,7 @@ function buildWorld() {
     } else if (t.st === 2) {
       const T = (15 + 1.3 * t.d) * P.decay, fd = clamp(t.t / T, 0, 1), cls = 1 + Math.floor(fd * 4.999), R = t.rest;
       const dirx = Math.cos(R.a), dirz = Math.sin(R.a), rr = (t.d / 200) * (1 - 0.15 * fd);
-      const col = cls <= 2 ? mix3(TINT.bark[t.sp], [0.42, 0.34, 0.27], t.sp === 3 ? 0.3 : 0.6) : mix3([0.44, 0.36, 0.28], [0.34, 0.37, 0.21], (cls - 3) / 2);
+      const col = cls <= 2 ? mix3(TINT.bark[t.sp], [0.42, 0.34, 0.27], SPECIES[t.sp].pale ? 0.3 : 0.6) : mix3([0.44, 0.36, 0.28], [0.34, 0.37, 0.21], (cls - 3) / 2);
       for (const p of R.pieces) {
         const whole = p.u0 === 0 && p.u1 === 1, len = Math.hypot(p.x1 - p.x0, p.y1 - p.y0, p.z1 - p.z0);
         const wob = [f.A * (1 - 0.4 * fd), f.k, f.ph + f.k * p.u0 * R.L, 0.25];
@@ -7673,7 +7737,7 @@ function toggle(id, force) {
 for (const [p, b] of Object.entries(panels)) $(b).addEventListener('click', () => toggle(p));
 document.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('click', () => toggle(null)));
 
-const SPECIES_COLOR = ['#4f9fc0', '#d4ad3a', '#d0674a', '#e6e1d3']; // map identity colours: fir, pine, maple, birch
+const SPECIES_COLOR = ['#4f9fc0', '#d4ad3a', '#d0674a', '#e6e1d3', '#5a7fd6', '#8f6a3c', '#a8d05a']; // map identity colours: fir, pine, maple, birch, spruce, oak, aspen
 $('mapLegend').innerHTML = SPECIES.map((s, i) => `<span><i style="background:${SPECIES_COLOR[i]}"></i>${s.name}</span>`).join('') +
   '<span><i class="line" style="background:#a0784e"></i>Log</span><span><i style="background:#8d8a84"></i>Snag</span><span><i class="line" style="background:#6fa3c9"></i>Stream</span>';
 
