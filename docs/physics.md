@@ -601,3 +601,12 @@ leaves and wood in one picture, so with foliage hidden they give way to plain fa
 benchmark has a "foliage hidden" row. On this machine (software rendering) the render time by a leafy fallen tree
 barely moved (15–19 ms either way). Software rasterising says little about a GPU's cost for overlapping alpha-tested
 cards, so the device benchmark is the test.
+
+## Body collisions off (a performance option)
+
+The performance panel's "Body collisions" option (default on) leaves the body colliding with nothing but the terrain.
+You walk on the ground through rock, soil, wood and plants. It swaps in an empty collider map and drops the near-field
+rocks and sticks from the footing. Fallen sticks now also count as plant matter, so they follow the plant-collision
+switch. Measured on the 40 s walk with plant collisions already off: movement plus physics per step falls from 0.5 ms
+to 0.1 ms median, with the worst steps similar (8–13 ms, apart from one 38 ms spike in a first run). The benchmark has a
+"body collisions off" row.
