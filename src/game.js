@@ -1255,7 +1255,7 @@ function treeSegs(rec) { // world segments of the tree's graph, cached: [x0,y0,z
   }
   return (rec.ws = ws);
 }
-function removeSolid(o) { for (const a of solids.values()) { const k = a.indexOf(o); if (k >= 0) a.splice(k, 1); } }
+function removeSolid(o) { for (const M of [solidsAll, solidsRock]) if (M) for (const a of M.values()) { const k = a.indexOf(o); if (k >= 0) a.splice(k, 1); } }
 // thick low limbs become solids, tapered like logs, so the body ducks under, steps over or stands on them
 function limbSolids(rec) {
   if (rec.solids) return;
@@ -1334,7 +1334,18 @@ function closestRaySeg(e, d, ws, k, maxT) { // closest approach of the ray e + t
 //   breaks: anything breaking: branches snapping under the modal load, under your weight, under a scripted hand or
 //           foot (a way over that then gives way), or twigs crushed in a stack underfoot
 //   roots:  exposed roots bending (they stay solid)
-const PHYS = { free: false, breaks: false, roots: false };
+//   plants: plant matter as a collider at all (an experiment to find lag spikes): trunks, saplings, limbs, branches,
+//           logs, ground wood, roots and stumps, and the body pushing plants. Off, only rock and soil collide, and a
+//           plant moves only when the hands push it. Switchable live (setPlantCollide).
+//   bend:   with plants on, the body also pushes the plants it touches into bending (off: they stay solid but rigid)
+const PHYS = { free: false, breaks: false, roots: false, plants: false, bend: true };
+let plantsOn = true; // in effect now (PHYS.plants is the setting)
+function setPlantCollide(on) { // swap the collider maps: with or without plant matter
+  PHYS.plants = !!on; if (!solidsAll) return;
+  on = on || !!W?.gym; plantsOn = on; // the testing gym's logs and rails are its obstacles: always solid there
+  solids = on ? solidsAll : solidsRock; colTrunks = on ? colTrunksAll : new Map(); saplingCells = on ? saplingAll : new Map();
+  crunchList = null; for (const ft of body.feet || []) ft.stack = null;
+}
 const BODY_N = 785; // your weight, newtons
 const bBreak = $('bBreak');
 bBreak.addEventListener('pointerdown', (e) => { e.preventDefault(); pushStart(); });
@@ -2275,7 +2286,7 @@ function modalActivate(dt) { // every plant with a segment within reach of the b
   if ((modal.t += dt) < 0.2) return; modal.t = 0;
   const C = bodyCapsules(), box = capBox(C, 1.8), bx = player.x, bz = player.z, now = performance.now();
   const near = (ws) => { for (let k = 0; k < ws.length; k += 7) { const r = ws[k + 6]; if (Math.max(ws[k], ws[k + 3]) + r >= box[0] && Math.min(ws[k], ws[k + 3]) - r <= box[1] && Math.max(ws[k + 1], ws[k + 4]) + r >= box[2] && Math.min(ws[k + 1], ws[k + 4]) - r <= box[3] && Math.max(ws[k + 2], ws[k + 5]) + r >= box[4] && Math.min(ws[k + 2], ws[k + 5]) - r <= box[5]) return true; } return false; };
-  const want = (o, kind, ws) => { if (!near(ws)) return; modalOn(o, kind).near = now; };
+  const want = (o, kind, ws) => { if (!plantsOn || !PHYS.bend || !near(ws)) return; modalOn(o, kind).near = now; }; // (with plant collisions off, only a push wakes a plant)
   const ci = Math.floor((bx + HALF) / 16), cj = Math.floor((bz + HALF) / 16);
   for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (const rec of plantCells.get((ci + di) * 4096 + cj + dj) || []) {
     const sap = rec.t && rec.t.d < 8, reach = sap ? 4 : rec.v.crRep * (rec.m[0] ** 2 + rec.m[2] ** 2) ** 0.5 / rec.v.hRep + 3;
@@ -2301,7 +2312,7 @@ function modalStep(dt, caps) {
     const aw = MD.step(M, dt); awake += aw;
     let moved = aw > 0;
     if (moved) MD.pose(M, P, ws, X, o.gone);
-    let h = MD.contact(M, P, ws, X, caps, capV, BODY_PUSH, null, null, null, box, bud1); // passes until the branches clear: moving a parent turns what hangs off it, so the
+    let h = plantsOn && PHYS.bend ? MD.contact(M, P, ws, X, caps, capV, BODY_PUSH, null, null, null, box, bud1) : 0; // passes until the branches clear: moving a parent turns what hangs off it, so the
     for (let pass = 0; h && pass < 2; pass++) { MD.pose(M, P, ws, X, o.gone); h = MD.contact(M, P, ws, X, caps, capV, BODY_PUSH, null, null, null, box, { left: BODY_TOTAL }); } // linear share is only close
     if (h) { MD.pose(M, P, ws, X, o.gone); h = MD.contact(M, P, ws, X, caps, capV, BODY_PUSH, CF, CP, CD, box, bud2); } hits += h; // the last pass: what the body feels and must take
     for (const pc of pieces) if (MD.contact(M, P, ws, X, pc, null, 150, null, null, null, capBox(pc, 0.05))) moved = true;
@@ -2615,7 +2626,7 @@ function buildWorld() {
   const impKeys = new Map(), impItems = [];
   const B = Array.from({ length: NT * NT }, () => ({ imp: new Batch(), live: new Batch(), trunk: new Batch(), piece: new Batch(), butt: new Batch(), broad: new Batch(), cone: new Batch(), pine: new Batch(), plate: new Batch(), stumpLo: new Batch(), stumpHi: new Batch(), wad: { pos: [], nor: [], uv: [], col: [], idx: [] }, rk: [new Batch(), new Batch(), new Batch(), new Batch()] }));
   const tileOf = (x, z) => clamp(Math.floor((z + HALF) / TILE), 0, NT - 1) * NT + clamp(Math.floor((x + HALF) / TILE), 0, NT - 1);
-  colTrunks = new Map(); colLogs = []; logCells = new Map(); solids = new Map(); pieceCells = new Map(); saplingCells = new Map(); plantCells = new Map(); rootCells = new Map(); branchLogCells = new Map();
+  colTrunksAll = colTrunks = new Map(); colLogs = []; logCells = new Map(); solidsAll = solids = new Map(); solidsRock = new Map(); pieceCells = new Map(); saplingAll = saplingCells = new Map(); plantCells = new Map(); rootCells = new Map(); branchLogCells = new Map();
   for (const r of brokenTrees) { plantGroup.remove(r.custom.bark, r.custom.leaf); } brokenTrees = []; logPick = []; logQueue = []; physReset();
   if (!plantGroup) { plantGroup = new THREE.Group(); scene.add(plantGroup); }
   const ckey = (ci, cj) => ci * 4096 + cj;
@@ -2689,7 +2700,7 @@ function buildWorld() {
       if (t.sh < (t.h || treeHeight(t.sp, t.d)) * 0.7) { // a broken stem: a stump with a splintered top
         const low = t.sh < 2.5, m = trs(t.x, gy - 0.15, t.z, yaw, rad * 0.5, t.sh + 0.15, rad * 0.5);
         (low ? b.stumpLo : b.stumpHi).add(m, grey[0] * vari, grey[1] * vari, grey[2] * vari, t.d * 0.7, [0, 0, f.bl[2], f.bl[3]], wobAttr);
-        if (t.sh + 0.15 < SCRAMBLE + 0.2) addSolid(meshSolid(geos.stumpLo, m.clone(), t.x, t.z), rad * 0.8); // low enough to step or climb onto
+        if (t.sh + 0.15 < SCRAMBLE + 0.2) addSolid(Object.assign(meshSolid(geos.stumpLo, m.clone(), t.x, t.z), { stump: true }), rad * 0.8); // low enough to step or climb onto
         else if (t.d >= 8) pushCol(colTrunks, t.x, t.z, { x: t.x, z: t.z, r: t.d / 200 + 0.25 });
       } else {
         b.trunk.add(trs(t.x, gy - 0.15, t.z, yaw, rad, t.sh, rad), grey[0] * vari, grey[1] * vari, grey[2] * vari, t.d * 0.7, [0, 0, f.bl[2], f.bl[3]], wobAttr);
@@ -2770,6 +2781,7 @@ function buildWorld() {
     worldGroup.add(g); tiles.push(g);
   }
   for (const [k, a] of logCells) logCells.set(k, [...new Set(a)]);
+  setPlantCollide(PHYS.plants); // a new world keeps the plant-collision setting
 
   // near-field scatter
   if (near) for (const nb of Object.values(near.b)) nb.mesh.dispose?.();
@@ -3143,7 +3155,9 @@ function spawn() {
 // Shrubs, ferns, grass and twigs never block or slow you; the camera rig expresses them instead (see "camera rig").
 const SLOW = 1.0, CAREFUL = 0.45; // below SLOW m/s you step onto what is in the way (Q, or a small push of the stick: CAREFUL of a walk)
 const STEP = 0.55, SCRAMBLE = 1.35, MAX_SLOPE = 0.95, MAX_GROUND_SLOPE = 1.15, FOOT = 0.22;
-let solids = null; // 8 m hash of static solids
+let solids = null; // 8 m hash of static solids (one of the two below)
+let solidsAll = null, solidsRock = null, colTrunksAll = null, saplingAll = null; // with and without plant matter
+const isPlantSolid = (o) => o.kind === 'log' || o.stump;
 let saplingCells = null; // small simulated trees (dbh < 8 cm): stems to walk around, crowns to push
 const ckey8 = (x, z) => Math.floor((x + HALF) / 8) * 4096 + Math.floor((z + HALF) / 8);
 // A fallen stem as collision: a chain of short segments following exactly what the bark shader draws for it
@@ -3187,17 +3201,18 @@ function boxSpan(o, x, z) { // the vertical line at (x, z) through the box: [lo,
 }
 function addSolid(o, r) {
   if (solidSink) solidSink.push(o);
+  const maps = isPlantSolid(o) ? [solidsAll] : [solidsAll, solidsRock]; // the rock-only map leaves plant matter out
   if (o.kind === 'mesh' || o.kind === 'box') { // every 8 m cell the world box touches
     for (let ci = Math.floor((o.x0 + HALF) / 8); ci <= Math.floor((o.x1 + HALF) / 8); ci++)
       for (let cj = Math.floor((o.z0 + HALF) / 8); cj <= Math.floor((o.z1 + HALF) / 8); cj++) {
-        const k = ci * 4096 + cj; let a = solids.get(k); if (!a) solids.set(k, (a = [])); a.push(o);
+        const k = ci * 4096 + cj; for (const M of maps) { let a = M.get(k); if (!a) M.set(k, (a = [])); a.push(o); }
       }
     return;
   }
   const seen = new Set();
   for (const [ox, oz] of [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r], [r, r], [-r, -r], [r, -r], [-r, r]]) {
     const k = ckey8(o.x + ox, o.z + oz); if (seen.has(k)) continue; seen.add(k);
-    let a = solids.get(k); if (!a) solids.set(k, (a = [])); a.push(o);
+    for (const M of maps) { let a = M.get(k); if (!a) M.set(k, (a = [])); a.push(o); }
   }
 }
 function ellipsoid(x, y, z, ax, ay, az, ux, uz) { return { kind: 'ell', x, y, z, ax, ay, az, ux, uz }; }
@@ -4488,6 +4503,7 @@ function crunchStack(x, z, base) {
 }
 let lastStack = null; // what foothold found under the foot it placed
 function footStack(x, z, base) {
+  if (!plantsOn) { lastStack = null; return base; }
   const st = crunchStack(x, z, base); lastStack = st.length ? { list: st, base } : null;
   return st.length ? st[0].y : base;
 }
@@ -4600,7 +4616,7 @@ function duckPosture(ux, uz, spd) {
 function staticCaps(x, z) {
   const out = [], seen = new Set();
   const ci = Math.floor((x + HALF) / 16), cj = Math.floor((z + HALF) / 16), y = rig.feet; // standing stems as their own segments (they lean and taper)
-  for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (const rec of plantCells.get((ci + di) * 4096 + cj + dj) || []) {
+  if (plantsOn) for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (const rec of plantCells.get((ci + di) * 4096 + cj + dj) || []) {
     if ((rec.x - x) ** 2 + (rec.z - z) ** 2 > 16 || (rec.t && rec.t.d < 8)) continue; // saplings bend: the solver has them
     const P = rec.v.P, ws = treeSegs(rec);
     for (let i = 0; i < P.n; i++) { if (P.ord[i] !== 0) continue; const k = i * 7; if (Math.min(ws[k + 1], ws[k + 4]) > y + 2.6) continue; out.push({ a: [ws[k], ws[k + 1], ws[k + 2]], b: [ws[k + 3], ws[k + 4], ws[k + 5]], r: ws[k + 6], kind: 'trunk' }); }
@@ -5344,7 +5360,7 @@ function perfStats(frames) { // over the last `frames` frames
   const q = (a, p) => { const b = a.filter((v) => !Number.isNaN(v)).sort((x, y) => x - y); return b.length ? b[Math.min(b.length - 1, Math.floor(p * b.length))] : NaN; };
   const sh = (c, want) => cols[c].filter((_, j) => cols[5][j] === want);
   const gS = cols[8].filter((_, j) => cols[9][j] === 1), gN = cols[8].filter((_, j) => cols[9][j] === 0);
-  return { m, med: q(cols[0], 0.5), p95: q(cols[0], 0.95), max: q(cols[0], 1), move: q(cols[1], 0.5), near: q(cols[2], 0.5), nearMax: q(cols[2], 1), setup: q(cols[3], 0.5),
+  return { m, med: q(cols[0], 0.5), p95: q(cols[0], 0.95), max: q(cols[0], 1), move: q(cols[1], 0.5), moveMax: q(cols[1], 1), near: q(cols[2], 0.5), nearMax: q(cols[2], 1), setup: q(cols[3], 0.5),
     submit: q(cols[4], 0.5), submitShadow: q(sh(4, 1), 0.5), submitPlain: q(sh(4, 0), 0.5), calls: q(cols[6], 0.5), tris: q(cols[7], 0.5),
     gpu: q(cols[8], 0.5), gpuShadow: q(gS, 0.5), gpuPlain: q(gN, 0.5) };
 }
@@ -5358,14 +5374,14 @@ scene   ${Math.round(s.calls)} draw calls · ${(s.tris / 1e6).toFixed(2)} M tria
 physics ${f1(phys.ms)} ms on the ${phys.worker ? 'worker thread' : 'main thread'} · ${phys.nodes} branch segments in ${phys.groups.size} groups · push-back ${Math.round(Math.hypot(...phys.force))} N`;
 }
 function applyPerfOpt() {
-  PLANT_R = +$('qRing').value; perfOpt.shadow = +$('qShadow').value; perfOpt.roots = $('qRoots').value === '1'; perfOpt.ground = $('qGround').value === '1'; perfOpt.pr = $('qPR').value;
+  setPlantCollide($('qPlantCol').value === '1'); PLANT_R = +$('qRing').value; perfOpt.shadow = +$('qShadow').value; perfOpt.roots = $('qRoots').value === '1'; perfOpt.ground = $('qGround').value === '1'; perfOpt.pr = $('qPR').value;
   sun.castShadow = perfOpt.shadow > 0; if (!sun.castShadow) renderer.shadowMap.needsUpdate = true;
   if (rootMeshObj) rootMeshObj.visible = perfOpt.roots;
   if (near) for (const nb of Object.values(near.b)) nb.mesh.visible = perfOpt.ground;
   renderer.setPixelRatio(perfOpt.pr === 'auto' ? Math.min(devicePixelRatio || 1, settings.quality === 'high' ? 2 : 1.25) : +perfOpt.pr); // numbers: device pixels per CSS pixel
   resize(); plantNear.cx = 1e9; refreshPlants(player.x, player.z, true);
 }
-for (const id of ['qShadow', 'qRing', 'qRoots', 'qGround', 'qPR']) $(id).addEventListener('change', applyPerfOpt);
+for (const id of ['qShadow', 'qRing', 'qRoots', 'qGround', 'qPR', 'qPlantCol']) $(id).addEventListener('change', applyPerfOpt);
 function perfPanel(show) { $('pPerf').hidden = !(show ?? $('pPerf').hidden); if (!$('pPerf').hidden) { toggle(null); $('perfLive').textContent = perfSummary(120); } }
 $('fps').addEventListener('click', () => perfPanel());
 $('perfClose').addEventListener('click', () => perfPanel(false));
@@ -5386,6 +5402,7 @@ $('bPerfCopy').addEventListener('click', async () => {
 // The benchmark: stand still, then for each configuration settle for 1.5 s (shader compiles, refills) and measure 3 s.
 const BENCH = [
   ['baseline (your settings)', {}],
+  ['plant collisions off', { qPlantCol: '0' }],
   ['shadows off', { qShadow: '0' }],
   ['shadows every frame', { qShadow: '1' }],
   ['shadows every 4th frame', { qShadow: '4' }],
@@ -5401,7 +5418,7 @@ let benching = false;
 const bench = { walk: false, pitch: 0 };
 $('bBench').addEventListener('click', async () => {
   if (benching) return; benching = true; $('bBench').disabled = true;
-  const keep = Object.fromEntries(['qShadow', 'qRing', 'qRoots', 'qGround', 'qPR'].map((id) => [id, $(id).value]));
+  const keep = Object.fromEntries(['qShadow', 'qRing', 'qRoots', 'qGround', 'qPR', 'qPlantCol'].map((id) => [id, $(id).value]));
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const rows = [], start = { x: player.x, z: player.z, yaw: player.yaw, pitch: player.pitch }, walk = $('qWalk').checked;
   input.keys.clear?.(); perf.spikes = [];
@@ -5418,12 +5435,12 @@ $('bBench').addEventListener('click', async () => {
   applyPerfOpt(); home(); perf.label = 'live';
   const b = rows[0][1];
   const pad = (t, n) => (t + ' '.repeat(n)).slice(0, n);
-  const table = rows.map(([n, s]) => `${pad(n, 30)} ${pad(f1(s.med), 6)} ${pad(f1(s.p95), 6)} ${pad(String(s.drops) + '/' + s.m, 8)} ${pad(f1(s.submit), 7)} ${pad(f1(s.near), 5)} ${pad(f1(s.gpu), 7)} ${pad(String(Math.round(s.calls)), 6)} ${(s.tris / 1e6).toFixed(2)}M${s === b ? '' : `   gpu ${Number.isNaN(s.gpu) ? '—' : (s.gpu - b.gpu >= 0 ? '+' : '') + f1(s.gpu - b.gpu)} · frame ${(s.med - b.med >= 0 ? '+' : '') + f1(s.med - b.med)}`}`).join('\n');
+  const table = rows.map(([n, s]) => `${pad(n, 30)} ${pad(f1(s.med), 6)} ${pad(f1(s.p95), 6)} ${pad(String(s.drops) + '/' + s.m, 8)} ${pad(f1(s.move), 5)} ${pad(f1(s.moveMax), 6)} ${pad(f1(s.submit), 7)} ${pad(f1(s.near), 5)} ${pad(f1(s.gpu), 7)} ${pad(String(Math.round(s.calls)), 6)} ${(s.tris / 1e6).toFixed(2)}M${s === b ? '' : `   gpu ${Number.isNaN(s.gpu) ? '—' : (s.gpu - b.gpu >= 0 ? '+' : '') + f1(s.gpu - b.gpu)} · frame ${(s.med - b.med >= 0 ? '+' : '') + f1(s.med - b.med)}`}`).join('\n');
   $('perfOut').value = `${perfHeader()}
 
 benchmark, ${walk ? 'walking an arc' : 'standing still'} (ms; frame = time between frames, median and 95th percentile; drops = frames over 24 ms / frames;
-submit = CPU to issue the render; near = CPU for near-field, tree and root refresh; gpu = GPU time)
-${pad('configuration', 30)} ${pad('frame', 6)} ${pad('p95', 6)} ${pad('drops', 8)} ${pad('submit', 7)} ${pad('near', 5)} ${pad('gpu', 7)} ${pad('calls', 6)} tris
+body = CPU for movement, collisions and plant physics (median, worst); submit = CPU to issue the render; near = CPU for near-field, tree and root refresh; gpu = GPU time)
+${pad('configuration', 30)} ${pad('frame', 6)} ${pad('p95', 6)} ${pad('drops', 8)} ${pad('body', 5)} ${pad('worst', 6)} ${pad('submit', 7)} ${pad('near', 5)} ${pad('gpu', 7)} ${pad('calls', 6)} tris
 ${table}
 
 slowest frames (ms: interval · body · near · set-up · submit, shadow map redrawn?; then the frame before)
@@ -5480,7 +5497,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); physStep(dt); refreshNear(player.x, player.z); },
-  physics: { switches: PHYS, MD, modal: () => modal, clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
+  physics: { switches: PHYS, setPlantCollide, MD, modal: () => modal, clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
   branches: { crunchSegs, crunchStack, branchLoad, get crunchList() { return crunchList; }, logBuf: () => logBuf, logLeafBuf: () => logLeafBuf, logBranches, plantVariant, target: () => breakTargetAt, pick() { const r = running; running = true; breakTarget(); running = r; return breakTargetAt; }, push: pushState, pushStart, pushStop, pushUpdate, breakBranch, treeSegs, plantCells: () => plantCells, brokenTrees: () => brokenTrees, limbSolids, logBranchCells: () => branchLogCells },
   plants: { lib: plantLib, roots: () => rootMeshObj, rootQueue: () => rootQueue, rootCells: () => rootCells, PL },
   debug: { branchSolids: () => [...new Set([...solids.values()].flat())].filter((o) => o.limb || o.branch), overTrack: (mode, side = -1, n = 120) => { // a way over, solved pose by pose, as joint positions in the barrier's frame [a along its normal from the near face, y up, s to the right] (for sim/)

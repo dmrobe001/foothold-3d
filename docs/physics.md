@@ -562,3 +562,33 @@ give the same numbers.
 on it passes, because the rail used to wake and be shoved aside. The clipping is the gait's: the swinging foot straddles
 or lands on a thin round rail. It was hidden, not introduced. Two foothold changes tried in this pass did not fix it and
 were reverted.
+
+## Plant collisions off (an experiment to find the lag spikes)
+
+`PHYS.plants`, now **off** by default and switchable live in the performance panel ("Plant collisions"), takes plant
+matter out of collision entirely:
+- trunks, saplings, limbs and branches;
+- logs, ground wood, roots and stumps;
+- twig stacks underfoot;
+- the body pushing plants into bending.
+
+Only rock and soil (outcrops, boulders, root-wad soil) collide. A plant still bends when the hands push it.
+
+How it is switched: the game keeps two collider maps, one with plant matter and one without, and swaps them, along with
+the standing-trunk and sapling lists. The other checks read the setting each frame. The testing gym keeps plant
+collisions on, since its logs and rails are its obstacles. A sub-switch `PHYS.bend` (default on) keeps plants solid but
+stops the body pushing them. It is there to separate the two costs.
+
+**Measured** (main-thread time for movement plus physics, per step; seed 1; 40 s walking an arc from the same start,
+two runs each; software GL machine, so read the ratios):
+
+| | median | p99 | worst | steps over 16 ms |
+|---|---|---|---|---|
+| plants solid and bending | 2.1–2.3 ms | 13.5–14.2 | 56–78 | 13–17 |
+| plants solid, not bending | 1.7–1.8 ms | 12.4–14.1 | 29–61 | 6–17 |
+| plant collisions off | 1.0–1.1 ms | 4.7–7.0 | 9.9–12.6 | 0 |
+
+So the spikes come mostly from plant matter as colliders: planning and footholds against limbs, logs and branch stacks.
+Bending adds a little to the typical step, not the spikes. Triangles (the render) are not in these numbers. The
+performance panel's benchmark now has a "plant collisions off" row and a body-time column (median and worst), to compare
+on a real device.
