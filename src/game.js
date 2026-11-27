@@ -1022,7 +1022,7 @@ function refreshRoots(px, pz) {
 function rootWork(budget) {
   const t0 = performance.now();
   while (rootQueue.length && performance.now() - t0 < budget) { const r = rootQueue.shift(); if (!r.m) { r.m = treeRoots(r); if (r.t._prec && !r.wad) limbSolids(r.t._prec); rootDirty = true; } }
-  while (logQueue.length && performance.now() - t0 < budget) { const r = logQueue.shift(); if (!r.m) { r.m = logBranches(r.t, r.gone); for (const o of r.m.solids) addSolid(o, o.reach); logDirty = true; } }
+  while (logQueue.length && performance.now() - t0 < budget) { const r = logQueue.shift(); if (!r.m) { r.m = logBranches(r.t, r.gone); for (const o of r.m.solids) { o.lrec = r; addSolid(o, o.reach); } logDirty = true; } }
   if (logDirty && (!logQueue.length || budget === Infinity)) {
     logDirty = false; logAssemble();
   }
@@ -1057,6 +1057,7 @@ function assembleRoots() {
 // tree is kept per tree as a delta, the set of segments broken off; a tree with a delta is drawn by its own mesh, the
 // variant's buffers with those subtrees' triangles left out.
 const LIVE_LIMB_R = 0.025, DEAD_LIMB_R = 0.035, LIMB_LOW = 2.4; // limbs this thick and this low are solid to the body
+const BRANCH_R_MIN = 0.01, BRANCH_LOW = 1.0; // and any branch at least this thick within this height of the ground: planned on as if it held your weight (it may not)
 let brokenTrees = [], branchLogCells = new Map(), logPick = [], logQueue = [], logDirty = false;
 const _tv = new THREE.Vector3();
 function treeXf(rec) {
@@ -1084,9 +1085,8 @@ function limbSolids(rec) {
   const P = rec.v.P, X = treeXf(rec), ws = treeSegs(rec); rec.solids = [];
   for (let i = 0; i < P.n; i++) {
     if (P.ord[i] < 1 || P.st[i] === PL.STUB || rec.gone?.[i]) continue;
-    const r0 = P.r0[i] * X.s, r1 = Math.max(0.01, P.r1[i] * X.s); if (r0 < (P.st[i] === PL.LIVE ? LIVE_LIMB_R : DEAD_LIMB_R)) continue;
-    const k = i * 7, mx = (ws[k] + ws[k + 3]) / 2, mz = (ws[k + 2] + ws[k + 5]) / 2;
-    if (Math.min(ws[k + 1], ws[k + 4]) - ground(mx, mz) > LIMB_LOW) continue;
+    const r0 = P.r0[i] * X.s, r1 = Math.max(0.01, P.r1[i] * X.s), k = i * 7, mx = (ws[k] + ws[k + 3]) / 2, mz = (ws[k + 2] + ws[k + 5]) / 2, lo = Math.min(ws[k + 1], ws[k + 4]) - ground(mx, mz);
+    if (r0 < (lo <= BRANCH_LOW ? BRANCH_R_MIN : P.st[i] === PL.LIVE ? LIVE_LIMB_R : DEAD_LIMB_R) || lo > LIMB_LOW) continue;
     const o = { kind: 'log', limb: true, rec, node: i, x: mx, z: mz, x0: ws[k], z0: ws[k + 2], x1: ws[k + 3], z1: ws[k + 5], ya0: ws[k + 1], ya1: ws[k + 4], r: Math.max(r0, r1), r0, r1, rz0: r0, rz1: r1 };
     addSolid(o, Math.hypot(ws[k + 3] - ws[k], ws[k + 5] - ws[k + 2]) / 2 + o.r); rec.solids.push(o);
   }
@@ -1155,16 +1155,22 @@ const bBreak = $('bBreak');
 bBreak.addEventListener('pointerdown', (e) => { e.preventDefault(); pushStart(); });
 for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) bBreak.addEventListener(ev, () => pushStop());
 function flash(msg) { $('hint').textContent = msg; $('hint').style.opacity = 1; clearTimeout(hintTimer); hintTimer = setTimeout(hideHint, 2500); }
-// standing on a limb loads it with your weight (plus a little for stepping); it may give way under you
-let limbT = 0;
-function limbLoad(dt) {
-  if ((limbT += dt) < 0.25) return; limbT = 0;
-  for (const o of solids.get(ckey8(player.x, player.z)) || []) {
-    if (!o.limb || Math.abs(topOf(o, player.x, player.z) - rig.feet) > 0.08) continue;
-    const vx = o.x1 - o.x0, vz = o.z1 - o.z0, u = clamp(((player.x - o.x0) * vx + (player.z - o.z0) * vz) / (vx * vx + vz * vz || 1), 0, 1);
-    const b = PL.breakCheck(o.rec.v.P, o.node, u, [0, -1.25 * BODY_N, 0], treeXf(o.rec).s);
-    if (b.ratio >= 1) { breakBranch(o.rec, b.node); flash('The branch gave way under you'); }
-    return;
+// standing on a branch loads it with your weight (plus a little for stepping): the first time you stand on it, it is
+// checked as one is underfoot (branchLoad). One that snaps or bends away is no longer under you, and you drop.
+const tested = new WeakSet();
+function standLoad() {
+  for (let k = 0; k < 7; k++) {
+    const a = (k / 6) * 6.283, x = player.x + (k ? Math.cos(a) * FOOT : 0), z = player.z + (k ? Math.sin(a) * FOOT : 0);
+    for (const o of solids.get(ckey8(x, z)) || []) {
+      if (!(o.limb || o.branch) || tested.has(o) || Math.abs(topOf(o, x, z) - rig.feet) > 0.05) continue;
+      tested.add(o); const b = branchOf(o); if (!b) continue;
+      const w = b.ws, q = b.i * 7, vx = w[q + 3] - w[q], vz = w[q + 5] - w[q + 2], u = clamp(((x - w[q]) * vx + (z - w[q + 2]) * vz) / (vx * vx + vz * vz || 1), 0, 1), r = branchLoad(b, u);
+      if (r.fate === 'hold') continue;
+      if (r.fate === 'break') { if (b.kind === 'tree') breakBranch(b.rec, r.node); else logBreak(b.rec, r.node, w[r.node * 7 + 6] > 0.015); crunchList = null; body.crunch = (body.crunch || 0) + 1; }
+      else removeSolid(o); // bent away: no longer something to stand on (its rod still pushes back)
+      body.gaveWay = (body.gaveWay || 0) + 1; body.lastGaveWay = r.fate === 'break' ? 'The branch broke under you' : 'The branch bent away under you'; flash(body.lastGaveWay);
+      return;
+    }
   }
 }
 // a fallen tree's branch breaks: its graph loses the subtree, the merged mesh is rebuilt, and (unless it was a twig
@@ -1177,7 +1183,7 @@ function logBreak(r, node, drop) {
   for (let i = 0; i < P.n; i++) if (g[i]) r.gone[i] = 1;
   for (const o of M.solids) removeSolid(o);
   if (drop) fallOrDrop({ trunkR: 0, src: logSources(M), toW: (x, y, z) => M.W3(x, y, z), nrm: (x, y, z) => [x * M.X.x + y * M.a.x + z * M.Z.x, x * M.X.y + y * M.a.y + z * M.Z.y, x * M.X.z + y * M.a.z + z * M.Z.z], ws: M.segs, xf, P, s: M.s, gone: fresh, node, tint: mix3(TINT.bark[r.t.sp], [0.55, 0.50, 0.44], 0.6).map(lin), conifer: SPECIES[r.t.sp].kind === 'conifer' || SPECIES[r.t.sp].kind === 'pine', leaves: M.T < 3 });
-  r.m = logBranches(r.t, r.gone); for (const o of r.m.solids) addSolid(o, o.reach);
+  r.m = logBranches(r.t, r.gone); for (const o of r.m.solids) { o.lrec = r; addSolid(o, o.reach); }
   if (r.ph) { physRegroup(r, r.m.segs, (i) => r.m.segs[i * 7 + 6] > 0 && !r.gone[i]); logMesh(r); } // the rest keep moving where they are
   logDirty = true; rootWork(0);
 }
@@ -2151,7 +2157,8 @@ function physStep(dt) {
 // Point forces on free objects this step: each planted foot standing on one presses it with its share of your weight
 // (the foot then rides on it), and a push (pushState) acts at the hands' contact.
 function freeForces() {
-  const out = [], stance = body.feet.filter((f) => f.t >= 1), carry = [0, 0, 0];
+  const out = [], stance = rig.over ? [] : body.feet.filter((f) => f.t >= 1), carry = [0, 0, 0];
+  if (rig.over) for (const c of body.overContacts || []) if (c.o !== 'ground' && c.o.free !== undefined) out.push({ id: c.o.free, b: c.o.fb, p: c.p, F: [0, -c.F, 0] }); // (a way over: its planted hands and feet press what they rest on)
   for (const ft of stance) {
     let best = null, bd = Infinity; const was = ft.onFree;
     for (const so of solids.get(ckey8(ft.x, ft.z)) || []) {
@@ -2293,7 +2300,7 @@ function logBranches(t, gone = null) {
     const A0 = W3(P.p0[i * 3], P.p0[i * 3 + 1], P.p0[i * 3 + 2]), B0 = W3(P.p1[i * 3], P.p1[i * 3 + 1], P.p1[i * 3 + 2]);
     out.segs.set([...A0, ...B0, r0], i * 7);
     bx0 = Math.min(bx0, A0[0], B0[0]); bx1 = Math.max(bx1, A0[0], B0[0]); bz0 = Math.min(bz0, A0[2], B0[2]); bz1 = Math.max(bz1, A0[2], B0[2]);
-    if (r0 >= 0.02) out.solids.push({ kind: 'log', node: i, x: (A0[0] + B0[0]) / 2, z: (A0[2] + B0[2]) / 2, x0: A0[0], z0: A0[2], x1: B0[0], z1: B0[2], ya0: A0[1], ya1: B0[1], r: Math.max(r0, r1), r0, r1, rz0: r0, rz1: r1, reach: Math.hypot(B0[0] - A0[0], B0[2] - A0[2]) / 2 + r0 });
+    if (r0 >= 0.02 || (r0 >= BRANCH_R_MIN && Math.min(A0[1], B0[1]) - ground((A0[0] + B0[0]) / 2, (A0[2] + B0[2]) / 2) <= BRANCH_LOW)) out.solids.push({ kind: 'log', branch: true, node: i, x: (A0[0] + B0[0]) / 2, z: (A0[2] + B0[2]) / 2, x0: A0[0], z0: A0[2], x1: B0[0], z1: B0[2], ya0: A0[1], ya1: B0[1], r: Math.max(r0, r1), r0, r1, rz0: r0, rz1: r1, reach: Math.hypot(B0[0] - A0[0], B0[2] - A0[2]) / 2 + r0 });
   }
   out.box = [bx0, bx1, bz0, bz1];
   // foliage while it lasts: green in the first year, rust-brown to about the third, then gone
@@ -2816,7 +2823,7 @@ function gymRun(i, secs = 16) {
   const g0 = ground(player.x, player.z);
   let maxF = -9, maxH = 0, hands = false, lifts = 0, worst = 9, worstAt = '', lifting = false, eyeJump = 0, lastEye = null, pen = 0, penAt = '', duckMax = 0;
   for (let k = 0; k < secs * 60; k++) {
-    input.keys.clear(); input.keys.add('KeyW'); movePlayer(1 / 60); physStep(1 / 60); refreshNear(player.x, player.z);
+    input.keys.clear(); input.keys.add('KeyW'); if (s.slow) input.keys.add('KeyQ'); movePlayer(1 / 60); physStep(1 / 60); refreshNear(player.x, player.z);
     const f = gymProgress(); maxF = Math.max(maxF, f); maxH = Math.max(maxH, rig.feet - g0);
     if (body.four) hands = true; if (rig.lift && !lifting) lifts++; lifting = !!rig.lift; if (rig.vault && !wasV) vaults++; wasV = !!rig.vault; if (rig.over && !wasO) overs.push(rig.over.mode); wasO = !!rig.over; if (Math.abs(body.roll) > Math.abs(rollMax)) rollMax = body.roll;
     cam = Math.min(cam, toStem(body.eye)); duckMax = Math.max(duckMax, body.duck || 0);
@@ -2829,6 +2836,7 @@ function gymRun(i, secs = 16) {
   const checks = [];
   if (e.cross) checks.push(['cross', maxF >= 4]);
   if (e.stop) checks.push(['stop', maxF < 1]);
+  if (e.stepOn !== undefined) checks.push([`a foot on the top (${e.stepOn} m)`, overs.includes('step on') || maxH >= e.stepOn - 0.05]);
   if (e.height !== undefined) checks.push([`height ≥ ${e.height}`, maxH >= e.height]);
   if (s.maxHeight !== undefined) checks.push([`height ≤ ${s.maxHeight}`, maxH <= s.maxHeight]);
   if (e.solid) checks.push([`solid (deepest ${(pen * 100).toFixed(0)} cm${pen > 0.02 ? ': ' + penAt : ''})`, pen <= 0.02]);
@@ -2925,6 +2933,7 @@ function spawn() {
 // Rock tops are sampled from the rock's own geometry (a precomputed top-surface heightfield per mesh), so ledges and
 // flat tops hold you where they visibly are. Root wads are ellipsoids, logs are lying cylinders.
 // Shrubs, ferns, grass and twigs never block or slow you; the camera rig expresses them instead (see "camera rig").
+const SLOW = 1.0, CAREFUL = 0.45; // below SLOW m/s you step onto what is in the way (Q, or a small push of the stick: CAREFUL of a walk)
 const STEP = 0.55, SCRAMBLE = 1.35, MAX_SLOPE = 0.95, MAX_GROUND_SLOPE = 1.15, FOOT = 0.22;
 let solids = null; // 8 m hash of static solids
 let saplingCells = null; // small simulated trees (dbh < 8 cm): stems to walk around, crowns to push
@@ -3152,7 +3161,7 @@ function ceilingAt(x, z, feet, along) {
 // a top too narrow to stand on (under 0.5 m along the way) with footing within a step either side: stepped over, so neither the
 // body's height nor a foothold takes it (a thin wall, a rail). Returns the footing either side instead, or null.
 function stepOverAt(x, z, s0, ux, uz) {
-  if (!(ux || uz)) return null;
+  if (!(ux || uz) || body.slow) return null; // (slowly, a foot goes onto it instead: it is assumed to hold you, until it doesn't)
   const a = supportAt(x + ux * 0.47, z + uz * 0.47), b = supportAt(x - ux * 0.47, z - uz * 0.47), lo = Math.max(a, b); // (beyond the foot ring, 0.22, and half a narrow top)
   if (s0 - lo < 0.12 || s0 - lo > STEP) return null; // (it is level ground, or a ledge to climb)
   if (s0 - a < 0.12 || s0 - b < 0.12) return null; // a step up onto something deeper: stood on
@@ -3634,6 +3643,24 @@ function overScript(mode, B) {
     const s1 = stand(D + 0.3, L, L); k(1, { ...s1, hd: hang(s1.pel) });
     return { ks, dur: 1.6 };
   }
+  if (mode === 'step on') { // approached slowly: the lead foot onto the top, weight onto it (hands on the top too if it is high), the trailing leg over and down beyond, then the lead foot off
+    const s0 = stand(-0.36, 0, 0), hands = H > 0.55, up = [0.1, 0.7, -0.7], top = [[0.04, H + 0.05, -0.24], [0.04, H + 0.05, 0.24]], ride = Math.min(H + 0.5, L + S + 0.1);
+    k(0.1, { ...s0, bend: [hands ? 0.25 : 0.1, 0, 0], hd: hands ? [[-0.12, H + 0.15, -0.24], [-0.12, H + 0.15, 0.24]] : hang(s0.pel), kp: kF, ep: hands ? eUp : eB }); // (the hands rise above the top before reaching onto it)
+    k(0.2, { ft: [[-0.34, Math.min(0.4, H * 0.55), -0.12], s0.ft[1]], kp: [up, kF[1]], ...(hands ? { hd: top } : {}) }); // the lead knee lifts, out to its side (not forward into the face)
+    k(0.32, { pel: [-0.35, S - 0.02, 0.02], ft: [[-0.12, H + 0.17, -0.12], s0.ft[1]] }); // clear of the face, up to the top
+    k(0.36, { ft: [[Math.min(D / 2, 0.08), H + 0.14, -0.1], s0.ft[1]], kp: [[0.6, 0.6, -0.4], kF[1]] }); // over it
+    k(0.4, { ft: [[Math.min(D / 2, 0.1), H + A, -0.1], s0.ft[1]] }); // planted on it
+    const out = [0.15, 0.25, 1], fx = Math.min(D / 2, 0.1); // (out: the trailing knee lifts out to its side, a hurdler's trail leg, clear of the near face)
+    k(0.52, { pel: [fx - 0.2, Math.min(ride, H + 0.35), 0.03], bend: [0.3, 0, 0], ft: [[fx, H + A, -0.1], [-0.3, A + 0.1, 0.12]], kp: [kF[0], out] }); // weight on it: up over the foot, the trailing foot on its toes
+    k(0.6, { pel: [fx - 0.08, ride, 0.03], ft: [[fx, H + A, -0.1], [-0.26, H - 0.15, 0.3]] }); // the trailing foot off the ground, lifted out to the side
+    k(0.68, { pel: [D / 2, ride, 0.02], ft: [[fx, H + A, -0.1], [D / 2, H + 0.25, 0.3]], kp: [[0.3, 1, -0.3], out], ...(hands ? { hd: [[D / 2, H + 0.22, -0.26], [D / 2, H + 0.22, 0.26]] } : {}) }); // the trailing foot over the top beside it (the hands leave the top upward)
+    k(0.78, { pel: [D + 0.08, Math.max(L + S - 0.04, ride - 0.12), 0], bend: [0.2, 0, 0], ft: [[fx, H + A, -0.1], [D + 0.34, far(L + A + 0.08), 0.14]], kp: [[0.3, 1, -0.3], kF[1]], ...(hands ? { hd: hang([D + 0.08, ride, 0]) } : {}) }); // reaching down beyond
+    k(0.86, { pel: [D + 0.18, L + S - 0.02, 0], ft: [[D / 2 + 0.1, H + 0.12, -0.1], [D + 0.3, L + A, 0.12]] }); // down beyond, the lead foot leaves the top
+    k(0.9, { ft: [[D + 0.2, H + 0.08, -0.11], [D + 0.3, L + A, 0.12]] }); // (forward off the far edge before down)
+    k(0.95, { ft: [[D + 0.28, Math.max(L + A + 0.08, H * 0.4), -0.11], [D + 0.3, L + A, 0.12]] });
+    const s1 = stand(D + 0.32, L, L); k(1, { ...s1, hd: hang(s1.pel), ep: eB });
+    return { ks, dur: 2.2, onTop: [0.4, 0.86] };
+  }
   if (mode === 'vault') { // the hands on the top, a spring, and the legs together swung up and over out to one side (left, unmirrored)
     const s0 = stand(-0.42, 0, 0), top = [[D / 2, H + 0.05, -0.1], [D / 2, H + 0.05, 0.22]], sideK = [[0, 0.4, -1], [0, 0.4, -1]];
     k(0.08, { ...s0, bend: [0.2, 0, 0], hd: [[-0.14, H + 0.14, -0.18], [-0.14, H + 0.14, 0.2]], kp: kF, ep: eUp }); // (the hands rise above the top before reaching onto it)
@@ -3712,6 +3739,7 @@ function overScript(mode, B) {
 }
 // the rules (docs/movement.md, "Barriers with nothing to stand on at the top"), in order of effort
 const OVER_MODES = [
+  ['step on', (B) => body.slow && B.H <= 0.8 && B.C >= 1.1], // approached slowly: a foot goes on it (it is taken to hold you)
   ['high step', (B) => B.H <= 0.75 && B.D <= 0.4 && Math.abs(B.L) <= 0.4],
   ['straddle', (B) => B.H <= 0.95 && B.W >= 0.8],
   ['vault', (B) => B.H <= VAULT_MAX && B.C >= 0.5],
@@ -3787,7 +3815,7 @@ function overCheck(keys, n = 72) { // the script solved pose by pose: how deep a
 }
 let overCache = null, overClock = 0; // (simulated seconds, for how long a plan is kept)
 function planOver(B, P0) {
-  const key = `${B.O[0].toFixed(1)},${B.O[1].toFixed(1)},${B.n[0].toFixed(1)},${B.n[1].toFixed(1)}`;
+  const key = `${B.O[0].toFixed(1)},${B.O[1].toFixed(1)},${B.n[0].toFixed(1)},${B.n[1].toFixed(1)},${body.slow ? 1 : 0}`;
   if (overCache && overCache.key === key && overClock - overCache.time < 1) { // the same barrier: the choice stands, rebuilt from where you are now (and checked again)
     const r = overCache.res; if (!r) return null;
     const keys = overWorld(B, overScript(r.mode, B), r.side, P0), c = overCheck(keys);
@@ -3806,6 +3834,54 @@ function planOver(B, P0) {
   }
   overCache = { key, time: overClock, res, tried }; body.overTried = tried;
   return res;
+}
+// ---- your weight during a way over. Each hand and foot the script puts on something carries a share of your weight
+// (a foot a whole share, a hand half). What it rests on was taken to hold you (the way over was chosen as if it would);
+// as the weight comes on, a branch is checked as one is underfoot (branchLoad: it may snap, or bend away), and a loose
+// object is pressed (freeForces). If what a planted hand or foot rests on breaks or moves out from under it, the
+// script ends there and you drop.
+function restTop(x, z, y) { // the highest footing at (x, z) no higher than just above y: the ground or a solid's top
+  let t = ground(x, z); for (const o of solids.get(ckey8(x, z)) || []) { const v = topOf(o, x, z); if (v > t && v < y + 0.1) t = v; }
+  return t;
+}
+function restOn(x, z, y) { // what a hand or foot at height y rests on: a solid, 'ground', or nothing (in the air)
+  if (Math.abs(ground(x, z) - y) < 0.04) return 'ground';
+  for (const o of solids.get(ckey8(x, z)) || []) if (Math.abs(topOf(o, x, z) - y) < 0.04) return o;
+  return null;
+}
+function branchOf(o) { // a solid that is a branch, as the foot-stack check describes one (crunchSegs)
+  if (o.limb) { const rec = o.rec; return { kind: 'tree', rec, ws: treeSegs(rec), i: o.node, P: rec.v.P, s: treeXf(rec).s, dead: false, gdn: [0, -1, 0] }; }
+  const r = o.lrec, M = r?.m; if (!M) return null;
+  return { kind: 'log', rec: r, ws: M.segs, i: o.node, P: M.v.P, s: M.s, dead: M.T > 1, gdn: [-M.X.y, -M.a.y, -M.Z.y] };
+}
+function overLoad(O, P) { // true if something gave way (the script has ended)
+  const pts = [...P.feet.map((f) => [f[0], f[1] - OVER_A, f[2], 1]), ...P.hands.map((h) => [h[0], h[1] - 0.05, h[2], 0.5])];
+  const L = O.load || (O.load = pts.map(() => null)), on = [];
+  pts.forEach((p, k) => {
+    const c = L[k]; if (c && Math.hypot(p[0] - c.x, p[1] - c.y, p[2] - c.z) < 0.03) { on.push(c); return; } // still where it was put
+    const o = restOn(p[0], p[2], p[1]); L[k] = o ? { x: p[0], y: p[1], z: p[2], o, w: p[3], tested: 0 } : null; if (o) on.push(L[k]);
+  });
+  const W = on.reduce((a, c) => a + c.w, 0);
+  body.overContacts = on.map((c) => ({ p: [c.x, c.y, c.z], o: c.o, F: BODY_N * c.w / W }));
+  for (const c of on) {
+    if (c.o === 'ground') continue;
+    const F = BODY_N * CRUNCH.load * c.w / W;
+    if ((c.o.limb || c.o.branch) && F > c.tested * 1.1) { // weight coming onto a branch (checked again as more of it comes on)
+      c.tested = F; const b = branchOf(c.o);
+      if (b) {
+        const k = b.i * 7, w = b.ws, vx = w[k + 3] - w[k], vz = w[k + 5] - w[k + 2], u = clamp(((c.x - w[k]) * vx + (c.z - w[k + 2]) * vz) / (vx * vx + vz * vz || 1), 0, 1), r = branchLoad(b, u, F);
+        if (r.fate === 'break') { if (b.kind === 'tree') breakBranch(b.rec, r.node); else logBreak(b.rec, r.node, b.ws[r.node * 7 + 6] > 0.015); crunchList = null; body.crunch = (body.crunch || 0) + 1; }
+        if (r.fate !== 'hold') return giveWay(r.fate === 'break' ? 'The branch broke under you' : 'The branch bent away under you');
+      }
+    }
+    if (restTop(c.x, c.z, c.y) < c.y - 0.05) return giveWay('It gave way under you'); // broken, rolled or slid out from under the hand or foot
+  }
+  return false;
+}
+function giveWay(msg) { // the script ends where it is: the body drops from here
+  const P = overPose(rig.over.keys, rig.over.t); rig.over = null; body.overContacts = null;
+  rig.feet = Math.min(P.feet[0][1], P.feet[1][1]) - OVER_A; rig.vy = 0; body.gaveWay = (body.gaveWay || 0) + 1; body.lastGaveWay = msg;
+  plantBothFeet(); flash(msg); return true;
 }
 function startOver(o) { rig.over = { ...o, t: 0 }; body.q.stats.overs = (body.q.stats.overs || 0) + 1; body.lastOver = o.mode; endGap(); body.cross = null; }
 function overBody(dt) { // the script owns the body: its pose, the eye in its head, the feet and hands where it put them
@@ -3844,15 +3920,18 @@ function movePlayer(dt) {
   if (input.keys.has('ArrowRight')) player.yaw -= dt * 1.8;
   if (input.keys.has('ShiftLeft') || input.keys.has('ShiftRight')) run = true;
   const mag = Math.hypot(f, s); if (mag > 1) { f /= mag; s /= mag; }
+  if (input.keys.has('KeyQ') && !run) { f *= CAREFUL; s *= CAREFUL; } // a careful walk (the stick: a small push)
   const speed = lerp((run ? 4.2 : 1.6) * (1 - 0.55 * body.duck), GAIT4.speed * (run ? 1.4 : 1), body.need) * physResist(f, s) * (body.straddle ? 0.3 : 1); // (straddling something: slow until the trailing leg is over) // a stooped duck-walk is slow; on hands slower; a branch you cannot bend stops you
   const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
   const px = player.x, pz = player.z;
+  body.slow = !run && speed * Math.min(1, Math.hypot(f, s)) < SLOW; // approaching slowly: a barrier is stepped onto, not over
   if (!rig.lift && !rig.vault && !rig.over && rig.vy === 0) { const here = footSupport(px, pz); if (here - rig.feet > STEP) rig.feet = here; } // embedded (e.g. a rock streamed in around you): climb out
   let needT = body.needT; overClock += dt;
   if (rig.over) { // a way over: the script carries the body; the controller follows its pelvis
     const O = rig.over; O.t = Math.min(1, O.t + dt / O.dur); const P = overPose(O.keys, O.t);
     player.x = P.pelvis[0]; player.z = P.pelvis[2]; rig.feet = Math.min(P.feet[0][1], P.feet[1][1]) - OVER_A; needT = 0;
-    if (O.t >= 1) { rig.over = null; rig.feet = footSupport(player.x, player.z); rig.vy = 0; supportRef = rig.feet; }
+    if (overLoad(O, P)) { /* something gave way: you drop from here */ }
+    else if (O.t >= 1) { rig.over = null; body.overContacts = null; rig.feet = footSupport(player.x, player.z); rig.vy = 0; supportRef = rig.feet; }
   } else if (rig.vault) { // over a hurdle: the body follows an arc through the crossing point, low over the top
     const H = rig.vault; H.t = Math.min(1, H.t + dt / H.dur); const t = H.t, e = t * t * (3 - 2 * t), a = (1 - e) * (1 - e), b = 2 * e * (1 - e), c = e * e;
     player.x = a * H.x0 + b * H.cx + c * H.lx; player.z = a * H.z0 + b * H.cz + c * H.lz;
@@ -3943,7 +4022,7 @@ function movePlayer(dt) {
     } else if (!vault) needT = needHere();
     if (!rig.lift && !rig.vault && !rig.over) {
       let sup = footSupport(player.x, player.z); { const w = body.want, wl = w ? Math.hypot(w[0], w[1]) : 0; if (wl) { const so = stepOverAt(player.x, player.z, sup, w[0] / wl, w[1] / wl); if (so !== null) sup = Math.max(so, Math.min(sup, rig.feet)); } } // (over a thin top, the body stays at the footing either side)
-      if (sup >= rig.feet) { rig.feet = sup; rig.vy = 0; body.airborne = false; }
+      if (sup >= rig.feet) { rig.feet = sup; rig.vy = 0; body.airborne = false; standLoad(); }
       else {
         const drop = rig.feet - sup, snap = body.four ? 0.3 : 0.06 + speed * dt * MAX_GROUND_SLOPE; // holding on, a slip off a stem's crown is not a fall
         if (drop <= snap && rig.vy === 0) rig.feet = sup;
@@ -4170,8 +4249,8 @@ function wsGraph(M) {
   for (let i = 0; i < P.n; i++) { p0.set([ws[i * 7], ws[i * 7 + 1], ws[i * 7 + 2]], i * 3); p1.set([ws[i * 7 + 3], ws[i * 7 + 4], ws[i * 7 + 5]], i * 3); }
   return (M.Pw = { ...P, p0, p1 });
 }
-function branchLoad(c, u) {
-  const P = c.P, s = c.s, F = BODY_N * CRUNCH.load, g = c.gdn, Fv = g.map((v) => v * F), held = c.held || ((j) => P.ord[j] < 1);
+function branchLoad(c, u, F = BODY_N * CRUNCH.load) {
+  const P = c.P, s = c.s, g = c.gdn, Fv = g.map((v) => v * F), held = c.held || ((j) => P.ord[j] < 1);
   const b = PL.breakCheck(P, c.i, u, Fv, s, c.dead, held);
   if (b.ratio >= 1) return { fate: 'break', node: b.node, ratio: b.ratio };
   const E = PL.ARCH[P.sp].wood.E * 1e9 * (c.dead ? 0.8 : 1), q = [0, 1, 2].map((k) => (P.p0[c.i * 3 + k] + (P.p1[c.i * 3 + k] - P.p0[c.i * 3 + k]) * u) * s);
@@ -4766,7 +4845,7 @@ addEventListener('keydown', (e) => { if (keyTarget(e)) return; input.keys.add(e.
 addEventListener('keyup', (e) => { input.keys.delete(e.code); if (e.code === 'KeyB') pushStop(); });
 addEventListener('blur', () => input.keys.clear());
 const stickEl = $('stick'), knob = $('knob');
-if (isTouch) { stickEl.hidden = false; $('hint').textContent = 'Left thumb to walk · drag right side to look'; }
+if (isTouch) { stickEl.hidden = false; $('hint').textContent = 'Left thumb to walk (a small push steps carefully) · drag right side to look'; }
 canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture(e.pointerId);
   const isStick = e.pointerType !== 'mouse' && e.clientX < innerWidth * 0.45 && e.clientY > innerHeight * 0.4;
@@ -4974,7 +5053,6 @@ function loop(now) {
   if (bench.walk) { input.f = 1; input.run = true; player.yaw += dt * 0.12; player.pitch = bench.pitch; } // the benchmark walks a wide arc
   const c0 = performance.now();
   movePlayer(dt);
-  limbLoad(dt);
   physStep(dt);
   const c1 = performance.now();
   refreshNear(player.x, player.z);
@@ -5190,7 +5268,7 @@ window.foothold = {
   physics: { MD, modal: () => modal, clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
   branches: { crunchSegs, crunchStack, branchLoad, get crunchList() { return crunchList; }, logBuf: () => logBuf, logLeafBuf: () => logLeafBuf, logBranches, plantVariant, target: () => breakTargetAt, pick() { const r = running; running = true; breakTarget(); running = r; return breakTargetAt; }, push: pushState, pushStart, pushStop, pushUpdate, breakBranch, treeSegs, plantCells: () => plantCells, brokenTrees: () => brokenTrees, limbSolids, logBranchCells: () => branchLogCells },
   plants: { lib: plantLib, roots: () => rootMeshObj, rootQueue: () => rootQueue, rootCells: () => rootCells, PL },
-  debug: { overTrack: (mode, side = -1, n = 120) => { // a way over, solved pose by pose, as joint positions in the barrier's frame [a along its normal from the near face, y up, s to the right] (for sim/)
+  debug: { branchSolids: () => [...new Set([...solids.values()].flat())].filter((o) => o.limb || o.branch), overTrack: (mode, side = -1, n = 120) => { // a way over, solved pose by pose, as joint positions in the barrier's frame [a along its normal from the near face, y up, s to the right] (for sim/)
       const B = body.barrier || barrierAt(player.x, player.z, -Math.sin(player.yaw), -Math.cos(player.yaw)); if (!B) return null; const sc = overScript(mode, B), keys = overWorld(B, sc, side, bodyPose());
       const loc = (p) => { const dx = p[0] - B.O[0], dz = p[2] - B.O[1]; return [+(dx * B.n[0] + dz * B.n[1]).toFixed(4), +(p[1] - B.y0).toFixed(4), +(dx * B.r[0] + dz * B.r[1]).toFixed(4)]; };
       const frames = []; for (let i = 0; i <= n; i++) { const t = i / n, sol = SK.solvePose(overPose(keys, t)); frames.push({ t: +(t * sc.dur).toFixed(4), J: Object.fromEntries(Object.entries(sol.J).map(([k, v]) => [k, loc(v)])) }); }

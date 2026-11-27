@@ -79,6 +79,10 @@ export const STATIONS = [
   // what lies beyond (only a step-over cares: anything else slides off)
   st('Wall 0.6 m, ground 0.3 m lower beyond', 'step over (and down)', [box(0, -3.5, LANE, 0.3, 7), wall(0.6, 0.2, -0.1, 0.3)], { cross: true }),
   st('Wall 0.6 m, ground 0.8 m lower beyond', 'straddle over and slide off (too far down to step)', [box(0, -3.5, LANE, 0.8, 7), wall(0.6, 0.2, -0.1, 0.8)], { cross: true }),
+  // approached slowly (a careful walk): a foot goes onto the top instead of over it
+  st('Wall 0.4 m, slowly', 'step onto it, then down', [wall(0.4)], { cross: true, hands: false, stepOn: 0.4 }, { slow: true }),
+  st('Rail at 0.5 m, slowly', 'step onto it, then down', [rail(0.5)], { cross: true, hands: false, stepOn: 0.5 }, { slow: true }),
+  st('Wall 0.7 m, slowly', 'step on (hands on the top), then down', [wall(0.7)], { cross: true, stepOn: 0.7 }, { slow: true }),
 ];
 
 const COLS = 6, DX = 14, DZ = 18;

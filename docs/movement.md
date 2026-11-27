@@ -214,3 +214,40 @@ forest the same planner high-steps and vaults logs (75 s of walking: one of each
 Not yet: climbing over on holds (no station has holds; the 1.8 m wall stops you); the old vault remains only for what
 `barrierAt` does not measure. The roll ends facing the wall and turns round as you walk on. Still open from before: the head
 dip at station 14's mouth (7 cm) and the forearm climbing onto the block (22 cm).
+
+## Step 5: slowly, a foot goes on it (31/33)
+
+Two rules from play:
+- **Planning assumes every branch holds your weight.** Any branch at least 1 cm thick within 1 m of the ground is now
+  solid, on standing trees and fallen ones alike. Before, the cut-off was 2.5 cm live and 3.5 cm dead on standing trees,
+  and 2 cm on fallen ones. So the planner steps on these branches, over them, or ducks under them, as it does for logs.
+  It never predicts whether one will break.
+- **Your weight finds out.** The first time you stand on a branch, it gets the same beam check as a foot coming down on
+  one (`branchLoad`). If it snaps, it breaks off. If it bends away, it stops being solid (its physics rod still pushes
+  back). Either way it is no longer under you, and you drop.
+
+**Walking slowly** means a careful walk below 1 m/s: hold Q, or push the stick only a little (under about 60%). Walking
+slowly toward a barrier puts at least one foot on it instead of over it:
+- **Below a step's height (0.55 m):** the gait no longer steps over a thin top (`stepOverAt` is off). It stands on it,
+  then steps down beyond.
+- **From 0.55 to 0.8 m:** a new way over, **step on**, comes first in the table when slow (rule: H ≤ 0.8 and C ≥ 1.1).
+  The lead knee lifts out to its side and the foot goes onto the top. Above 0.55 m the hands go on the top too. Weight
+  comes onto the lead foot and the body rises over it. The trailing leg lifts out to the side, passes over the top and
+  reaches down beyond, then the lead foot comes off.
+- **Higher:** the other ways over already put weight on the top (hands, sitting, belly) and are unchanged.
+
+**Weight during any way over.** A hand or foot the script puts on something carries a share of your weight: a foot
+counts 1, a hand ½. As that weight comes on:
+- a branch gets the beam check above;
+- a loose object (a log near you, loose wood) is pressed through the physics (`freeForces`), so it can roll or slide.
+
+If what a planted hand or foot rests on breaks, or moves more than 5 cm from under it, the script ends there and you
+drop ("It gave way under you").
+
+**Measured:**
+- Gym: 31/33. The three new stations pass: wall 0.4 m slowly (stood on), rail 0.5 m slowly (stood on), wall 0.7 m
+  slowly (step on, deepest 1 cm). The two failures are the old ones: station 14's head dip and the forearm on the block.
+- In the forest, walking slowly up to thin fallen-tree branches:
+  - a 1.8 cm branch with its top at 0.64 m: step on, and the branch broke under the foot;
+  - 1.0 and 2.1 cm branches at about 0.25 m: stood on, and both broke.
+- Cost: 6.9 ms a step against 6.5 ms before, over 75 s of forest walking, with 960 branch solids loaded.

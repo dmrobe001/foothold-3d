@@ -78,6 +78,12 @@ Findings about the game, from this:
   dorsiflexion. Hip abduction and shoulder rotation also bind. Fit error with limits enforced: median 3.1 cm, worst
   11.5 cm (a knee mid-swing).
 
+## Status
+
+Parked. The game uses its hand-built pose sequences (`overScript` in src/game.js). `stances.py` was a first try at
+chaining moves between stable stances over the 0.7 m wall (results in `sim/out/stances.json`). Move chaining isn't a
+good fit for the game right now.
+
 ## Why the walls failed, and what to try next
 
 Unseeded random search around a standing pose doesn't stumble on "hands on the top and spring": that needs many joints
