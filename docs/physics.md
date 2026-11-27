@@ -592,3 +592,12 @@ So the spikes come mostly from plant matter as colliders: planning and footholds
 Bending adds a little to the typical step, not the spikes. Triangles (the render) are not in these numbers. The
 performance panel's benchmark now has a "plant collisions off" row and a body-time column (median and worst), to compare
 on a real device.
+
+## Foliage hidden (a render option)
+
+The performance panel's "Foliage" option hides every material that draws leaves, needles, grass, ferns, shrubs and
+litter. Only wood, rock and ground draw, and the shadow pass skips the hidden meshes too. The distant impostor cards hold
+leaves and wood in one picture, so with foliage hidden they give way to plain far trunks. It switches live, and the
+benchmark has a "foliage hidden" row. On this machine (software rendering) the render time by a leafy fallen tree
+barely moved (15–19 ms either way). Software rasterising says little about a GPU's cost for overlapping alpha-tested
+cards, so the device benchmark is the test.

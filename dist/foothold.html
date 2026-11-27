@@ -164,6 +164,7 @@
   <div class="form">
     <label for="qShadow">Shadows<select id="qShadow"><option value="1">Every frame</option><option value="2" selected>Every 2nd frame</option><option value="4">Every 4th frame</option><option value="0">Off</option></select></label>
     <label for="qRing">Grown trees within<select id="qRing"><option value="0">None (cards only)</option><option value="20">20 m</option><option value="32" selected>32 m</option><option value="40">40 m</option></select></label>
+    <label for="qFoliage">Foliage<select id="qFoliage"><option value="1">Shown</option><option value="0">Hidden (wood, rock and ground only)</option></select></label>
     <label for="qPlantCol">Plant collisions<select id="qPlantCol"><option value="1">On</option><option value="0" selected>Off (only rock and soil)</option></select></label>
     <label for="qRoots">Roots<select id="qRoots"><option value="1">Shown</option><option value="0">Hidden</option></select></label>
     <label for="qGround">Ground cover<select id="qGround"><option value="1">Shown</option><option value="0">Hidden</option></select></label>
@@ -4407,6 +4408,16 @@ function setPlantCollide(on) { // swap the collider maps: with or without plant 
   solids = on ? solidsAll : solidsRock; colTrunks = on ? colTrunksAll : new Map(); saplingCells = on ? saplingAll : new Map();
   crunchList = null; for (const ft of body.feet || []) ft.stack = null;
 }
+// Foliage on or off (a performance option): every leaf, needle, grass, fern, shrub and litter material is hidden, so only
+// wood, rock and ground draw. The distant impostor cards are leaves and wood in one picture, so with foliage off they give
+// way to plain far trunks.
+let foliageOn = true;
+function setFoliage(on) {
+  foliageOn = !!on;
+  for (const m of [mats.leaf, mats.needle, mats.leafStill, mats.needleStill, mats.shrub, mats.fern, mats.grass, mats.litter, treeMats.leaf, treeMats.needle, treeMats.farLeaf, treeMats.farNeedle, impMats?.leaf, ...ownerLeafMats]) if (m) m.visible = foliageOn;
+  treeMats.farBark.visible = !foliageOn;
+  renderer.shadowMap.needsUpdate = true;
+}
 const BODY_N = 785; // your weight, newtons
 const bBreak = $('bBreak');
 bBreak.addEventListener('pointerdown', (e) => { e.preventDefault(); pushStart(); });
@@ -5217,6 +5228,7 @@ function parentsFirst(P) { // node ids in an order where every parent comes befo
   return (P._pf = Int32Array.from(out));
 }
 const ownerWs = (o) => o.ph.kind === 'tree' ? treeSegs(o) : o.ph.kind === 'log' ? o.m.segs : o.ph.kind === 'root' ? o.m.ws : plantProxy(o).ws;
+const ownerLeafMats = new Set(); // per-object foliage materials (for the foliage switch)
 function ownerMats(o, tree, conifer) { // per object: the same programs, its own displacement texture
   ownerTex(o, tree ? 'tree' : 'log');
   if (o.ph.mats) return o.ph.mats;
@@ -5224,6 +5236,7 @@ function ownerMats(o, tree, conifer) { // per object: the same programs, its own
   bark.onBeforeCompile = (sh) => { if (tree) { bendPatch(sh); barkStylePatch(sh); } nodePatch(sh, o.ph); }; bark.customProgramCacheKey = () => `actBark${tree ? 1 : 0}`;
   const leaf = foliageMaterial(conifer ? tex.needle : tex.leaf, { alphaTest: conifer ? 0.38 : 0.42, wind: tree ? 0.012 : 0 }), base = leaf.onBeforeCompile;
   leaf.onBeforeCompile = (sh) => { base(sh); if (tree) bendPatch(sh); nodePatch(sh, o.ph); }; leaf.customProgramCacheKey = () => `actFol${tree ? 1 : 0}`;
+  leaf.visible = foliageOn; ownerLeafMats.add(leaf);
   return (o.ph.mats = { bark, leaf });
 }
 function logMesh(r) { // a fallen tree's branches drawn on their own, deforming, while simulated
@@ -5740,6 +5753,7 @@ function buildWorld() {
       const o1 = toW(...bendLocal(f, ub, H)), o2 = toW(...bendLocal(f, um, H));
       const dx = (o1[0] + o2[0]) / 2, dz = (o1[1] + o2[1]) / 2;
       if (kind !== 'conifer') r(); // (kept: the old card crown drew a number here, and later draws follow it)
+      b.live.add(trs(t.x, gy - 0.15, t.z, yaw, rad, H, rad), bt[0] * vari, bt[1] * vari, bt[2] * vari, t.d, bendAttr, wobAttr); // plain far trunks: drawn only with foliage hidden (the impostors carry their own)
       { // far: an impostor of this species' grown tree, scaled like the near variant
         const fci = FAR_CLASS(t.d), fshape = oneSided && fci === 4 ? 3 : 1, fkey = `${t.sp}:${fci}:${fshape}`;
         if (!impKeys.has(fkey)) impKeys.set(fkey, { sp: t.sp, ci: fci, shape: fshape });
@@ -5843,6 +5857,7 @@ function buildWorld() {
   }
   for (const [k, a] of logCells) logCells.set(k, [...new Set(a)]);
   setPlantCollide(PHYS.plants); // a new world keeps the plant-collision setting
+  setFoliage(foliageOn); // and the foliage setting (the impostor material is new)
 
   // near-field scatter
   if (near) for (const nb of Object.values(near.b)) nb.mesh.dispose?.();
@@ -8435,14 +8450,14 @@ scene   ${Math.round(s.calls)} draw calls · ${(s.tris / 1e6).toFixed(2)} M tria
 physics ${f1(phys.ms)} ms on the ${phys.worker ? 'worker thread' : 'main thread'} · ${phys.nodes} branch segments in ${phys.groups.size} groups · push-back ${Math.round(Math.hypot(...phys.force))} N`;
 }
 function applyPerfOpt() {
-  setPlantCollide($('qPlantCol').value === '1'); PLANT_R = +$('qRing').value; perfOpt.shadow = +$('qShadow').value; perfOpt.roots = $('qRoots').value === '1'; perfOpt.ground = $('qGround').value === '1'; perfOpt.pr = $('qPR').value;
+  setPlantCollide($('qPlantCol').value === '1'); setFoliage($('qFoliage').value === '1'); PLANT_R = +$('qRing').value; perfOpt.shadow = +$('qShadow').value; perfOpt.roots = $('qRoots').value === '1'; perfOpt.ground = $('qGround').value === '1'; perfOpt.pr = $('qPR').value;
   sun.castShadow = perfOpt.shadow > 0; if (!sun.castShadow) renderer.shadowMap.needsUpdate = true;
   if (rootMeshObj) rootMeshObj.visible = perfOpt.roots;
   if (near) for (const nb of Object.values(near.b)) nb.mesh.visible = perfOpt.ground;
   renderer.setPixelRatio(perfOpt.pr === 'auto' ? Math.min(devicePixelRatio || 1, settings.quality === 'high' ? 2 : 1.25) : +perfOpt.pr); // numbers: device pixels per CSS pixel
   resize(); plantNear.cx = 1e9; refreshPlants(player.x, player.z, true);
 }
-for (const id of ['qShadow', 'qRing', 'qRoots', 'qGround', 'qPR', 'qPlantCol']) $(id).addEventListener('change', applyPerfOpt);
+for (const id of ['qShadow', 'qRing', 'qRoots', 'qGround', 'qPR', 'qPlantCol', 'qFoliage']) $(id).addEventListener('change', applyPerfOpt);
 function perfPanel(show) { $('pPerf').hidden = !(show ?? $('pPerf').hidden); if (!$('pPerf').hidden) { toggle(null); $('perfLive').textContent = perfSummary(120); } }
 $('fps').addEventListener('click', () => perfPanel());
 $('perfClose').addEventListener('click', () => perfPanel(false));
@@ -8464,6 +8479,7 @@ $('bPerfCopy').addEventListener('click', async () => {
 const BENCH = [
   ['baseline (your settings)', {}],
   ['plant collisions off', { qPlantCol: '0' }],
+  ['foliage hidden', { qFoliage: '0' }],
   ['shadows off', { qShadow: '0' }],
   ['shadows every frame', { qShadow: '1' }],
   ['shadows every 4th frame', { qShadow: '4' }],
@@ -8479,7 +8495,7 @@ let benching = false;
 const bench = { walk: false, pitch: 0 };
 $('bBench').addEventListener('click', async () => {
   if (benching) return; benching = true; $('bBench').disabled = true;
-  const keep = Object.fromEntries(['qShadow', 'qRing', 'qRoots', 'qGround', 'qPR', 'qPlantCol'].map((id) => [id, $(id).value]));
+  const keep = Object.fromEntries(['qShadow', 'qRing', 'qRoots', 'qGround', 'qPR', 'qPlantCol', 'qFoliage'].map((id) => [id, $(id).value]));
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const rows = [], start = { x: player.x, z: player.z, yaw: player.yaw, pitch: player.pitch }, walk = $('qWalk').checked;
   input.keys.clear?.(); perf.spikes = [];
@@ -8558,7 +8574,7 @@ start();
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
   get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); physStep(dt); refreshNear(player.x, player.z); },
-  physics: { switches: PHYS, setPlantCollide, MD, modal: () => modal, clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
+  physics: { switches: PHYS, setPlantCollide, setFoliage, MD, modal: () => modal, clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
   branches: { crunchSegs, crunchStack, branchLoad, get crunchList() { return crunchList; }, logBuf: () => logBuf, logLeafBuf: () => logLeafBuf, logBranches, plantVariant, target: () => breakTargetAt, pick() { const r = running; running = true; breakTarget(); running = r; return breakTargetAt; }, push: pushState, pushStart, pushStop, pushUpdate, breakBranch, treeSegs, plantCells: () => plantCells, brokenTrees: () => brokenTrees, limbSolids, logBranchCells: () => branchLogCells },
   plants: { lib: plantLib, roots: () => rootMeshObj, rootQueue: () => rootQueue, rootCells: () => rootCells, PL },
   debug: { branchSolids: () => [...new Set([...solids.values()].flat())].filter((o) => o.limb || o.branch), overTrack: (mode, side = -1, n = 120) => { // a way over, solved pose by pose, as joint positions in the barrier's frame [a along its normal from the near face, y up, s to the right] (for sim/)
