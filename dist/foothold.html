@@ -1831,6 +1831,11 @@ const PH = (() => {
 // Reaction on the body: each touching segment pushes back with the branch's cantilever stiffness out to the contact
 // point, k_eff = 3 E I / ℓ³ (ℓ: arc length from the group's anchor), times how far that point is from rest.
 // a joint snaps clean off only if dry and under BREAK_R (m); rolling resistance coefficients (soft forest floor; bark on bark) and sliding friction; soil and litter under a segment: stiffness per contact point SOIL · r · length (N/m: 50 kN/m under a 0.8 m section of a 30 cm log, a few hundred under a twig); bark on bark: compliance WOOD (m/N)
+// COLLIDE_BIG, COLLIDE_SHARE: which parts of a free object meet the world (the ground, scenery, other objects, its own other
+// parts, branches on standing plants): a part at least COLLIDE_BIG (m) in radius, or at least COLLIDE_SHARE of the object's
+// thickest. A moving tree meets things with its trunk and very large limbs; a piece broken off, with its thick section.
+// The smaller branches on it pass through. The body meets every part.
+const COLLIDE_BIG = 0.08, COLLIDE_SHARE = 0.5;
 const BREAK_R = 0.015, SOIL = 4e5, WOOD = 2e-6, CRR_SOIL = 0.25, CRR_WOOD = 0.08, MU_SOIL = 0.8, MU_WOOD = 0.7, SLOP = 0.008, DEP = 0.5, VMAX = Infinity, WMAX = Infinity, WDEP = Infinity, BODY_F = 400; // (no speed, spin or bend-recovery limits: the energy audit found the sources instead) // DEP: the fastest an overlap is pushed out (m/s); deeper ones take a few substeps, not one kick
 class PhysicsCore {
   constructor() { this.groups = new Map(); this.free = new Map(); }
@@ -1874,13 +1879,13 @@ class PhysicsCore {
       for (const f of frees) this.fCaps(f);
       const awake = frees.filter((f) => !f.sleep);
       // the body, swept, where it has already given way; then every awake free capsule, for the rods to meet
-      let nf = 0; for (const f of awake) nf += f.nc;
+      let nf = 0; for (const f of awake) nf += f.solid.length;
       const all = new Float32Array(caps.length + nf * 7), owner = new Int32Array(all.length / 7).fill(-1), fref = (this.fref = []);
       if (prev && prev.length === caps.length) { const k = (s + 1) / SUB; for (let c = 0; c < caps.length; c++) all[c] = prev[c] + (caps[c] - prev[c]) * k; } else all.set(caps, 0);
       for (let c = 0; c < caps.length; c += 7) { const j = c / 7 * 4; for (let e = 0; e < 6; e++) all[c + e] += CD[j + e % 3]; }
       this.all = all;
       let off = caps.length;
-      for (const f of awake) for (let c = 0; c < f.nc; c++) { all.set(f.wc.subarray(c * 7, c * 7 + 7), off); owner[off / 7] = fref.length / 2; fref.push(f, c); off += 7; } // fref: (free, capsule) pairs
+      for (const f of awake) for (const c of f.solid) { all.set(f.wc.subarray(c * 7, c * 7 + 7), off); owner[off / 7] = fref.length / 2; fref.push(f, c); off += 7; } // fref: (free, capsule) pairs
       const AU = this.audit ? awake.map((f) => this.energy(f, 0)) : null;
       for (const g of groups) {
         const near = nf ? g.nearP.concat(this.nearCaps(g, all, caps.length)) : g.nearP;
@@ -1972,7 +1977,9 @@ class PhysicsCore {
     if (f.v0) for (let b = 0; b < nb; b++) for (let k = 0; k < 3; k++) f.v[b * 3 + k] = f.v0[k];
     this.fFrames(f); this.fCaps(f);
     f.cts = []; f.noPair = new Set(); // parts of one object that touch in its rest shape (a fork's two branches at their base) never collide with each other
-    f.thick = []; f.solid = []; for (let c = 0; c < f.nc; c++) { f.thick.push(c); f.solid.push(c); } // every part meets everything (self-contact candidates come from a grid: fSelfPairs) // only these meet each other within one object (twigs do not jam visibly)
+    let rmax = 0; for (let c = 0; c < f.nc; c++) rmax = Math.max(rmax, f.cr[c]);
+    f.solid = []; f.isSolid = new Uint8Array(f.nc); for (let c = 0; c < f.nc; c++) if (f.cr[c] >= Math.min(COLLIDE_BIG, COLLIDE_SHARE * rmax)) { f.solid.push(c); f.isSolid[c] = 1; } // the parts that meet the world (above); the rest pass through it
+    f.thick = f.solid;
     const W = f.wc, T = f.thick;
     for (let x = 0; x < T.length; x++) for (let y = x + 1; y < T.length; y++) { const c = T[x], d = T[y]; if (f.cb[c] === f.cb[d]) continue;
       const a = c * 7, k = d * 7, R = W[a + 6] + W[k + 6] + 0.01; // box first
@@ -2195,7 +2202,7 @@ class PhysicsCore {
   fGround(f, h) {
     this.fCaps(f);
     const wc = f.wc, mu = MU_SOIL;
-    for (let c = 0; c < f.nc; c++) { const k0 = c * 7, ln = Math.hypot(wc[k0 + 3] - wc[k0], wc[k0 + 4] - wc[k0 + 1], wc[k0 + 5] - wc[k0 + 2]), ns = Math.max(2, Math.ceil(ln / 0.5)); for (let si = 0; si <= ns; si++) { const t = si / ns; // a sample every half metre at most: a long log follows the ground's shape
+    for (const c of f.solid) { const k0 = c * 7, ln = Math.hypot(wc[k0 + 3] - wc[k0], wc[k0 + 4] - wc[k0 + 1], wc[k0 + 5] - wc[k0 + 2]), ns = Math.max(2, Math.ceil(ln / 0.5)); for (let si = 0; si <= ns; si++) { const t = si / ns; // a sample every half metre at most: a long log follows the ground's shape
       const k = c * 7, r = wc[k + 6], px = wc[k] + (wc[k + 3] - wc[k]) * t, py = wc[k + 1] + (wc[k + 4] - wc[k + 1]) * t, pz = wc[k + 2] + (wc[k + 5] - wc[k + 2]) * t;
       const H = f.hf && this.hfAt(f.hf, px, pz); if (!H) continue;
       const pen = H[0] + r - py; if (pen <= 0) continue;
@@ -2208,7 +2215,7 @@ class PhysicsCore {
   fStatic(f, h) {
     const S = f.statics; if (!S || !S.length) return;
     this.fCaps(f); const wc = f.wc;
-    for (let c = 0; c < f.nc; c++) { const k = c * 7; for (let s = 0; s < S.length; s += 7) {
+    for (const c of f.solid) { const k = c * 7; for (let s = 0; s < S.length; s += 7) {
       if (!this.segCap(wc[k], wc[k + 1], wc[k + 2], wc[k + 3], wc[k + 4], wc[k + 5], S, s, wc[k + 6])) continue;
       const H = this.hit, P = [H.px - H.nx * wc[k + 6], H.py - H.ny * wc[k + 6], H.pz - H.nz * wc[k + 6]];
       f.touch = true; const vn0 = this.vAt(f, f.cb[c], P, H.nx, H.ny, H.nz), ln = this.cpos(f, f.cb[c], P, null, -1, P, H.nx, H.ny, H.nz, H.pen, WOOD, h, vn0); f.cts.push(f.cb[c], P[0], P[1], P[2], H.nx, H.ny, H.nz, ln / h, CRR_WOOD * wc[k + 6], vn0); this.fric(f, f.cb[c], P, null, -1, P, H.nx, H.ny, H.nz, Math.min(H.pen, this.lastMove + DEP * h), MU_WOOD, h);
@@ -2249,7 +2256,7 @@ class PhysicsCore {
   }
   fSelfPairs(f) { // parts of one object that could meet: a 0.5 m grid of their boxes (not joined, not touching at rest)
     const W = f.wc, cell = new Map(), out = [], seen = new Set(), C = 0.5;
-    for (let c = 0; c < f.nc; c++) { const k = c * 7, r = W[k + 6];
+    for (const c of f.solid) { const k = c * 7, r = W[k + 6];
       const x0 = Math.floor((Math.min(W[k], W[k + 3]) - r) / C), x1 = Math.floor((Math.max(W[k], W[k + 3]) + r) / C), y0 = Math.floor((Math.min(W[k + 1], W[k + 4]) - r) / C), y1 = Math.floor((Math.max(W[k + 1], W[k + 4]) + r) / C), z0 = Math.floor((Math.min(W[k + 2], W[k + 5]) - r) / C), z1 = Math.floor((Math.max(W[k + 2], W[k + 5]) + r) / C);
       for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) { const key = (x * 73856093) ^ (y * 19349663) ^ (z * 83492791); let a = cell.get(key); if (!a) cell.set(key, (a = [])); for (const d of a) { const id = d * f.nc + c; if (seen.has(id)) continue; seen.add(id); if (f.cb[c] === f.cb[d] || f.noPair.has(id) || this.joined(f, f.cb[c], f.cb[d])) continue; out.push(d, c); } a.push(c); }
     }

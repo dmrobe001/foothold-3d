@@ -503,3 +503,25 @@ the body leaned back 0.28 rad.
 - A planted leg takes its share at the knee only; it does not step aside.
 - Shadows of a bending branch stay at its rest pose.
 - The movement planner does not yet choose between pushing, ducking and going round from stiffness.
+
+## Which parts of a moving object collide (simplified)
+
+The body meets every part of everything. A free object (a log that came alive, a piece broken off, loose wood) meets
+everything else only through its **colliding parts**. A part collides if its radius is at least 8 cm, or at least half
+the object's thickest part. Everything else counts as not there. "Everything else" here means the ground, fixed scenery,
+other objects, the object's own other parts, and branches on standing plants.
+
+So a moving fallen tree meets things with its trunk and its very large limbs. A branch that breaks off meets them with
+its thick section as it falls, and the smaller branches on it pass through. Mass and stiffness still count every part,
+so the pieces swing and turn as before. Only their contacts are dropped.
+
+Measured in the forest: four of the thickest low limbs broken off nearby trees and left 6 s to settle (`physics.useMain`):
+
+| | before | now |
+|---|---|---|
+| parts in total (18 free objects) | 356 | 356 |
+| parts that collide | 356 | 60 |
+| deepest a small branch ends up in the ground | 5 cm | 144 cm |
+
+The small branches end up in the ground because nothing stops them. Step time didn't change measurably (7.8–9.7 ms
+across runs either way).
