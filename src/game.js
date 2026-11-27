@@ -1359,6 +1359,8 @@ function setFoliage(on) {
   for (const m of [mats.leaf, mats.needle, mats.leafStill, mats.needleStill, mats.shrub, mats.fern, mats.grass, mats.litter, treeMats.leaf, treeMats.needle, treeMats.farLeaf, treeMats.farNeedle, impMats?.leaf, ...ownerLeafMats]) if (m) m.visible = foliageOn;
   treeMats.farBark.visible = !foliageOn;
   renderer.shadowMap.needsUpdate = true;
+  if (!foliageOn) for (const o of [...modal.owners]) if (o.md?.kind === 'plant') modalOff(o); // ground cover stops bending
+  if (near?.cells && running) refreshNear(player.x, player.z, true); // refill the near field with or without it
 }
 const BODY_N = 785; // your weight, newtons
 const bBreak = $('bBreak');
@@ -1877,8 +1879,9 @@ function plantProxy(it) { // the item's proxy in the world: segments [x0,y0,z0,x
   }
   return (it._px = { P, ws, M });
 }
+const FOLIAGE_ITEM = { grass: 1, sedge: 1, herb: 1, fern: 1, litter: 1, shrub: 1, tall: 1, seedB: 1, seedC: 1 }; // near-field ground cover
 function plantItemsNear(x, z, R) {
-  const out = []; if (!near?.cells) return out;
+  const out = []; if (!near?.cells || !foliageOn) return out; // (foliage hidden: no ground cover to bend, push or hit)
   const ci = Math.floor((x + HALF) / NC), cj = Math.floor((z + HALF) / NC);
   for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) for (const it of near.cells.get((ci + di) * 4096 + cj + dj) || []) {
     if (!PROXY[it[0]] || !it._bi) continue; const d = Math.hypot(it[1] - x, it[2] - z); if (d < R + it[4]) out.push(it);
@@ -2941,6 +2944,7 @@ function refreshNear(px, pz, force = false) {
     for (const it of items) {
       const [type, x, z, yaw, a, b, c, v] = it;
       const dd = Math.hypot(x - px, z - pz); if (dd > RAD[type]) continue;
+      if (!foliageOn && FOLIAGE_ITEM[type]) { it._bi = null; continue; } // foliage hidden: ground cover is not processed at all
       const gy = ground(x, z), nb = /^rock/.test(type) ? rockBatch(type, v) : near.b[type];
       if (PROXY[type]) { // plants with a stem skeleton: remember where each is drawn, so a simulated one can be hidden
         const m = itemMatrix(it); it._bi = [];
@@ -5516,7 +5520,7 @@ start();
 
 // Small debugging handle for automated screenshots and console poking.
 window.foothold = {
-  get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, step(dt) { movePlayer(dt); physStep(dt); refreshNear(player.x, player.z); },
+  get world() { return W; }, get supportRef() { return supportRef; }, mats, player, settings, ground: (x, z) => ground(x, z), resetRig, input, RIG, body, applyCam: () => applyCamera(), nearCells: () => near.cells, nearBatches: () => near.b, step(dt) { movePlayer(dt); physStep(dt); refreshNear(player.x, player.z); },
   physics: { switches: PHYS, setPlantCollide, setBodyCollide, setFoliage, MD, modal: () => modal, clipScan, contacts: () => body.contacts, falls: () => falls, state: () => phys, useMain() { physReset('main'); }, audit(on = true) { if (!phys.core) physReset('main'); phys.core.audit = on; return phys.core; }, /* energy per stage on every free object (main thread): core.free.get(id).au */ useWorker() { physReset('worker'); }, capsules: () => bodyCapsules() },
   branches: { crunchSegs, crunchStack, branchLoad, get crunchList() { return crunchList; }, logBuf: () => logBuf, logLeafBuf: () => logLeafBuf, logBranches, plantVariant, target: () => breakTargetAt, pick() { const r = running; running = true; breakTarget(); running = r; return breakTargetAt; }, push: pushState, pushStart, pushStop, pushUpdate, breakBranch, treeSegs, plantCells: () => plantCells, brokenTrees: () => brokenTrees, limbSolids, logBranchCells: () => branchLogCells },
   plants: { lib: plantLib, roots: () => rootMeshObj, rootQueue: () => rootQueue, rootCells: () => rootCells, PL },

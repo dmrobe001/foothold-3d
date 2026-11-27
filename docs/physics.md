@@ -610,3 +610,13 @@ rocks and sticks from the footing. Fallen sticks now also count as plant matter,
 switch. Measured on the 40 s walk with plant collisions already off: movement plus physics per step falls from 0.5 ms
 to 0.1 ms median, with the worst steps similar (8–13 ms, apart from one 38 ms spike in a first run). The benchmark has a
 "body collisions off" row.
+
+With foliage hidden, ground cover is not processed at all:
+- grass, sedge, herbs, ferns, litter, low and tall shrubs and seedlings stay out of the near-field instance buffers;
+- they can't be found as bending plants, push targets or collision, even with collisions on;
+- bending ones switch off when foliage is hidden.
+
+Rocks and fallen sticks are unaffected. Measured on a 30 s walk with plant collisions on:
+- Foliage shown: about 21 ground-cover plants bending at any moment.
+- Foliage hidden: none, with every ground-cover buffer empty.
+- The median step time was the same either way (2.1 ms).
