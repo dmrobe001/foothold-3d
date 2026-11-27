@@ -511,6 +511,43 @@ Not built yet:
 - Far card crowns use three shapes for every species.
 - Winter (leaf-off) is not a season option.
 
+## 8g. Distant trees: impostors baked from the grown trees (built)
+
+Beyond the ring of grown trees (32 m by default), every live tree is drawn as three crossed **impostor cards**, cut from a
+texture atlas. This replaces the generic trunk and the three card-crown archetypes for live trees. Snags, stumps and
+logs are unchanged.
+
+- **What is baked** [choice]. The game renders a key's grown variant, unlit (its albedo), when a world is built:
+  - the keys are each species at three size classes (4, 20 and 35 cm dbh at bake), plus the one-sided crown for the
+    largest class;
+  - each key gets three views: along z, along x, and from above;
+  - the variants are the near ring's own, so the bake carries the season's colours, blossom and fruit, and the bark
+    patterns.
+
+  Atlas cells are 128 × 256 px (64 × 128 on phone graphics), five keys to a row. The atlas grows in height to fit:
+  46 keys in the default world give 2048 × 4096.
+- **How it is drawn.** Each tree has two upright cards at right angles and one level card at 0.62 of its height:
+  - Instance data: one per-instance vec4 holds the key's atlas origin and its two half-widths. The instance transform
+    scales like the near variant (width from the crown radius, height from the tree's height).
+  - Stem form: the stem's lean and sweep (the shared bend shader) apply as for near trees.
+  - Shading: normals splay out from the stem, so the cards light as a volume.
+  - Fading: a card fades as it turns edge-on to the eye. The level card shows only when looked down on.
+  - Cut-outs: alpha is sharpened by its screen-space gradient, so cut-outs stay crisp as the atlas mips down.
+  - Shadows: they come from a depth material with the same cut-outs.
+- **Cost.** Per tile, one instanced draw (12 vertices a tree) replaces the trunk and crown meshes and their reduced
+  twins. Measured in software rendering, default world:
+  - frame time at the start view: about 20 ms, against 26 ms before;
+  - load time: about 10 s, against 7 s;
+  - the bake itself: 2.6 s, rendering 138 views. Growing the variants takes 4 ms, because the near ring has already
+    grown them. On a hardware GPU the bake should be much cheaper, but that is not measured here.
+
+What is not done:
+- A tree changing from impostor to grown tree at 32 m still pops.
+- One-sided crowns of the smaller classes use the symmetric impostor.
+- The level card is one picture from straight above.
+- Settings menu: changing graphics quality reloads the page, as before. Changing the season requires regenerating the
+  world, which re-bakes the atlas.
+
 ## 9. How we check it (the plant gym)
 
 Each item is a plant-gym station: a fixed configuration with an expected outcome.

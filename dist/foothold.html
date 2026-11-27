@@ -3919,8 +3919,8 @@ class Batch {
   // Instances carry an importance value; they are sorted so the reduced (distant) mesh can draw only the important prefix.
   // Optional per-instance stem form (aBend, aWob) lives on a per-tile clone of the geometry.
   constructor() { this.items = []; }
-  add(mat, r, g, b, imp = 1, bend = null, wob = null, ref = null) { this.items.push([mat.elements.slice(), lin(r), lin(g), lin(b), imp, bend, wob, ref]); }
-  build(geo, mat, { cast = true, receive = true, farMin = 0, form = false } = {}) {
+  add(mat, r, g, b, imp = 1, bend = null, wob = null, ref = null, extra = null) { this.items.push([mat.elements.slice(), lin(r), lin(g), lin(b), imp, bend, wob, ref, extra]); }
+  build(geo, mat, { cast = true, receive = true, farMin = 0, form = false, extra = null } = {}) { // extra: [attribute name, item -> vec4]
     const n = this.items.length; if (!n) return null;
     this.items.sort((a, b) => b[4] - a[4]);
     const g = form ? geo.clone() : geo;
@@ -3938,6 +3938,7 @@ class Batch {
       g.setAttribute('aBend', mesh.userData.form[0]); g.setAttribute('aWob', mesh.userData.form[1]);
       mesh.customDepthMaterial = bendDepthMat;
     }
+    if (extra) { const X = new Float32Array(n * 4); this.items.forEach((it, i) => X.set(extra[1](it[8]), i * 4)); g.setAttribute(extra[0], new THREE.InstancedBufferAttribute(X, 4)); }
     mesh.castShadow = cast; mesh.receiveShadow = receive;
     mesh.computeBoundingSphere();
     mesh.boundingSphere.radius += 2;
@@ -4016,6 +4017,100 @@ function crownFrac(sp, d, light = 1) {
   const f = crownFraction(sp), young = clamp((25 - d) / 20, 0, 1);
   return f + (0.93 - f) * young * SPECIES[sp].keepLow * clamp(light, 0, 1);
 }
+// ---- distant trees: impostors baked from the grown trees
+// Beyond the ring of grown trees, each tree is three crossed cards (two upright, at right angles, and one level card in
+// the upper crown) cut from a texture atlas. The atlas is rendered when a world is built, from the same grown variants
+// the near ring draws, so a distant olive is a picture of an olive, in this season's colours. Per species there are three
+// size classes (4, 20 and 35 cm dbh at bake) and, for the largest, the one-sided crown; each key takes three cells: its
+// view along z, its view along x, and its view from above. The bake is unlit albedo; the cards are lit as a volume
+// (normals splayed out from the stem), like the near foliage.
+const FAR_CLASS = (d) => (d < 7 ? 1 : d < 27 ? 3 : 4); // PCLASS index of a tree's far key
+const impU = { uCell: { value: new THREE.Vector2(1, 1) }, uSq: { value: 1 }, uPad: { value: new THREE.Vector2(0, 0) } };
+function impostorGeo() { // unit cards: upright A in the x-y plane, upright B in the z-y plane, level C at 0.62 of the height
+  const pos = [], nor = [], uv = [], col = [], view = [], idx = [];
+  const quad = (P, N, v) => { const b = pos.length / 3; P.forEach((p, k) => { pos.push(...p); nor.push(...norm3(N[k])); uv.push(...[[0, 0], [1, 0], [1, 1], [0, 1]][k]); const ao = 0.78 + 0.22 * Math.min(1, p[1]); col.push(ao, ao, ao); view.push(v); }); idx.push(b, b + 1, b + 2, b, b + 2, b + 3); };
+  quad([[-1, 0, 0], [1, 0, 0], [1, 1, 0], [-1, 1, 0]], [[-0.8, 0.45, 0], [0.8, 0.45, 0], [0.75, 0.8, 0], [-0.75, 0.8, 0]], 0);
+  quad([[0, 0, 1], [0, 0, -1], [0, 1, -1], [0, 1, 1]], [[0, 0.45, 0.8], [0, 0.45, -0.8], [0, 0.8, -0.75], [0, 0.8, 0.75]], 1);
+  quad([[-1, 0.62, 1], [1, 0.62, 1], [1, 0.62, -1], [-1, 0.62, -1]], [[-0.5, 1, 0.5], [0.5, 1, 0.5], [0.5, 1, -0.5], [-0.5, 1, -0.5]], 2);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.setAttribute('aView', new THREE.Float32BufferAttribute(view, 1)); g.setIndex(idx);
+  return g;
+}
+geos.imp = impostorGeo();
+function impPatch(sh) { // aImp = (atlas origin of the key's first cell u, v; half-width of view A, of view B), in plant-height units
+  Object.assign(sh.uniforms, impU);
+  sh.vertexShader = 'attribute vec4 aImp; attribute float aView; uniform vec2 uCell; uniform float uSq; uniform vec2 uPad; varying float vImpFade;\n' + sh.vertexShader
+    .replace('#include <begin_vertex>', `#include <begin_vertex>
+    { float wT = max(aImp.z, aImp.w); transformed.x *= aView > 1.5 ? wT : aImp.z; transformed.z *= aView > 1.5 ? wT : aImp.w; }`)
+    .replace('#include <uv_vertex>', `#include <uv_vertex>
+    #ifdef USE_MAP
+    { vec2 o = aImp.xy + vec2(aView * uCell.x, 0.0), sz = aView > 1.5 ? vec2(uCell.x, uSq) : uCell; vMapUv = o + uPad + uv * (sz - 2.0 * uPad); }
+    #endif`)
+    .replace('#include <project_vertex>', `#include <project_vertex>
+    { // fade a card as it turns edge-on to the eye; the level card shows only when looked down on
+      vec3 pn = aView > 1.5 ? vec3(0.0, 1.0, 0.0) : aView > 0.5 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);
+      #ifdef USE_INSTANCING
+      pn = mat3(instanceMatrix) * pn;
+      #endif
+      float c = abs(dot(normalize(mat3(modelViewMatrix) * pn), normalize(-mvPosition.xyz)));
+      vImpFade = aView > 1.5 ? smoothstep(0.5, 0.85, c) : smoothstep(0.12, 0.4, c);
+    }`);
+  sh.fragmentShader = 'varying float vImpFade;\n' + sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+    diffuseColor.a *= vImpFade;
+    diffuseColor.a = clamp((diffuseColor.a - 0.5) / max(fwidth(diffuseColor.a), 0.0001) + 0.5, 0.0, 1.0); // keep cut-outs crisp as the atlas mips down`);
+}
+let impMats = null, impAtlas = null;
+function impostorMaterials(tex) {
+  const m = foliageMaterial(tex, { alphaTest: 0.5, wind: 0.004 }), base = m.onBeforeCompile;
+  m.onBeforeCompile = (sh) => { base(sh); bendPatch(sh); impPatch(sh); hidePatch(sh, 'instanceMatrix[3].xz'); }; m.customProgramCacheKey = () => 'treeImp';
+  const d = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: tex, alphaTest: 0.5 });
+  d.onBeforeCompile = (sh) => { bendPatch(sh); impPatch(sh); hidePatch(sh, 'instanceMatrix[3].xz'); }; d.customProgramCacheKey = () => 'treeImpDepth';
+  return { leaf: m, depth: d };
+}
+// keys: Map 'sp:ci:shape' -> {sp, ci, shape}. Returns Map key -> [u0, v0, wA, wB, top] and builds impAtlas / impMats.
+function bakeImpostors(keys) {
+  const hi = settings.quality === 'high', AW = hi ? 2048 : 1024, cw = AW / 16, ch = cw * 2, pad = Math.max(2, cw / 32), perRow = 5;
+  const list = [...keys.values()], rows = Math.max(1, Math.ceil(list.length / perRow)), AH = Math.min(8192, 1 << Math.ceil(Math.log2(rows * ch)));
+  impAtlas?.dispose(); impMats?.leaf.dispose(); impMats?.depth.dispose();
+  const rt = new THREE.WebGLRenderTarget(AW, AH, { generateMipmaps: false, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter }); // mips once, after the last view
+  const scene = new THREE.Scene(), out = new Map(), avg = textureMeans().leaf;
+  const leafM = { leaf: new THREE.MeshBasicMaterial({ map: tex.leaf, alphaTest: 0.42, side: THREE.DoubleSide, vertexColors: true }), needle: new THREE.MeshBasicMaterial({ map: tex.needle, alphaTest: 0.38, side: THREE.DoubleSide, vertexColors: true }) };
+  const barkM = new THREE.MeshBasicMaterial({ map: tex.bark }); barkM.onBeforeCompile = barkStylePatch; barkM.customProgramCacheKey = () => 'impBakeBark';
+  const prevRT = renderer.getRenderTarget(), prevAuto = renderer.autoClear, prevCol = renderer.getClearColor(new THREE.Color()), prevA = renderer.getClearAlpha();
+  renderer.autoClear = false; renderer.setClearColor(new THREE.Color(avg[0], avg[1], avg[2]), 0); rt.scissorTest = false; renderer.setRenderTarget(rt); renderer.clear();
+  const cam = new THREE.OrthographicCamera(-1, 1, 1, 0, 0.1, 200);
+  const tg = performance.now(); for (const k of list) plantVariant(k.sp, k.ci, k.shape, 0); bakeImpostors.growMs = Math.round(performance.now() - tg); // (most are already grown for the near ring)
+  list.forEach((k, i) => {
+    const v = plantVariant(k.sp, k.ci, k.shape, 0), conifer = isConifer(k.sp);
+    const lm = leafM[conifer ? 'needle' : 'leaf'].clone(), lt = leafTint(k.sp), bt = TINT.bark[k.sp];
+    lm.color.setRGB(lin(lt[0]), lin(lt[1]), lin(lt[2])); const bm = barkM.clone(); bm.onBeforeCompile = barkStylePatch; bm.color.setRGB(lin(bt[0]) * 0.85, lin(bt[1]) * 0.85, lin(bt[2]) * 0.85);
+    const mb = new THREE.Mesh(v.barkGeo, bm), ml = new THREE.Mesh(v.leafGeo, lm); scene.add(mb, ml);
+    let wA = 0.05, wB = 0.05, top = 0.2; // extents (plant-height units) over both meshes
+    for (const g of [v.barkGeo, v.leafGeo]) { const P = g.attributes.position.array; for (let j = 0; j < P.length; j += 3) { wA = Math.max(wA, Math.abs(P[j])); top = Math.max(top, P[j + 1]); wB = Math.max(wB, Math.abs(P[j + 2])); } }
+    wA *= 1.04; wB *= 1.04; top *= 1.03;
+    const col = i % perRow, row = Math.floor(i / perRow), x0 = col * 3 * cw, y0 = row * ch;
+    const shots = [ // [viewport x, y, w, h], camera position, up, frustum [l, r, t, b]
+      [[x0, y0, cw, ch], [0, 0, 50], [0, 1, 0], [-wA, wA, top, 0]],
+      [[x0 + cw, y0, cw, ch], [50, 0, 0], [0, 1, 0], [-wB, wB, top, 0]],
+      [[x0 + 2 * cw, y0, cw, cw], [0, 50, 0], [0, 0, -1], [-Math.max(wA, wB), Math.max(wA, wB), Math.max(wA, wB), -Math.max(wA, wB)]],
+    ];
+    shots.forEach(([vp, p, up, f], si) => {
+      rt.texture.generateMipmaps = i === list.length - 1 && si === 2;
+      rt.viewport.set(vp[0] + pad, vp[1] + pad, vp[2] - 2 * pad, vp[3] - 2 * pad); rt.scissor.copy(rt.viewport); rt.scissorTest = true;
+      cam.left = f[0]; cam.right = f[1]; cam.top = f[2]; cam.bottom = f[3]; cam.position.set(...p); cam.up.set(...up); cam.lookAt(0, 0, 0); cam.updateProjectionMatrix();
+      renderer.setRenderTarget(rt); renderer.clearDepth(); renderer.render(scene, cam);
+    });
+    scene.remove(mb, ml); lm.dispose(); bm.dispose();
+    out.set(`${k.sp}:${k.ci}:${k.shape}`, [x0 / AW, y0 / AH, wA, wB, top]);
+  });
+  rt.scissorTest = false; renderer.setRenderTarget(prevRT); renderer.autoClear = prevAuto; renderer.setClearColor(prevCol, prevA);
+  leafM.leaf.dispose(); leafM.needle.dispose(); barkM.dispose();
+  impU.uCell.value.set(cw / AW, ch / AH); impU.uSq.value = cw / AH; impU.uPad.value.set(pad / AW, pad / AH);
+  impAtlas = rt; impMats = impostorMaterials(rt.texture);
+  return out;
+}
+
 // ---- seasons: leaf colour, and the flowers and fruit each species shows in its months (ARCH.show)
 const SEASON_MONTH = { spring: 5, summer: 7, autumn: 10 };
 const AUTUMN = { 2: [0.95, 0.28, 0.12], 3: [0.98, 0.82, 0.28], 5: [0.70, 0.40, 0.18], 6: [1.0, 0.76, 0.16], 7: [0.86, 0.82, 0.36], 9: [0.92, 0.34, 0.16], 10: [0.95, 0.30, 0.12], 11: [0.78, 0.58, 0.28], 16: [0.95, 0.74, 0.24] }; // deciduous species: maple red, birch yellow, oak russet, aspen gold, willow, cherry, rowan, plane, larch gold
@@ -5568,7 +5663,8 @@ function buildWorld() {
 
   // trees, snags, logs, root plates, outcrops — batched into 64 m tiles so whole tiles can be culled
   const TILE = 64, NT = WORLD / TILE;
-  const B = Array.from({ length: NT * NT }, () => ({ live: new Batch(), trunk: new Batch(), piece: new Batch(), butt: new Batch(), broad: new Batch(), cone: new Batch(), pine: new Batch(), plate: new Batch(), stumpLo: new Batch(), stumpHi: new Batch(), wad: { pos: [], nor: [], uv: [], col: [], idx: [] }, rk: [new Batch(), new Batch(), new Batch(), new Batch()] }));
+  const impKeys = new Map(), impItems = [];
+  const B = Array.from({ length: NT * NT }, () => ({ imp: new Batch(), live: new Batch(), trunk: new Batch(), piece: new Batch(), butt: new Batch(), broad: new Batch(), cone: new Batch(), pine: new Batch(), plate: new Batch(), stumpLo: new Batch(), stumpHi: new Batch(), wad: { pos: [], nor: [], uv: [], col: [], idx: [] }, rk: [new Batch(), new Batch(), new Batch(), new Batch()] }));
   const tileOf = (x, z) => clamp(Math.floor((z + HALF) / TILE), 0, NT - 1) * NT + clamp(Math.floor((x + HALF) / TILE), 0, NT - 1);
   colTrunks = new Map(); colLogs = []; logCells = new Map(); solids = new Map(); pieceCells = new Map(); saplingCells = new Map(); plantCells = new Map(); rootCells = new Map(); branchLogCells = new Map();
   for (const r of brokenTrees) { plantGroup.remove(r.custom.bark, r.custom.leaf); } brokenTrees = []; logPick = []; logQueue = []; physReset();
@@ -5617,16 +5713,17 @@ function buildWorld() {
       const light = t.L !== undefined ? clamp(t.L * 2, 0, 1) : 1, shadeK = 0.75 + 0.25 * light, h = t.h, cf = Math.min(0.95, crownFrac(t.sp, t.d, light) * shadeK * (t.d < 6 ? 1.15 : 1));
       const crownLen = Math.min(h * 0.95, h * cf), cr = crownRadius(t.sp, t.d) * (0.85 + 0.3 * r());
       const bt = TINT.bark[t.sp], H = kind === 'conifer' ? h * 0.97 : h * 0.86;
-      b.live.add(trs(t.x, gy - 0.15, t.z, yaw, rad, H, rad), bt[0] * vari, bt[1] * vari, bt[2] * vari, t.d, bendAttr, wobAttr);
       const lt = leafTint(t.sp), shadeDull = t.L !== undefined ? 0.82 + 0.18 * clamp(t.L * 3, 0, 1) : 1, cv = vari * shadeDull;
-      const cy = gy + h - crownLen;
       // the crown sits on the bent stem: offset by the stem displacement at crown base (and a bit toward the top)
       const ub = clamp((h - crownLen) / H, 0, 1), um = clamp((h - crownLen * 0.5) / H, 0, 1);
       const o1 = toW(...bendLocal(f, ub, H)), o2 = toW(...bendLocal(f, um, H));
       const dx = (o1[0] + o2[0]) / 2, dz = (o1[1] + o2[1]) / 2;
-      const base = [t.x, t.z, 0, 0]; // far crowns carry their tree's base, so the near ring can hide them
-      if (kind === 'conifer') b.cone.add(trs(t.x + dx, cy, t.z + dz, yaw, cr, crownLen * 1.04, cr), lt[0] * cv, lt[1] * cv, lt[2] * cv, t.d, base);
-      else (kind === 'pine' ? b.pine : b.broad).add(trs(t.x + dx, cy, t.z + dz, yaw, cr, crownLen, cr * (0.85 + 0.3 * r())), lt[0] * cv, lt[1] * cv, lt[2] * cv, t.d, base);
+      if (kind !== 'conifer') r(); // (kept: the old card crown drew a number here, and later draws follow it)
+      { // far: an impostor of this species' grown tree, scaled like the near variant
+        const fci = FAR_CLASS(t.d), fshape = oneSided && fci === 4 ? 3 : 1, fkey = `${t.sp}:${fci}:${fshape}`;
+        if (!impKeys.has(fkey)) impKeys.set(fkey, { sp: t.sp, ci: fci, shape: fshape });
+        impItems.push({ b, t, gy, yaw, cr, h, cv, bendAttr, wobAttr, fkey });
+      }
       { // the grown plant drawn near the player: a library variant by size class and crown shape, scaled to this tree
         const r2 = mulberry32(hash3(Math.round(t.x * 10), Math.round(t.z * 10), 91)), A = PL.ARCH[t.sp];
         const shape = r2() < A.fork ? 2 : oneSided ? 3 : shadeK < 0.9 ? 0 : 1;
@@ -5685,6 +5782,14 @@ function buildWorld() {
       }
     }
   }
+  { // bake the distant-tree atlas from the grown variants, then place every live tree's impostor in its tile
+    const t0 = performance.now(), cells = bakeImpostors(impKeys);
+    for (const it of impItems) {
+      const c = cells.get(it.fkey), [sp, ci, shape] = it.fkey.split(':').map(Number), v = plantVariant(sp, ci, shape, 0), sx = v.hRep * (it.cr / v.crRep);
+      it.b.imp.add(trs(it.t.x, it.gy - 0.15, it.t.z, it.yaw, sx, it.h * c[4], sx), it.cv, it.cv, it.cv, it.t.d, it.bendAttr, it.wobAttr, null, c);
+    }
+    W.impostors = { keys: impKeys.size, trees: impItems.length, ms: Math.round(performance.now() - t0), growMs: bakeImpostors.growMs, atlas: [impAtlas.width, impAtlas.height] };
+  }
   for (let ti = 0; ti < B.length; ti++) {
     const g = new THREE.Group(), b = B[ti];
     { const m = b.plate.build(geos.plate, mats.soil); if (m) g.add(m); }
@@ -5697,6 +5802,10 @@ function buildWorld() {
         const hi = batch.build(hiG, mats.bark, { farMin: 9, form: true });
         if (hi) { const lo = lodTwin(hi, loG, true); g.add(hi, lo); g.userData.hi.push(hi); g.userData.lo.push(lo); }
       }
+    }
+    { // distant live trees: impostor cards (one draw for the tile, at every distance)
+      const m = b.imp.build(geos.imp, impMats.leaf, { form: true, extra: ['aImp', (c) => [c[0], c[1], c[2], c[3]]] });
+      if (m) { m.customDepthMaterial = impMats.depth; g.add(m); }
     }
     // crowns get a full and a reduced geometry sharing one instance buffer; the loop picks one by distance
     {
