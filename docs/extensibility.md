@@ -2,7 +2,7 @@
 
 Short answer: the **process layers** (terrain → water → site → stand dynamics → form) are general, and most of
 what makes a region distinct can be added as *data plus a few new processes*. The **appearance layer** is where
-the prototype is narrow: four hard-wired species "kinds", two crown archetypes, three rock shapes. That is where
+the prototype is narrow: eighteen species in three regions (table rows since `plants.md` §8e–8f, though the far crowns still have only three card archetypes), three rock shapes. That is where
 the next real engineering goes.
 
 ## What the pipeline is made of today
@@ -40,6 +40,8 @@ Climate and geology change **processes**, not just colours:
   fungi in cool wet country. That is one rate parameter in the log decay model.
 
 ## Trees: forks, branch hierarchy, stubs
+
+Superseded by the fuller design in [`plants.md`](plants.md).
 
 The current stem is one bent tube with a cloud of foliage cards. To get forked trunks, real limbs and branch
 stubs, each tree needs a **skeleton**: a small graph of segments, grown by rules that depend on species traits and

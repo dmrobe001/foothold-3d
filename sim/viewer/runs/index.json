@@ -1,0 +1,132 @@
+[
+ {
+  "name": "walk",
+  "label": "Walk 2 m (unseeded)",
+  "task": "reach",
+  "station": null,
+  "seconds": 4.96,
+  "work": 1304.7,
+  "deepest_mm": 5.4,
+  "result": "pelvis x  1.85 y  0.03 z 0.91 head 1.64"
+ },
+ {
+  "name": "station17-seed0",
+  "label": "0.7 m wall, unseeded",
+  "task": "over",
+  "station": 17,
+  "seconds": 10.04,
+  "work": 1478.9,
+  "deepest_mm": 4.6,
+  "result": "pelvis x  0.91 y -0.06 z 0.96 head 1.61"
+ },
+ {
+  "name": "station19-seed0",
+  "label": "1.1 m wall, unseeded",
+  "task": "over",
+  "station": 19,
+  "seconds": 10.04,
+  "work": 1735.2,
+  "deepest_mm": 6.8,
+  "result": "pelvis x  0.71 y -0.06 z 0.97 head 1.73"
+ },
+ {
+  "name": "vault-19-track1-seed0",
+  "label": "1.1 m wall, seeded by the game vault",
+  "task": "track",
+  "station": 19,
+  "seconds": 4.44,
+  "work": 3928.5,
+  "deepest_mm": 49.5,
+  "result": "pelvis x  0.23 y -0.16 z 0.79 head 1.55"
+ },
+ {
+  "name": "edge-stand-hands_on_top",
+  "label": "Move: stand \u2192 hands on top",
+  "task": "stand \u2192 hands on top",
+  "station": 17,
+  "seconds": 2.22,
+  "work": 39.6,
+  "deepest_mm": null,
+  "result": "reached"
+ },
+ {
+  "name": "edge-hands_on_top-stand",
+  "label": "Move: hands on top \u2192 stand (missed)",
+  "task": "hands on top \u2192 stand",
+  "station": 17,
+  "seconds": 2.22,
+  "work": 87.8,
+  "deepest_mm": null,
+  "result": "missed: pelvis [ 0.19 -0.    0.95] head 1.68"
+ },
+ {
+  "name": "edge-hands_on_top-astride",
+  "label": "Move: hands on top \u2192 astride (missed)",
+  "task": "hands on top \u2192 astride",
+  "station": 17,
+  "seconds": 3.02,
+  "work": 197.8,
+  "deepest_mm": null,
+  "result": "missed: pelvis [ 0.31 -0.07  0.91] head 1.58"
+ },
+ {
+  "name": "edge-hands_on_top-seated_legs_over",
+  "label": "Move: hands on top \u2192 seated, legs over (missed)",
+  "task": "hands on top \u2192 seated, legs over",
+  "station": 17,
+  "seconds": 3.02,
+  "work": 203.3,
+  "deepest_mm": null,
+  "result": "missed: pelvis [0.25 0.02 0.88] head 1.49"
+ },
+ {
+  "name": "edge-astride-seated_legs_over",
+  "label": "Move: astride \u2192 seated, legs over (missed)",
+  "task": "astride \u2192 seated, legs over",
+  "station": 17,
+  "seconds": 2.82,
+  "work": 92.9,
+  "deepest_mm": null,
+  "result": "missed: pelvis [0.6  0.01 0.86] head 1.54"
+ },
+ {
+  "name": "edge-seated_legs_over-astride",
+  "label": "Move: seated, legs over \u2192 astride (missed)",
+  "task": "seated, legs over \u2192 astride",
+  "station": 17,
+  "seconds": 2.82,
+  "work": 183.2,
+  "deepest_mm": null,
+  "result": "missed: pelvis [0.7  0.   0.85] head 1.54"
+ },
+ {
+  "name": "edge-stand-standing_back_to_the_wall",
+  "label": "Move: stand \u2192 standing, back to the wall (missed)",
+  "task": "stand \u2192 standing, back to the wall",
+  "station": 17,
+  "seconds": 2.82,
+  "work": 67.6,
+  "deepest_mm": null,
+  "result": "missed: pelvis [ 0.   -0.07  0.97] head 1.76"
+ },
+ {
+  "name": "edge-seated_legs_over-stand_beyond",
+  "label": "Move: seated, legs over \u2192 stand beyond (missed)",
+  "task": "seated, legs over \u2192 stand beyond",
+  "station": 17,
+  "seconds": 2.22,
+  "work": 283.7,
+  "deepest_mm": null,
+  "result": "missed: pelvis [ 0.9  -0.    0.97] head 1.63"
+ },
+ {
+  "name": "edge-astride-stand_beyond",
+  "label": "Move: astride \u2192 stand beyond (missed)",
+  "task": "astride \u2192 stand beyond",
+  "station": 17,
+  "seconds": 2.82,
+  "work": 260.6,
+  "deepest_mm": null,
+  "result": "missed: pelvis [0.65 0.05 0.93] head 1.67"
+ }
+]

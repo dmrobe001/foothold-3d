@@ -43,10 +43,17 @@ export function frameFrom(U, Fhint) {
 
 // Two-bone inverse kinematics: root a, target c, lengths l1 and l2, middle joint bent toward `pole`.
 // Returns the middle joint, the reached end point and the shortfall (0 when the target is within reach).
-export function twoBone(a, c, l1, l2, pole) {
-  const d = sub(c, a), D = len(d), L = Math.min(Math.max(D, Math.abs(l1 - l2) + 1e-3), l1 + l2 - 1e-3), dir = D > 1e-6 ? d.map((v) => v / D) : [0, -1, 0];
+// Near full extension the middle joint moves fastest for the least change in reach (it swings on sqrt(l1² - x²)); the
+// last SOFT_IK of reach is eased in exponentially ("soft IK"), so the joint straightens smoothly, never with a snap.
+const SOFT_IK = 0.04;
+export function twoBone(a, c, l1, l2, pole, fallback) {
+  const d = sub(c, a), D = len(d), Lmax = l1 + l2 - 1e-3, Ls = Lmax - SOFT_IK, Lr = D > Ls ? Ls + SOFT_IK * (1 - Math.exp(-(D - Ls) / SOFT_IK)) : D;
+  const L = Math.min(Math.max(Lr, Math.abs(l1 - l2) + 1e-3), Lmax), dir = D > 1e-6 ? d.map((v) => v / D) : [0, -1, 0];
   const x = (l1 * l1 - l2 * l2 + L * L) / (2 * L), y = Math.sqrt(Math.max(0, l1 * l1 - x * x));
-  let perp = sub(pole, dir.map((v) => v * dot(pole, dir))); if (len(perp) < 1e-6) perp = Math.abs(dir[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+  let perp = sub(pole, dir.map((v) => v * dot(pole, dir)));
+  if (fallback) { // a pole nearly along the limb leaves the bend's side undefined (it flips frame to frame): blend toward the fallback side
+    const pl = len(pole) || 1, k = Math.max(0, 1 - len(perp) / pl / 0.3); if (k > 0) { const fb = sub(fallback, dir.map((v) => v * dot(fallback, dir))), fl = len(fb) || 1; perp = add(perp.map((v) => v / pl), fb.map((v) => v / fl), k * 2); } }
+  if (len(perp) < 1e-6) perp = Math.abs(dir[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
   perp = nrm(sub(perp, dir.map((v) => v * dot(perp, dir))));
   const mid = add(add(a, dir, x), perp, y), end = add(a, dir, L);
   return { mid, end, short: Math.max(0, D - L) };
@@ -75,12 +82,12 @@ export function solvePose(pose) {
   ['L', 'R'].forEach((s, i) => {
     const side = i ? 1 : -1;
     // legs: hip -> knee -> ankle -> toe
-    const hip = add(J.pelvis, pf.R, side * B.hipW), leg = twoBone(hip, pose.feet[i], B.thigh, B.shin, pose.kneePole[i]);
+    const hip = add(J.pelvis, pf.R, side * B.hipW), leg = twoBone(hip, pose.feet[i], B.thigh, B.shin, pose.kneePole[i], pf.F); // (knees forward, failing a clear pole)
     J['hip' + s] = hip; J['knee' + s] = leg.mid; J['ankle' + s] = leg.end; short['foot' + s] = leg.short;
     J['toe' + s] = add(leg.end, nrm(pose.toes ? pose.toes[i] : pf.F), B.foot);
     // arms: collarbone -> shoulder -> elbow -> wrist
     const clav = add(J.chest, chest.U, -B.shoulderDrop), sh = add(clav, chest.R, side * B.clav);
-    const arm = twoBone(sh, pose.hands[i], B.upperArm, B.foreArm, pose.elbowPole[i]);
+    const arm = twoBone(sh, pose.hands[i], B.upperArm, B.foreArm, pose.elbowPole[i], add(chest.F.map((v) => -v), chest.R, side * 0.5)); // (elbows back and out)
     J['shoulder' + s] = sh; J['elbow' + s] = arm.mid; J['hand' + s] = arm.end; short['hand' + s] = arm.short;
     segs.push([hip, leg.mid, 0.06], [leg.mid, leg.end, 0.05], [leg.end, J['toe' + s], 0.035], [sh, arm.mid, 0.045], [arm.mid, arm.end, 0.04]);
   });

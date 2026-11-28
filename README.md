@@ -69,6 +69,39 @@ A stem, a sapling or a slim trunk is something a hand can close round; any other
 World panel: **Camera motion** (Full, Reduced, Off), **View** (first person, or third person for debugging; V toggles),
 **Body** (show the skeleton in first person). Tuning knobs are in `RIG`, `TRACTION` and `GAIT4` in `src/game.js`.
 
+## Physics (prototype)
+
+Branches near your body are simulated as elastic rods on a worker thread. They bend as you pass, push back, and snap
+when strained past the wood's limit; a branch too stiff to push stops you. See `docs/physics.md`.
+
+## Push
+
+Look at something within reach and hold **B** (or the **Push** button): your hands press on it, up to 300 N along your
+view, and the same force acts back on you. A branch bends (and may snap), a loose piece or a log moves, a standing trunk
+does not and you lean back. Free objects (broken pieces, loose wood, fallen logs near you) are rigid bodies joined where
+the wood bends: they fall, flop, roll, break and lever, and your weight on one presses it. See `docs/physics.md`.
+
+## Performance panel
+
+Tap the fps counter (or press P). It shows:
+- the median, 95th-percentile and worst frame interval;
+- CPU time per stage: body, near-field refresh, set-up and render submission, with frames that redraw the shadow map
+  kept apart from the others;
+- GPU time, where the browser exposes a timer (`EXT_disjoint_timer_query_webgl2`);
+- draw calls and triangles.
+
+Switches let you change, live:
+- how often shadows update;
+- the grown-tree radius;
+- whether roots and ground cover are shown;
+- the pixel ratio.
+
+**Run benchmark** (about a minute) settles for 1.5 s, then measures each of 11 configurations from the same start. By
+default it walks a wide arc for 4.5 s in each, which catches the stalls that come from refreshing the scene as you
+move. The report counts dropped frames and lists the slowest ones with their CPU time by stage. Copy it and paste it
+back. On a 60 Hz screen frame intervals come in 16.7 ms steps, so the CPU
+and GPU columns are the sharper measure.
+
 ## Testing gym
 
 World panel → **Place: Testing gym** (or open the page with `#gym` on the address) loads a level clearing with
@@ -97,6 +130,7 @@ The same seed and settings always give the same world.
 |---|---|
 | `src/worldgen.js` | Terrain, erosion, hydrology, stand simulation, statistics. Pure JS, no DOM, runs in Node. |
 | `src/gym.js` | Testing gym stations and the world record built from them. |
+| `src/plants.js` | Plants as graphs of segments: species architecture, growth, foliage units, edible organs, bark and foliage geometry. Design: `docs/plants.md`. |
 | `src/game.js` | Three.js rendering, procedural textures, controls, user interface (UI). |
 | `index.html` | Page shell and styles. |
 | `tools/sim-report.mjs` | Command-line stand inventory for a seed. |

@@ -1,0 +1,163 @@
+<title>Foothold Motion Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: one instrument panel. The playback stage on top, the transport under it, the run's numbers beside (stacked on a phone). */
+  :root {
+    --bg: #eef1f0; --panel: #ffffff; --ink: #1d2624; --muted: #5d6a67; --line: #d3dbd8;
+    --accent: #2f6f62; --accent-ink: #ffffff; --stage: #dfe6e3; --body: #c9b79a; --solid: #8c918d;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --bg: #151a19; --panel: #1d2423; --ink: #e3e9e7; --muted: #94a19d; --line: #2e3836;
+    --accent: #6fb8a6; --accent-ink: #0e1413; --stage: #222a29; --body: #d8c6a8; --solid: #6c7370; color-scheme: dark } }
+  :root[data-theme="dark"] {
+    --bg: #151a19; --panel: #1d2423; --ink: #e3e9e7; --muted: #94a19d; --line: #2e3836;
+    --accent: #6fb8a6; --accent-ink: #0e1413; --stage: #222a29; --body: #d8c6a8; --solid: #6c7370; color-scheme: dark }
+  body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.5;
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 16px 32px; }
+  .wrap { max-width: 1100px; margin: 0 auto; display: grid; gap: 16px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+  h1 { font-size: 1.35rem; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+  header p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+  .runs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .runs button { font: 500 0.85rem var(--sans); color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; cursor: pointer; }
+  .runs button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .main { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; }
+  @media (max-width: 760px) { .main { grid-template-columns: minmax(0, 1fr); } }
+  .stage { position: relative; background: var(--stage); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; aspect-ratio: 16 / 10; max-width: 100%; }
+  .stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  .clock { position: absolute; left: 12px; top: 10px; font: 500 0.85rem var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; pointer-events: none; }
+  .transport { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 10px; }
+  .transport button { font: 600 0.85rem var(--sans); background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 6px; padding: 7px 14px; cursor: pointer; min-width: 74px; }
+  .transport input[type=range] { flex: 1 1 200px; min-width: 0; accent-color: var(--accent); }
+  .transport label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.85rem; }
+  .transport select { font: 0.85rem var(--sans); color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  aside { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 12px; min-width: 0; }
+  aside h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0; font-weight: 600; }
+  dl { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; font-size: 0.88rem; }
+  dt { color: var(--muted); }
+  dd { margin: 0; font-family: var(--mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .note { font-size: 0.82rem; color: var(--muted); margin: 0; }
+  .empty { padding: 24px; color: var(--muted); }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Foothold Motion Lab</h1>
+    <p>Runs of the sampling planner on the game's body, recorded at 30 frames a second. Drag to orbit, pinch or scroll to zoom.</p>
+  </header>
+  <div class="runs" id="runs" role="group" aria-label="Recorded runs"></div>
+  <div class="main">
+    <div>
+      <div class="stage" id="stage"><span class="clock" id="clock">0.00 s</span></div>
+      <div class="transport">
+        <button id="play" type="button">Pause</button>
+        <input id="scrub" type="range" min="0" max="1" step="1" value="0" aria-label="Time">
+        <label for="speed">Speed <select id="speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option></select></label>
+        <label for="follow"><input id="follow" type="checkbox" checked> Follow</label>
+      </div>
+    </div>
+    <aside>
+      <h2>This run</h2>
+      <dl id="meta"><dt>Status</dt><dd>Loading runs…</dd></dl>
+      <p class="note">Work is the joint motors' summed |torque × speed| over the run, in joules: a stand-in for effort, not metabolic cost. Deepest contact is how far any two surfaces overlapped (MuJoCo contacts are slightly soft).</p>
+    </aside>
+  </div>
+</div>
+
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const $ = (id) => document.getElementById(id);
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const stage = $('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.shadowMap.enabled = true;
+stage.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(40, 1.6, 0.05, 200);
+const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x667066, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.8); sun.position.set(3, 6, 4); sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left: -4, right: 4, top: 4, bottom: -4 }); scene.add(sun, sun.target);
+const world = new THREE.Group(); world.rotation.x = -Math.PI / 2; scene.add(world); // the simulator's frame is z up
+
+let run = null, meshes = [], t = 0, playing = true, last = performance.now();
+const mats = {};
+function applyTheme() {
+  scene.background = new THREE.Color(css('--stage'));
+  mats.body ??= new THREE.MeshStandardMaterial({ roughness: 0.7 }); mats.body.color.set(css('--body'));
+  mats.solid ??= new THREE.MeshStandardMaterial({ roughness: 0.9 }); mats.solid.color.set(css('--solid'));
+  mats.floor ??= new THREE.MeshStandardMaterial({ roughness: 1 }); mats.floor.color.set(css('--bg'));
+}
+applyTheme(); matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+function build(geoms) {
+  meshes.forEach((m) => world.remove(m)); meshes = [];
+  for (const g of geoms) {
+    let geo;
+    if (g.type === 'capsule') { geo = new THREE.CapsuleGeometry(g.size[0], 2 * g.size[1], 4, 14); geo.rotateX(Math.PI / 2); }
+    else if (g.type === 'sphere') geo = new THREE.SphereGeometry(g.size[0], 18, 12);
+    else if (g.type === 'box') geo = new THREE.BoxGeometry(2 * g.size[0], 2 * g.size[1], 2 * g.size[2]);
+    else if (g.type === 'plane') { geo = new THREE.PlaneGeometry(60, 60); }
+    else { meshes.push(null); continue; }
+    const m = new THREE.Mesh(geo, g.type === 'plane' ? mats.floor : g.body ? mats.body : mats.solid);
+    m.castShadow = g.type !== 'plane'; m.receiveShadow = true; m.matrixAutoUpdate = false;
+    world.add(m); meshes.push(m);
+  }
+  const grid = new THREE.GridHelper(60, 60, css('--line'), css('--line')); grid.rotation.x = Math.PI / 2; grid.position.z = 0.001; world.add(grid); meshes.push(grid);
+}
+const M4 = new THREE.Matrix4(), P = new THREE.Vector3();
+function pose(k) {
+  const f = run.frames[k], n = run.geoms.length;
+  for (let i = 0; i < n; i++) {
+    const m = meshes[i]; if (!m) continue; const R = f.R, p = f.p, a = 9 * i, b = 3 * i;
+    m.matrix.set(R[a], R[a + 1], R[a + 2], p[b], R[a + 3], R[a + 4], R[a + 5], p[b + 1], R[a + 6], R[a + 7], R[a + 8], p[b + 2], 0, 0, 0, 1);
+  }
+  const pel = run.geoms.findIndex((g) => g.name === 'pelvis');
+  P.set(f.p[3 * pel], f.p[3 * pel + 2], -f.p[3 * pel + 1]); // (to the viewer's y-up frame)
+  if ($('follow').checked) { const d = P.clone().sub(controls.target); controls.target.add(d); camera.position.add(d); }
+  $('clock').textContent = `${f.t.toFixed(2)} s`; $('scrub').value = k;
+}
+function frameAt(time) { const fr = run.frames; let k = Math.min(fr.length - 1, Math.max(0, Math.round(time * 30))); while (k > 0 && fr[k].t > time) k--; return k; }
+
+const fmt = (v, u = '') => (v === null || v === undefined ? '—' : `${v}${u}`);
+async function load(entry) {
+  document.querySelectorAll('#runs button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.name === entry.name)));
+  const r = await fetch(`runs/${entry.name}.json`); run = await r.json();
+  build(run.geoms); $('scrub').max = run.frames.length - 1; t = 0;
+  const m = run.meta;
+  $('meta').innerHTML = [['Task', m.task], ['Station', m.station ?? 'open floor'], ['Simulated', fmt(m.seconds, ' s')], ['Planning took', fmt(m.wall, ' s')],
+    ['Work', fmt(m.work, ' J')], ['Deepest contact', fmt(m.deepest_mm, ' mm')], ['Ended', m.result]].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+  const f0 = run.frames[0], pel = run.geoms.findIndex((g) => g.name === 'pelvis'); const x = f0.p[3 * pel], y = f0.p[3 * pel + 1];
+  controls.target.set(x + 0.4, 0.9, -y); camera.position.set(x + 0.6, 1.5, -y + 4.2); controls.update();
+  pose(0);
+}
+async function init() {
+  let idx = [];
+  try { idx = await (await fetch('runs/index.json')).json(); } catch (e) { $('meta').innerHTML = '<dt>Status</dt><dd>No runs found next to this page (runs/index.json).</dd>'; return; }
+  $('runs').innerHTML = idx.map((e) => `<button type="button" data-name="${e.name}" aria-pressed="false">${e.label}</button>`).join('');
+  document.querySelectorAll('#runs button').forEach((b) => b.addEventListener('click', () => load(idx.find((e) => e.name === b.dataset.name))));
+  let pick = idx[idx.length - 1]; try { const saved = localStorage.getItem('lab-run'); pick = idx.find((e) => e.name === saved) || pick; } catch (e) {}
+  document.querySelectorAll('#runs button').forEach((b) => b.addEventListener('click', () => { try { localStorage.setItem('lab-run', b.dataset.name); } catch (e) {} }));
+  if (pick) load(pick);
+}
+$('play').addEventListener('click', () => { playing = !playing; $('play').textContent = playing ? 'Pause' : 'Play'; });
+$('scrub').addEventListener('input', (e) => { if (!run) return; playing = false; $('play').textContent = 'Play'; t = run.frames[+e.target.value].t; pose(+e.target.value); });
+if (matchMedia('(prefers-reduced-motion: reduce)').matches) { playing = false; $('play').textContent = 'Play'; }
+function resize() { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+new ResizeObserver(resize).observe(stage); resize();
+function tick(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (run && playing) { t += dt * +$('speed').value; const end = run.frames[run.frames.length - 1].t; if (t > end + 0.8) t = 0; pose(frameAt(Math.min(t, end))); }
+  controls.update(); renderer.render(scene, camera); requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick); init();
+</script>
