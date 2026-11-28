@@ -6170,7 +6170,7 @@ function gymRun(i, secs = 16) {
   if (e.clean) checks.push(['clean', worst >= -0.02 && cam >= 0.12]); // no body in a stem; the camera (near plane 0.1 m) keeps clear
   if (e.hands !== undefined) checks.push([e.hands ? 'on hands' : 'on feet', hands === e.hands]);
   if (e.lean) checks.push([`lean ${e.lean}`, e.lean === 'right' ? rollMax > 0.15 : rollMax < -0.15]);
-  if (e.mantle !== undefined) checks.push([e.mantle ? 'mantle' : 'no mantle', overs.includes('mantle') === e.mantle]);
+  if (e.mantle !== undefined) checks.push([e.mantle ? 'mantle' : 'no mantle', (overs.includes('mantle') || overs.includes('swing')) === e.mantle]); // (the swing is the mantle arrived at a pace)
   const used = [maxF < 1 ? 'stopped' : 'crossed', ...overs, hands ? 'on hands' : '', duckMax > 0.15 ? `ducked ${duckMax.toFixed(2)}` : '', Math.abs(rollMax) > 0.15 ? `leaned ${rollMax > 0 ? 'right' : 'left'}` : ''].filter(Boolean).join(', ');
   return { i: gymAt + 1, name: s.name, mode: s.mode, used, pass: checks.every((c) => c[1]), checks: checks.map(([n, ok]) => `${ok ? '✓' : '✗'} ${n}`).join(' '),
     reached: +maxF.toFixed(2), height: +maxH.toFixed(2), hands, roll: +rollMax.toFixed(2), clearance: +worst.toFixed(2), clearanceAt: worstAt, camera: +cam.toFixed(2), eyeJump: +eyeJump.toFixed(3), plan: s.plan };
@@ -6874,6 +6874,7 @@ function assess(x, z, px, pz) {
 // straight arms, one foot up, then the other); the window above sets the pose you end in. Higher is the wall climb.
 // Only solids count: a slope of the ground rising ahead is walked (or climbed on hands), not mantled.
 const CTRL_ACC = 8; // m/s²: the controller's own acceleration with plausible forces (friction, 0.8 g)
+const SWING_V = 0.5; // m/s: arriving faster than this (and pushing on), the mantle is the flowing swing
 const STEP_DOWN = 0.45; // m: a drop walked off as a step down; deeper is a fall
 const STEER_TURN = 3; // rad/s: how fast the way you walk may swing off the way you push (steering round things)
 const QUAD_TURN = 1.5; // rad/s: the fastest the body turns on hands (the head is well ahead of the hips: turning swings it)
@@ -6992,6 +6993,27 @@ function overScript(mode, B) {
     k(1, { pel: [aL, low ? cap(Ht + 0.42) : Ht + clamp(tall, 0.5, S), 0], U: low ? Uup : OV_UP, bend: [low ? 0.6 : clamp((S - tall) * 0.8, 0, 0.5), 0, 0], ft: [lead, trail], hd: low ? [[aL + 0.35, Ht + 0.04, -0.2], [aL + 0.35, Ht + 0.04, 0.2]] : hang([aL, Ht + S, 0]), kp: kF, ep: eB });
     return { ks, dur: 1.0 + 0.9 * clamp((H - 0.55) / 1.15, 0, 1), low, flow, pre };
   }
+  if (mode === 'swing') { // arriving at a pace: lean in and reach, the last step a bob with the hands landing on the edge, a spring with the hips swung out to
+    // one side, the legs up level with the top beside the hands, the outer foot down on it; then walk on (still pushing) or stand. Keys in seconds.
+    const { Ht, fL, fR, aL, C, a0, v } = B, dip = clamp(0.5 * (H - 0.9), 0.06, 0.38), press = Math.max(H + 0.1, S - 0.02), cap = (y) => Math.min(y, Ht + C - 0.3);
+    const K = []; let sec = 0; const kk = (d, o) => { sec += d; K.push({ sec, ...o }); };
+    const grip = [[0.06, H + 0.04, -0.2], [0.06, H + 0.04, 0.24]], out = [[0.4, 0.4, -0.8], [0.4, 0.4, -0.8]];
+    if (a0 < -0.62) kk((-0.55 - a0) / Math.max(0.8, v), { pel: [-0.55, S - 0.03, 0], U: [0.2, 1, 0], F: OV_N, bend: [0.3, 0, 0], ft: [[-0.45, A, -0.11], [a0 + 0.05, A + 0.12, 0.11]], hd: [[-0.18, H + 0.16, -0.22], [-0.18, H + 0.16, 0.22]], kp: kF, ep: eUp }); // leaning in, the hands coming up, the last step landing
+    kk(0.18, { pel: [-0.34, S - 0.04 - dip, 0], U: [0.3, 1, 0], F: OV_N, bend: [0.4, 0, 0], ft: [[-0.42, A, -0.11], [-0.3, A + 0.02, 0.12]], hd: grip, kp: kF, ep: eB }); // the bob: the knees give, the hands land on the edge
+    kk(0.2 + 0.12 * clamp(H - 0.6, 0, 1.1), { pel: [-0.12, cap(press), -0.08], U: [0.3, 1, 0.3], bend: [0.35, 0, 0], ft: [[-0.2, Math.max(A, press - 0.75), -0.3], [-0.16, Math.max(A, press - 0.7), -0.15]], kp: out }); // the spring: up over the hands, the hips swinging out to the side
+    kk(0.2, { pel: [aL - 0.12, cap(Ht + 0.38), -0.22], U: [0.2, 1, 0.55], bend: [0.25, 0, 0], ft: [[aL - 0.02, Ht + 0.18, -0.5], [aL + 0.1, Ht + 0.16, -0.36]], kp: out }); // the legs up level with the top, out to that side
+    const lead = [aL + 0.02, fL + A, -0.17];
+    kk(0.16, { pel: [aL - 0.02, cap(Ht + S - 0.3), -0.08], U: [0.2, 1, 0.2], bend: [0.2, 0, 0], ft: [lead, [aL + 0.06, Ht + 0.22, -0.25]], hd: [[0.1, H + 0.18, -0.2], [0.1, H + 0.18, 0.24]], kp: kF, ep: eB }); // the outer foot down on the top, to one side
+    const pre = K.length, at0 = sec, tail = (T) => { sec = at0; const L = K.slice(); for (const [d, o] of T) { sec += d; L.push({ sec, ...o }); } const tot = sec; return { ks: L.map((x) => { const { sec: q, ...r } = x; return { t: q / tot, ...r }; }), dur: tot }; };
+    const tall = C - 0.85;
+    const stand = tail([[0.2, { pel: [aL, Ht + S - 0.2, 0], U: OV_UP, F: OV_N, bend: [0.1, 0, 0], ft: [lead, [aL + 0.02, fR + A, 0.12]], kp: kF }],
+      [0.25, { pel: [aL, Ht + clamp(tall, 0.5, S), 0], bend: [clamp((S - tall) * 0.8, 0, 0.5), 0, 0], hd: hang([aL, Ht + S, 0]), ep: eB }]]);
+    let walk = null;
+    if (B.fwd !== null && B.fwd !== undefined) { const Fw = B.fwd, aF = aL + 0.42; walk = tail([
+      [0.18, { pel: [aL + 0.15, Math.max(Ht, Fw) + S - 0.12, -0.02], U: [0.15, 1, 0], F: OV_N, bend: [0.12, 0, 0], ft: [lead, [aF, Fw + A, 0.1]], hd: hang([aL + 0.15, Math.max(Ht, Fw) + S, 0]), kp: kF }], // the trailing foot slips over and plants ahead
+      [0.2, { pel: [aL + 0.36, Fw + S - 0.04, 0], U: OV_UP, bend: [0.05, 0, 0], ft: [[aL + 0.2, Math.max(Fw, fL) + A + 0.1, -0.11], [aF, Fw + A, 0.1]], hd: hang([aL + 0.36, Fw + S, 0]) }]]); } // mid-stride, walking on
+    return { ks: stand.ks, dur: stand.dur, flow: walk && walk.ks, flowDur: walk && walk.dur, pre, low: false };
+  }
   return null;
 }
 // the script in world terms, mirrored to one side, starting from the pose you are in
@@ -7025,10 +7047,11 @@ function overPose(keys, t) {
   const tang = (pv, v, nv, tp, tc, tn) => { // the speed at a key: zero at the ends, where it turns, or beside a hold; else the harmonic mean of the slopes either side
     if (pv === undefined || nv === undefined) return 0; const d0 = slope(pv, v, tp, tc), d1 = slope(v, nv, tc, tn);
     return d0 * d1 <= 0 ? 0 : 2 / (1 / d0 + 1 / d1); };
-  const num = (get) => { const a = get(k0.P), b = get(k1.P), m0 = tang(kp && get(kp.P), a, b, kp?.t, k0.t, k1.t), m1 = tang(a, b, kn && get(kn.P), k0.t, k1.t, kn?.t); return h00 * a + h10 * h * m0 + h01 * b + h11 * h * m1; };
+  const num = (get, m0s) => { const a = get(k0.P), b = get(k1.P), m0 = m0s ?? tang(kp && get(kp.P), a, b, kp?.t, k0.t, k1.t), m1 = tang(a, b, kn && get(kn.P), k0.t, k1.t, kn?.t); return h00 * a + h10 * h * m0 + h01 * b + h11 * h * m1; };
   const vec = (get) => [0, 1, 2].map((c) => num((P) => get(P)[c]));
+  const v0 = i === 1 && keys[0].vel && keys.dur ? keys[0].vel.map((x) => x * keys.dur) : null; // (a script entered at a pace starts with that speed, not from rest)
   return {
-    pelvis: vec((P) => P.pelvis), frame: SK.frameFrom(V.nrm(vec((P) => P.frame.U)), vec((P) => P.frame.F)),
+    pelvis: v0 ? [0, 1, 2].map((c) => num((P) => P.pelvis[c], v0[c])) : vec((P) => P.pelvis), frame: SK.frameFrom(V.nrm(vec((P) => P.frame.U)), vec((P) => P.frame.F)),
     bend: vec((P) => P.bend), neckPitch: num((P) => P.neckPitch || 0),
     feet: [0, 1].map((k) => vec((P) => P.feet[k])), toes: [0, 1].map((k) => V.nrm(vec((P) => P.toes[k]))), hands: [0, 1].map((k) => vec((P) => P.hands[k])),
     kneePole: [0, 1].map((k) => vec((P) => P.kneePole[k])), elbowPole: [0, 1].map((k) => vec((P) => P.elbowPole[k])),
@@ -7062,27 +7085,41 @@ function capsPen(C, x, z) { // the deepest any capsule is inside a solid: gym bo
 }
 // the mantle, from the pose you are in, onto the ledge measured ahead (the lead foot alternates from one to the next)
 function mantlePlan(M, P0) {
-  const sc = overScript('mantle', M), side = body.mantleSide = -(body.mantleSide || 1), keys = overWorld(M, sc, side, P0), dur = bioTime(keys, sc.dur), o = { mode: 'mantle', side, keys, dur, B: M, low: sc.low };
-  if (sc.flow) { const fk = overWorld(M, { ...sc, ks: sc.flow }, side, P0); o.flowKeys = fk; o.flowDur = bioTime(fk, sc.dur); o.branch = keys[sc.pre].t * dur; } // (seconds into the script when the ending is chosen: the lead foot on the top)
+  const vc = body.vcmd || [0, 0], v = Math.max(0, vc[0] * M.n[0] + vc[1] * M.n[1]), swing = v > SWING_V && !body.slow && M.C >= 1.3 && pushingOn(M.n); // arriving at a pace: the flowing version
+  const B = { ...M, a0: -M.dist, v }, sc = overScript(swing ? 'swing' : 'mantle', B), side = body.mantleSide = -(body.mantleSide || 1), keys = overWorld(B, sc, side, P0), dur = bioTime(keys, sc.dur), o = { mode: swing ? 'swing' : 'mantle', side, keys, dur, B, low: sc.low };
+  keys.dur = dur; if (swing) keys[0].vel = [vc[0], 0, vc[1]]; // (the approach carries on into the script: its pace is the pelvis's speed at the start)
+  if (sc.flow) { const fk = overWorld(B, { ...sc, ks: sc.flow }, side, P0); o.flowKeys = fk; o.flowDur = bioTime(fk, sc.flowDur || sc.dur); fk.dur = o.flowDur; if (swing) fk[0].vel = keys[0].vel; o.branch = keys[sc.pre].t * dur; } // (seconds into the script when the ending is chosen: the lead foot on the top)
   return o;
 }
 // still pushing toward the ledge (the stick or keys forward, along its normal)?
 function pushingOn(n) { let f = input.f, s = input.s; if (input.keys.has('KeyW') || input.keys.has('ArrowUp')) f += 1; if (input.keys.has('KeyS') || input.keys.has('ArrowDown')) f -= 1; if (input.keys.has('KeyD')) s += 1; if (input.keys.has('KeyA')) s -= 1;
   const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw), dx = -sy * f + cy * s, dz = -cy * f - sy * s, l = Math.hypot(dx, dz); return l > 0.3 && (dx * n[0] + dz * n[1]) / l > 0.5; }
-// With plausible forces, a script is timed so no part is asked for more than its clamp: between two keys the pose eases
-// (smoothstep), whose peak acceleration is 6·distance/time²; each stretch is lengthened until the pelvis, feet and hands
-// all fit (sqrt(6·d/a)). The keys' times are rewritten in place; the new duration is returned.
+// With plausible forces, a script is timed so no part is asked for more than its clamp. The pose moves through the keys on
+// the monotone cubic of overPose; on each stretch its acceleration is largest at one end, (±6Δ ∓ 4m₀T ∓ 2m₁T)/T² (m: the
+// speeds at the keys). The pelvis, feet and hands are checked; a stretch that asks too much is lengthened (acceleration
+// goes as 1/T²) and the speeds worked out again, until all fit. Stretches are never shortened below the script's own
+// timing. The keys' times are rewritten in place; the new duration is returned.
 function bioTime(keys, dur) {
   if (settings.forces === 'free') return dur;
-  const seg = [], P = BIO.pelvis;
-  for (let i = 1; i < keys.length; i++) {
-    const A = keys[i - 1].P, Bk = keys[i].P, dp = V.sub(Bk.pelvis, A.pelvis), need = [(keys[i].t - keys[i - 1].t) * dur];
-    need.push(Math.sqrt(6 * Math.hypot(dp[0], dp[2]) / P.aH), Math.sqrt(6 * Math.abs(dp[1]) / (dp[1] > 0 ? P.aUp : P.aDown)));
-    for (let k = 0; k < 2; k++) need.push(Math.sqrt(6 * V.len(V.sub(Bk.feet[k], A.feet[k])) / BIO.feet.a), Math.sqrt(6 * V.len(V.sub(Bk.hands[k], A.hands[k])) / BIO.hands.a));
-    seg.push(Math.max(...need));
+  const n = keys.length, T = []; for (let i = 1; i < n; i++) T.push(Math.max(0.02, (keys[i].t - keys[i - 1].t) * dur));
+  const chans = [[(P) => P.pelvis, BIO.pelvis, keys[0].vel], [(P) => P.feet[0], BIO.feet], [(P) => P.feet[1], BIO.feet], [(P) => P.hands[0], BIO.hands], [(P) => P.hands[1], BIO.hands]];
+  for (let it = 0; it < 12; it++) {
+    const worst = T.map(() => 0);
+    for (const [get, c, v0] of chans) {
+      const X = keys.map((k) => get(k.P)), m = X.map(() => [0, 0, 0]);
+      for (let i = 1; i < n - 1; i++) for (let q = 0; q < 3; q++) { const d0 = (X[i][q] - X[i - 1][q]) / T[i - 1], d1 = (X[i + 1][q] - X[i][q]) / T[i]; m[i][q] = d0 * d1 <= 0 ? 0 : 2 / (1 / d0 + 1 / d1); }
+      if (v0) m[0] = [...v0];
+      const r = (a) => c.aH !== undefined ? Math.max(Math.hypot(a[0], a[2]) / c.aH, a[1] > 0 ? a[1] / c.aUp : -a[1] / c.aDown) : Math.hypot(...a) / c.a;
+      for (let j = 0; j < n - 1; j++) {
+        const h = T[j], A = [0, 1, 2].map((q) => (6 * (X[j + 1][q] - X[j][q]) - 4 * m[j][q] * h - 2 * m[j + 1][q] * h) / (h * h)), Bv = [0, 1, 2].map((q) => (-6 * (X[j + 1][q] - X[j][q]) + 2 * m[j][q] * h + 4 * m[j + 1][q] * h) / (h * h));
+        worst[j] = Math.max(worst[j], r(A), r(Bv));
+      }
+    }
+    let ok = true; for (let j = 0; j < T.length; j++) if (worst[j] > 1.02) { T[j] *= Math.min(1.6, Math.sqrt(worst[j])); ok = false; }
+    if (ok) break;
   }
-  const total = seg.reduce((a, b) => a + b, 0); let t = 0;
-  for (let i = 1; i < keys.length; i++) { t += seg[i - 1]; keys[i].t = t / total; }
+  const total = T.reduce((a, b) => a + b, 0); let acc = 0;
+  for (let i = 1; i < n; i++) { acc += T[i - 1]; keys[i].t = acc / total; }
   return total;
 }
 // ---- your weight during a way over. Each hand and foot the script puts on something carries a share of your weight
@@ -7215,7 +7252,7 @@ function movePlayer(dt) {
       const ou = overOrUnder(px, pz, dx / step, dz / step, dt), M = ou?.choice === 'over' ? ou.M : null;
 
       if (ou?.choice === 'over') overPlan = { over: 'mantle' };
-      if (M) { body.barrier = M; if (M.dist <= 0.75) { const o = mantlePlan(M, bodyPose()); startOver(o); vault = o; needT = 0; } }
+      if (M) { body.barrier = M; const vc = body.vcmd || [0, 0], vn = Math.max(0, vc[0] * M.n[0] + vc[1] * M.n[1]); if (M.dist <= (vn > SWING_V ? Math.min(1.45, 0.75 + 0.45 * vn / 1.6) : 0.75)) { /* (at a pace it starts further out: the reach and the bob are on the way in) */ const o = mantlePlan(M, bodyPose()); startOver(o); vault = o; needT = 0; } }
     }
     if (step > 0 && !vault) {
       const raw = Math.atan2(dz, dx); // the way you push, before any steering

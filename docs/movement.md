@@ -583,3 +583,46 @@ letting go once the mantle starts). "Stalled frames" means the pelvis below 0.05
 - The second after a walk-on covers 1.59 m on the walls, against 1.45 m before (when the body stood, then set off).
   At the crown it covers 0.41 m: the branches beyond close the way.
 - Gym 34/34.
+
+## Step 14: the swing (a mantle arrived at a pace)
+
+From play: pushing forward, the legs and torso should swing up to the side. The hands should grab the surface before
+you stop, with a bob on the way in and a hop up, not "walk, stop, push up, step over". Leaning in on the approach, you
+should almost never stop moving forward, like a parkour move, even onto a high ledge.
+
+**When it applies:** arriving faster than 0.5 m/s (`SWING_V`), pushing on toward the ledge, not walking slowly, and
+with at least 1.3 m of room over the top. Otherwise the mantle is as before.
+- It starts further out the faster you come: at 0.75 m plus 0.45 m per 1.6 m/s, up to 1.45 m.
+- The approach carries on into it: the pelvis enters the script at your speed (`keys[0].vel`, the curve's starting
+  slope), not from rest.
+
+**The script** (`overScript('swing')`; keys in seconds, then timed to the limits):
+1. lean in, hands coming up, the last step landing (if you start further than 0.62 m out);
+2. **the bob**: the knees give and the hands land on the edge, 0.06–0.38 m deep, scaled by height (0.5 × (H − 0.9));
+3. **the spring**: up over the hands, the hips swinging out to one side (sides alternate);
+4. the legs up level with the top, out to that side;
+5. the outer foot down on the top, to one side. Then the ending, chosen here as in step 13: still pushing, the
+   trailing foot slips over and plants ahead and you walk on; otherwise both feet up and stand.
+
+**Timing to the limits, revised** (`bioTime`). The step 11 rule assumed every stretch starts and ends at rest (peak
+6·d/t²). With motion carrying through keys (step 13) that is far too cautious. Now each stretch's acceleration is taken
+from the cubic itself: at its ends, (±6Δ ∓ 4m₀T ∓ 2m₁T)/T², with m the speeds at the keys and the starting speed.
+Stretches asking too much are lengthened and the speeds worked out again, until the pelvis, feet and hands all fit.
+
+**Measured** (seconds from the start of the move, which now includes the approach from up to 1.2 m out; holding forward
+/ letting go once it starts):
+
+| | step 13 | now |
+|---|---|---|
+| 0.7 m wall | 2.97 / 2.53 | 2.65 / 2.18 |
+| 1.1 m wall | 3.38 / 2.77 | 3.00 / 2.32 |
+| 1.4 m wall | 3.12 / 3.12 | 2.65 / 2.63 |
+| crown (station 34) | 3.90 / 2.58 | 3.53 / 2.25 |
+
+- Stalled frames: 0–1 per move.
+- On the 0.7 m wall the stretches are: approach 0.59 s, bob 0.28, spring 0.26, legs up 0.29, foot down 0.29. Then
+  standing 0.2 + 0.3, or walking on 0.31 + 0.61 (the second is the drop down the far side of a thin wall). From bob to
+  foot down is about 1.1 s; a practised vault is nearer 0.6–0.8 s.
+- What sets the pace is the whole-body limits: 15 m/s² up and 8 m/s² sideways. Raising those is the knob for a
+  snappier move.
+- Gym 34/34. The gym counts a swing as a mantle.
