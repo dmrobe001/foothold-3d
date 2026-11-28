@@ -3059,7 +3059,7 @@ function gymPen() {
 }
 // Walk a station straight ahead for `secs` simulated seconds and score it against its intended outcome.
 function gymRun(i, secs = 16) {
-  goStation(i); const s = W.gym.stations[gymAt], e = s.expect || {}; let rollMax = 0, cam = 9; const overs = []; let wasO = false;
+  goStation(i); const s = W.gym.stations[gymAt], e = s.expect || {}; let rollMax = 0, cam = 9, swingSd = 0; const overs = []; let wasO = false;
   const [ox, oz] = stationOrigin(gymAt), pieces = W.trees.filter((t) => t.st === 2 && Math.abs(t.x - ox) < 7 && Math.abs(t.z - oz) < 9).flatMap((t) => t.rest.pieces);
   const toStem = (p) => Math.min(9, ...pieces.map((q) => { // camera to stem surface
     const vx = q.x1 - q.x0, vy = q.y1 - q.y0, vz = q.z1 - q.z0, t = clamp(((p.x - q.x0) * vx + (p.y - q.y0) * vy + (p.z - q.z0) * vz) / (vx * vx + vy * vy + vz * vz), 0, 1);
@@ -3070,7 +3070,7 @@ function gymRun(i, secs = 16) {
   for (let k = 0; k < secs * 60; k++) {
     input.keys.clear(); input.keys.add('KeyW'); if (s.slow) input.keys.add('KeyQ'); movePlayer(1 / 60); physStep(1 / 60); refreshNear(player.x, player.z);
     const f = gymProgress(); maxF = Math.max(maxF, f); maxH = Math.max(maxH, rig.feet - g0);
-    if (body.four) hands = true; if (rig.over && !wasO) overs.push(rig.over.mode); wasO = !!rig.over; if (Math.abs(body.roll) > Math.abs(rollMax)) rollMax = body.roll;
+    if (body.four) hands = true; if (rig.over && !wasO) { overs.push(rig.over.mode); if (rig.over.mode === 'swing') swingSd = rig.over.side; } wasO = !!rig.over; if (Math.abs(body.roll) > Math.abs(rollMax)) rollMax = body.roll;
     cam = Math.min(cam, toStem(body.eye)); duckMax = Math.max(duckMax, body.duck || 0);
     if (e.camera) { const y = body.eye, g = capsPen([y.x, y.y, y.z, y.x, y.y, y.z, 0.1], y.x, y.z); if (g.pen > pen) { pen = g.pen; penAt = `${g.what.replace(/^\S+/, 'camera')} at f ${gymProgress().toFixed(1)}`; } } // the camera (near plane 0.1 m) never inside a solid; the body is soft
     if (f >= 5) break; // past the goal: stop before reaching the next row of stations
@@ -3088,6 +3088,7 @@ function gymRun(i, secs = 16) {
   if (e.clean) checks.push(['clean', worst >= -0.02 && cam >= 0.12]); // no body in a stem; the camera (near plane 0.1 m) keeps clear
   if (e.hands !== undefined) checks.push([e.hands ? 'on hands' : 'on feet', hands === e.hands]);
   if (e.lean) checks.push([`lean ${e.lean}`, e.lean === 'right' ? rollMax > 0.15 : rollMax < -0.15]);
+  if (e.swing) checks.push([`swing ${e.swing}`, swingSd === (e.swing === 'left' ? -1 : 1)]);
   if (e.mantle !== undefined) checks.push([e.mantle ? 'mantle' : 'no mantle', (overs.includes('mantle') || overs.includes('swing')) === e.mantle]); // (the swing is the mantle arrived at a pace)
   const used = [maxF < 1 ? 'stopped' : 'crossed', ...overs, hands ? 'on hands' : '', duckMax > 0.15 ? `ducked ${duckMax.toFixed(2)}` : '', Math.abs(rollMax) > 0.15 ? `leaned ${rollMax > 0 ? 'right' : 'left'}` : ''].filter(Boolean).join(', ');
   return { i: gymAt + 1, name: s.name, mode: s.mode, used, pass: checks.every((c) => c[1]), checks: checks.map(([n, ok]) => `${ok ? '✓' : '✗'} ${n}`).join(' '),
@@ -3921,15 +3922,15 @@ function overScript(mode, B) {
     kk(0.2 + 0.12 * clamp(H - 0.6, 0, 1.1), { pel: [-0.12, cap(press), -0.08], U: [0.3, 1, 0.3], bend: [0.35, 0, 0], ft: [[-0.2, Math.max(A, press - 0.75), -0.3], [-0.16, Math.max(A, press - 0.7), -0.15]], kp: out }); // the spring: up over the hands, the hips swinging out to the side
     kk(0.2, { pel: [aL - 0.12, cap(Ht + 0.38), -0.22], U: [0.2, 1, 0.55], bend: [0.25, 0, 0], ft: [[aL - 0.02, Ht + 0.18, -0.5], [aL + 0.1, Ht + 0.16, -0.36]], kp: out }); // the legs up level with the top, out to that side
     const lead = [aL + 0.02, fL + A, -0.17];
-    kk(0.16, { pel: [aL - 0.02, cap(Ht + S - 0.3), -0.08], U: [0.2, 1, 0.2], bend: [0.2, 0, 0], ft: [lead, [aL + 0.06, Ht + 0.22, -0.25]], hd: [[0.1, H + 0.18, -0.2], [0.1, H + 0.18, 0.24]], kp: kF, ep: eB }); // the outer foot down on the top, to one side
+    kk(0.16, { pel: [aL - 0.02, cap(Ht + S - 0.15), -0.08], U: [0.15, 1, 0.15], bend: [0.12, 0, 0], ft: [lead, [aL + 0.06, Ht + 0.22, -0.25]], hd: [[0.1, H + 0.18, -0.2], [0.1, H + 0.18, 0.24]], kp: kF, ep: eB }); // the outer foot down on the top, to one side
     const pre = K.length, at0 = sec, tail = (T) => { sec = at0; const L = K.slice(); for (const [d, o] of T) { sec += d; L.push({ sec, ...o }); } const tot = sec; return { ks: L.map((x) => { const { sec: q, ...r } = x; return { t: q / tot, ...r }; }), dur: tot }; };
     const tall = C - 0.85;
-    const stand = tail([[0.2, { pel: [aL, Ht + S - 0.2, 0], U: OV_UP, F: OV_N, bend: [0.1, 0, 0], ft: [lead, [aL + 0.02, fR + A, 0.12]], kp: kF }],
+    const stand = tail([[0.2, { pel: [aL, Ht + S - 0.09, 0], U: OV_UP, F: OV_N, bend: [0.05, 0, 0], ft: [lead, [aL + 0.02, fR + A, 0.12]], kp: kF }],
       [0.25, { pel: [aL, Ht + clamp(tall, 0.5, S), 0], bend: [clamp((S - tall) * 0.8, 0, 0.5), 0, 0], hd: hang([aL, Ht + S, 0]), ep: eB }]]);
     let walk = null;
     if (B.fwd !== null && B.fwd !== undefined) { const Fw = B.fwd, aF = aL + 0.42; walk = tail([
-      [0.18, { pel: [aL + 0.15, Math.max(Ht, Fw) + S - 0.12, -0.02], U: [0.15, 1, 0], F: OV_N, bend: [0.12, 0, 0], ft: [lead, [aF, Fw + A, 0.1]], hd: hang([aL + 0.15, Math.max(Ht, Fw) + S, 0]), kp: kF }], // the trailing foot slips over and plants ahead
-      [0.2, { pel: [aL + 0.36, Fw + S - 0.04, 0], U: OV_UP, bend: [0.05, 0, 0], ft: [[aL + 0.2, Math.max(Fw, fL) + A + 0.1, -0.11], [aF, Fw + A, 0.1]], hd: hang([aL + 0.36, Fw + S, 0]) }]]); } // mid-stride, walking on
+      [0.18, { pel: [aL + 0.15, Math.max(Ht, Fw) + S - 0.06, -0.02], U: [0.1, 1, 0], F: OV_N, bend: [0.06, 0, 0], ft: [lead, [aF, Fw + A, 0.1]], hd: hang([aL + 0.15, Math.max(Ht, Fw) + S, 0]), kp: kF }], // the trailing foot slips over and plants ahead
+      [0.2, { pel: [aL + 0.36, Fw + S - 0.02, 0], U: OV_UP, bend: [0.03, 0, 0], ft: [[aL + 0.2, Math.max(Fw, fL) + A + 0.1, -0.11], [aF, Fw + A, 0.1]], hd: hang([aL + 0.36, Fw + S, 0]) }]]); } // mid-stride, walking on
     return { ks: stand.ks, dur: stand.dur, flow: walk && walk.ks, flowDur: walk && walk.dur, pre, low: false };
   }
   return null;
@@ -4004,10 +4005,18 @@ function capsPen(C, x, z) { // the deepest any capsule is inside a solid: gym bo
 // the mantle, from the pose you are in, onto the ledge measured ahead (the lead foot alternates from one to the next)
 function mantlePlan(M, P0) {
   const vc = body.vcmd || [0, 0], v = Math.max(0, vc[0] * M.n[0] + vc[1] * M.n[1]), swing = v > SWING_V && !body.slow && M.C >= 1.3 && pushingOn(M.n); // arriving at a pace: the flowing version
-  const B = { ...M, a0: -M.dist, v }, sc = overScript(swing ? 'swing' : 'mantle', B), side = body.mantleSide = -(body.mantleSide || 1), keys = overWorld(B, sc, side, P0), dur = bioTime(keys, sc.dur), o = { mode: swing ? 'swing' : 'mantle', side, keys, dur, B, low: sc.low };
+  const B = { ...M, a0: -M.dist, v }, sc = overScript(swing ? 'swing' : 'mantle', B), side = swing ? swingSide(M) : (body.mantleSide = -(body.mantleSide || 1)), keys = overWorld(B, sc, side, P0), dur = bioTime(keys, sc.dur), o = { mode: swing ? 'swing' : 'mantle', side, keys, dur, B, low: sc.low };
   keys.dur = dur; if (swing) keys[0].vel = [vc[0], 0, vc[1]]; // (the approach carries on into the script: its pace is the pelvis's speed at the start)
   if (sc.flow) { const fk = overWorld(B, { ...sc, ks: sc.flow }, side, P0); o.flowKeys = fk; o.flowDur = bioTime(fk, sc.flowDur || sc.dur); fk.dur = o.flowDur; if (swing) fk[0].vel = keys[0].vel; o.branch = keys[sc.pre].t * dur; } // (seconds into the script when the ending is chosen: the lead foot on the top)
   return o;
+}
+// the side the swing's legs go to: where the top is lower, or (as low) more open above; level and open both ways, alternating.
+// -1: toward -s (left of the ledge's frame), +1: toward +s.
+function swingSide(M) {
+  const cost = (sd) => { let c = 0; for (const a of [0.05, M.aL]) for (const q of [0.35, 0.55]) { const x = M.O[0] + M.n[0] * a + M.r[0] * q * sd, z = M.O[1] + M.n[1] * a + M.r[1] * q * sd, top = Math.max(barrierTop(x, z, M.y0), 0);
+    c += top + (colBlocked(x, z, M.y0 + top + 0.05, M.y0 + top + 0.6) ? 0.8 : 0) + (trunkHit(x, z) ? 2 : 0); } return c; };
+  const l = cost(-1), r = cost(1);
+  return Math.abs(l - r) < 0.1 ? (body.mantleSide = -(body.mantleSide || 1)) : (body.mantleSide = l < r ? -1 : 1);
 }
 // still pushing toward the ledge (the stick or keys forward, along its normal)?
 function pushingOn(n) { let f = input.f, s = input.s; if (input.keys.has('KeyW') || input.keys.has('ArrowUp')) f += 1; if (input.keys.has('KeyS') || input.keys.has('ArrowDown')) f -= 1; if (input.keys.has('KeyD')) s += 1; if (input.keys.has('KeyA')) s -= 1;

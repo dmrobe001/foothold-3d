@@ -626,3 +626,17 @@ Stretches asking too much are lengthened and the speeds worked out again, until 
 - What sets the pace is the whole-body limits: 15 m/s² up and 8 m/s² sideways. Raising those is the knob for a
   snappier move.
 - Gym 34/34. The gym counts a swing as a mantle.
+
+## Step 15: the swing goes to the lower side; a stiffer landing
+
+From play: the legs should swing toward the lower (more open) side of the barrier, and the landing should be stiffer.
+
+- **Side** (`swingSide`). Each side of the line you take is scored at 0.35 and 0.55 m out, at the near edge and at
+  the footholds. The score adds the top's height there, 0.8 for something solid within 0.6 m above that top, and 2 for
+  a standing trunk. The legs go to the lower score. Within 0.1 of each other, sides alternate as before. The plain
+  mantle still alternates.
+- **Landing.** The knees give about half as much: when the outer foot lands, 0.15 m below standing height instead of
+  0.3; standing up, 0.09 instead of 0.2; walking on, 0.06 and 0.02 instead of 0.12 and 0.04. The trunk bends less.
+
+**Measured:** two new gym stations, a 1.0 m wall that is 1.3 m on its right half (station 34) and on its left half
+(station 35). The legs went left and right respectively. Gym 36/36.

@@ -23,7 +23,7 @@
 //   cross: reach the goal line          stop: never get past f = 1         height: the feet reach at least this high
 //   clean: no head, neck or chest in a stem, camera 0.12 m clear of it      hands: true (must go on hands) / false (must not)
 //   lean:  'left' or 'right' (the torso leans that way, more than 0.15 rad, to get the head under)
-//   mantle: true (gets up onto it with a mantle) / false (must not)
+//   mantle: true (gets up onto it with a mantle) / false (must not)    swing: 'left' / 'right' (a swing, its legs going that way)
 //   plan:  the intended way through, in words; mode: the traversal the station's numbers call for (reported, not scored yet)
 //   camera: the camera (a 0.1 m ball at the eye) never inside any solid, all the way (the body itself is soft)
 // pitch: where you look while walking it (radians, + up; default -0.12). Over-or-under choices follow the gaze.
@@ -84,6 +84,9 @@ export const STATIONS = [
   st('Wall 0.4 m, slowly', 'step onto it, then down', [wall(0.4)], { cross: true, hands: false, stepOn: 0.4 }, { slow: true }),
   st('Rail at 0.5 m, slowly', 'step onto it, then down', [rail(0.5)], { cross: true, hands: false, stepOn: 0.5 }, { slow: true }),
   st('Wall 0.7 m, slowly', 'low mantle, then down', [wall(0.7)], { cross: true, stepOn: 0.7, mantle: true }, { slow: true }),
+  // the swing's legs go to the lower side
+  st('Wall 1.0 m, 1.3 m on the right half', 'swing, the legs going left (the lower side)', [wall(1.0), box(LANE / 4, 0, LANE / 2, 1.3, 0.2)], { cross: true, mantle: true, swing: 'left' }),
+  st('Wall 1.0 m, 1.3 m on the left half', 'swing, the legs going right (the lower side)', [wall(1.0), box(-LANE / 4, 0, LANE / 2, 1.3, 0.2)], { cross: true, mantle: true, swing: 'right' }),
   ...CAPTURED,
 ];
 
