@@ -680,3 +680,40 @@ the same terms.
 | ... that hopped | 3 | 5 |
 
 The one walk-on that stepped had the floor beyond only 0.27 m lower. Gym 36/36.
+
+## Step 18: outside foot up, inside foot under; the hop as the way on
+
+From play (a correction): as the hands push up and the feet jump, the outside foot should land on the top alone. The
+inside foot slips under the outside leg to the far side, and never lands on the top. The swing read instead as both feet
+landing together, then small steps. The landing was too often on the log or on branches beyond. Pushing forward, the
+hop off should be the default, even if the far side is not much lower. Not pushing, rise to a stand faster.
+
+**The feet split.**
+- At the spring the outside leg leads up.
+- With the legs up, the outside foot is over the top while the inside foot stays tucked 0.28 m below the edge.
+- The outside foot lands alone, and the inside foot is still below the edge.
+- Pushing on: the inside foot sweeps 8 cm over the top, under the outside knee, then out past the far edge, dangling.
+  Then the push and the hop.
+- Not pushing: the inside foot comes up beside it, and the rise to a stand takes 0.32 s instead of 0.45.
+
+**The hop is the way on** whenever it works (`canHop`, `hopArc`):
+- **Landing spot:** the first clear ground 0.6–1.6 m past the far edge. "Clear" means nothing solid more than 0.12 m
+  above the ground over a patch 0.5 m square, the size of the footing check that lands you.
+- **The arc:** the least spring, 1.4 to 3 m/s up, whose arc from the top's height clears every top on the way by 8 cm,
+  with the forward speed set to come down on that spot (0.8–3.5 m/s).
+- **When:** if the free foot can reach past the far edge (within 0.7 m of the footholds) and such an arc exists. Any
+  drop, or none, will do. If not, the walk-on steps off, or you stand, as before.
+- **In the air** the controller steers at only 1 m/s² (`AIR_ACC`). Before, it pulled the hop's speed back to walking
+  pace at ground-friction rate within a few frames, and every hop came down at the same place.
+
+**Measured** (the forest test of step 17: 14 fallen trees, two crossings each):
+
+| | step 17 | now |
+|---|---|---|
+| walk-on endings | 6 | 6 |
+| ... that hopped | 5 | 3 |
+| hops landing on clear ground (under 0.12 m above it) | 2 of 5 | 2 of 3 |
+
+Along the way, with the hop allowed regardless, all 6 walk-ons hopped, but 3 came down on wood 0.3–1.1 m above the
+ground. Something higher than the top just past it (a second log, a branch) leaves no arc that clears it. Those 3 now
+step off. The remaining bad landing is on a stick between the points the patch test samples. Gym 36/36.

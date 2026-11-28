@@ -3792,9 +3792,18 @@ function assess(x, z, px, pz) {
 // the headroom over them. Up to MANTLE_MAX it is mantled (hands on the edge, a dip as deep as the press needs, up onto
 // straight arms, one foot up, then the other); the window above sets the pose you end in. Higher is the wall climb.
 // Only solids count: a slope of the ground rising ahead is walked (or climbed on hands), not mantled.
+const AIR_ACC = 1; // m/s²: steering in the air
 const CTRL_ACC = 8; // m/s²: the controller's own acceleration with plausible forces (friction, 0.8 g)
-const HOP_REACH = 0.7, HOP_DROP = 0.3, HOP_VY = 1.4, HOP_V = 1.8; // walking on over a top whose far edge is within 0.7 m of the footholds, more than 0.3 m down beyond (any depth): a hop off it (1.4 m/s up, 1.8 m/s on)
-const canHop = (B) => B.beyond !== null && B.beyond !== undefined && B.D - B.aL <= HOP_REACH && B.beyond < B.Ht - HOP_DROP;
+const HOP_REACH = 0.7, HOP_VY = 1.4, HOP_LAND = 1.0; // walking on over a top whose far edge is within 0.7 m of the footholds: a hop off it, 1.4 m/s up, landing about 1 m past the far edge
+const canHop = (B) => !!B.land && B.D - B.aL <= HOP_REACH && !!hopArc(B, Math.max(B.aL + 0.24, B.D + FOOT + 0.1));
+// the hop off a top: the least spring (1.4 to 3 m/s up) whose arc, from the top's height at `gone` along the normal, clears every top on
+// the way (8 cm) and comes down on the clear ground found past the far edge; null if none does
+function hopArc(B, gone) {
+  const L = B.land; if (!L) return null; const h = Math.max(0, B.Ht - L.f), far = B.D + L.past - gone;
+  for (const vy of [1.4, 1.8, 2.2, 2.6, 3.0]) { const tf = (vy + Math.sqrt(vy * vy + 2 * 9.8 * h)) / 9.8, v = clamp(far / tf, 0.8, 3.5);
+    if (L.path.every(([b2, top]) => { const t = (B.D + b2 - gone) / v; return t < -1e-6 ? true : B.Ht + vy * Math.max(0, t) - 4.9 * t * t >= top + 0.08; })) return { vy, v }; }
+  return null;
+} // (the default walking on, whatever the floor's height: wherever the free foot gets past the far edge, there is clear ground to come down on, and nothing on the way much above the top)
 const SWING_V = 0.5; // m/s: arriving faster than this (and pushing on), the mantle is the flowing swing
 const STEP_DOWN = 0.45; // m: a drop walked off as a step down; deeper is a fall
 const STEER_TURN = 3; // rad/s: how fast the way you walk may swing off the way you push (steering round things)
@@ -3830,7 +3839,11 @@ function ledgeAhead(px, pz, ux, uz, reach = 1.6) {
   if (C < CLEAR4) return null;
   let fwd = null; { const [x, z] = at(aL + 0.42, 0.1); for (const w of windowsAt(x, z)) { const f = w.f - feet; if (f <= Ht + 0.3 && f >= Ht - 2.0 && w.room >= 1.0 && (fwd === null || f > fwd)) fwd = f; } } // where a foot would plant walking on: the highest floor ahead with room to stand, from a step up to a drop (stepped down to 1.2 m, hopped down to 2.0)
   let beyond = null; { const [x, z] = at(D + 0.35, 0); for (const w of windowsAt(x, z)) { const f = w.f - feet; if (f <= Ht + 0.3 && w.room >= 1.0 && (beyond === null || f > beyond)) beyond = f; } } // the floor just past the far edge (however far down)
-  return { O, n: [nx, nz], r: [sx, sz], H, D, aL, fL, fR, Ht, C, dist, y0: feet, fwd, beyond };
+  let land = null; for (let a = D + 0.6; a <= D + 1.61 && !land; a += 0.1) { // where a hop off it would come down: the first clear ground past the far edge (no wood or branches on it), both feet's width
+    let ok = true, fl = -Infinity; for (const da of [-0.25, 0, 0.25]) for (const q of [-0.25, 0, 0.25]) { if (!ok) break; const [x, z] = at(a + da, q), g = ground(x, z); let top = g; for (const w of windowsAt(x, z)) if (w.f > top) top = w.f; if (top - g > 0.12 || trunkHit(x, z)) ok = false; fl = Math.max(fl, top - feet); } // (a patch as wide as the footing check that lands you)
+    if (ok) { const path = []; for (let b2 = 0; b2 <= a - D + 0.001; b2 += 0.1) { let top = -Infinity; for (const q of [-0.22, 0, 0.22]) { const [x, z] = at(D + b2, q); top = Math.max(top, ground(x, z) - feet); for (const w of windowsAt(x, z)) if (w.f - feet <= Ht + 1.5) top = Math.max(top, w.f - feet); } path.push([b2, top]); } land = { past: a - D, f: fl, path }; }
+  } // (with the tops under the way there, for the hop to clear)
+  return { O, n: [nx, nz], r: [sx, sz], H, D, aL, fL, fR, Ht, C, dist, y0: feet, fwd, beyond, land };
 }
 // the way under what is ahead, ranked as the tiers in docs/movement.md: 0 walking (stooped at most), 2 on hands and knees,
 // 3 crawling flat; Infinity if no crawl fits all the way through or the floor rises more than a step on the way
@@ -3927,18 +3940,19 @@ function overScript(mode, B) {
     const grip = [[0.06, H + 0.04, -0.2], [0.06, H + 0.04, 0.24]], out = [[0.4, 0.4, -0.8], [0.4, 0.4, -0.8]];
     if (a0 < -0.62) kk((-0.55 - a0) / Math.max(0.8, v), { pel: [-0.55, S - 0.03, 0], U: [0.2, 1, 0], F: OV_N, bend: [0.3, 0, 0], ft: [[-0.45, A, -0.11], [a0 + 0.05, A + 0.12, 0.11]], hd: [[-0.18, H + 0.16, -0.22], [-0.18, H + 0.16, 0.22]], kp: kF, ep: eUp }); // leaning in, the hands coming up, the last step landing
     kk(0.18, { pel: [-0.34, S - 0.04 - dip, 0], U: [0.3, 1, 0], F: OV_N, bend: [0.4, 0, 0], ft: [[-0.42, A, -0.11], [-0.3, A + 0.02, 0.12]], hd: grip, kp: kF, ep: eB }); // the bob: the knees give, the hands land on the edge
-    kk(0.2 + 0.12 * clamp(H - 0.6, 0, 1.1), { pel: [-0.12, cap(press), -0.08], U: [0.3, 1, 0.3], bend: [0.35, 0, 0], ft: [[-0.2, Math.max(A, press - 0.75), -0.3], [-0.16, Math.max(A, press - 0.7), -0.15]], kp: out }); // the spring: up over the hands, the hips swinging out to the side
-    kk(0.2, { pel: [aL - 0.12, cap(Ht + 0.38), -0.22], U: [0.2, 1, 0.55], bend: [0.25, 0, 0], ft: [[aL - 0.02, Ht + 0.18, -0.5], [aL + 0.1, Ht + 0.16, -0.36]], kp: out }); // the legs up level with the top, out to that side
+    kk(0.2 + 0.12 * clamp(H - 0.6, 0, 1.1), { pel: [-0.12, cap(press), -0.08], U: [0.3, 1, 0.3], bend: [0.35, 0, 0], ft: [[-0.2, Math.max(A, press - 0.7), -0.32], [-0.22, Math.max(A, press - 0.88), -0.04]], kp: out }); // the spring: up over the hands, the hips swinging out to the side, the outside leg leading
+    kk(0.2, { pel: [aL - 0.12, cap(Ht + 0.38), -0.22], U: [0.2, 1, 0.55], bend: [0.25, 0, 0], ft: [[aL - 0.02, Ht + 0.18, -0.48], [-0.12, Ht - 0.28, -0.12]], kp: [out[0], [0.6, 0.2, -0.6]] }); // the outside leg up over the top, out to that side; the inside foot tucked below the edge
     const lead = [aL + 0.02, fL + A, -0.17];
-    kk(0.16, { pel: [aL - 0.02, cap(Ht + S - 0.15), -0.08], U: [0.15, 1, 0.15], bend: [0.12, 0, 0], ft: [lead, [aL + 0.06, Ht + 0.22, -0.25]], hd: [[0.1, H + 0.18, -0.2], [0.1, H + 0.18, 0.24]], kp: kF, ep: eB }); // the outer foot down on the top, to one side
+    kk(0.16, { pel: [aL - 0.02, cap(Ht + S - 0.15), -0.08], U: [0.15, 1, 0.15], bend: [0.12, 0, 0], ft: [lead, [0.0, Ht - 0.12, -0.06]], hd: [[0.1, H + 0.18, -0.2], [0.1, H + 0.18, 0.24]], kp: [kF[0], [0.7, 0.3, -0.4]], ep: eB }); // the outside foot down on the top, alone; the inside foot still below the edge
     const pre = K.length, at0 = sec, tail = (T) => { sec = at0; const L = K.slice(); for (const [d, o] of T) { sec += d; L.push({ sec, ...o }); } const tot = sec; return { ks: L.map((x) => { const { sec: q, ...r } = x; return { t: q / tot, ...r }; }), dur: tot }; };
     const tall = C - 0.85;
-    const stand = tail([[0.2, { pel: [aL, Ht + S - 0.09, 0], U: OV_UP, F: OV_N, bend: [0.05, 0, 0], ft: [lead, [aL + 0.02, fR + A, 0.12]], kp: kF }],
-      [0.25, { pel: [aL, Ht + clamp(tall, 0.5, S), 0], bend: [clamp((S - tall) * 0.8, 0, 0.5), 0, 0], hd: hang([aL, Ht + S, 0]), ep: eB }]]);
+    const stand = tail([[0.16, { pel: [aL, Ht + S - 0.09, 0], U: OV_UP, F: OV_N, bend: [0.05, 0, 0], ft: [lead, [aL + 0.02, fR + A, 0.12]], kp: kF }],
+      [0.16, { pel: [aL, Ht + clamp(tall, 0.5, S), 0], bend: [clamp((S - tall) * 0.8, 0, 0.5), 0, 0], hd: hang([aL, Ht + S, 0]), ep: eB }]]);
     let walk = null;
     const hop = canHop(B); // a top whose far edge the free foot can reach past, with a drop beyond: it dangles off the far side, and you push off and hop down
     if (hop) walk = tail([
-      [0.16, { pel: [aL + 0.1, Ht + S - 0.08, -0.03], U: [0.12, 1, 0], F: OV_N, bend: [0.08, 0, 0], ft: [lead, [B.D + 0.18, Ht - 0.3, 0.12]], hd: hang([aL + 0.1, Ht + S, 0]), kp: kF, ep: eB }], // the free foot through, dangling past the far edge
+      [0.12, { pel: [aL + 0.06, Ht + S - 0.1, -0.05], U: [0.15, 1, 0.05], F: OV_N, bend: [0.1, 0, 0], ft: [lead, [aL + 0.04, Ht + 0.08, -0.08]], kp: [kF[0], [0.8, 0.2, 0.2]], ep: eB }], // the inside foot sweeps just over the top, under the outside knee
+      [0.12, { pel: [aL + 0.12, Ht + S - 0.08, -0.03], U: [0.12, 1, 0], bend: [0.08, 0, 0], ft: [lead, [B.D + 0.22, Ht - 0.3, 0.02]], hd: hang([aL + 0.12, Ht + S, 0]), kp: kF }], // and out past the far edge, dangling
       [0.14, { pel: [Math.max(aL + 0.24, B.D + FOOT + 0.1), Ht + S + 0.03, 0], U: [0.08, 1, 0], bend: [0.04, 0, 0], ft: [[lead[0] + 0.02, lead[1], lead[2]], [B.D + 0.3, Ht - 0.34, 0.1]], hd: hang([aL + 0.24, Ht + S, 0]) }]]); // the push off the top (then airborne), the body clear of the far edge
     else if (B.fwd !== null && B.fwd !== undefined && B.fwd >= Ht - 1.2) { const Fw = B.fwd, aF = aL + 0.42; walk = tail([
       [0.18, { pel: [aL + 0.15, Math.max(Ht, Fw) + S - 0.06, -0.02], U: [0.1, 1, 0], F: OV_N, bend: [0.06, 0, 0], ft: [lead, [aF, Fw + A, 0.1]], hd: hang([aL + 0.15, Math.max(Ht, Fw) + S, 0]), kp: kF }], // the trailing foot slips over and plants ahead
@@ -4160,11 +4174,12 @@ function movePlayer(dt) {
     const P = overPose(O.keys, O.t);
     player.x = P.pelvis[0]; player.z = P.pelvis[2]; rig.feet = Math.min(P.feet[0][1], P.feet[1][1]) - OVER_A; needT = 0;
     if (overLoad(O, P)) { /* something gave way: you drop from here */ }
-    else if (O.t >= 1) { rig.over = null; body.overContacts = null; rig.feet = footSupport(player.x, player.z); rig.vy = 0; supportRef = rig.feet; if (O.flowing) body.vcmdNext = [O.B.n[0] * 1.2, O.B.n[1] * 1.2]; if (O.flowing && O.hop) { rig.feet = O.B.y0 + O.B.Ht; rig.vy = HOP_VY; body.airborne = true; body.vcmdNext = [O.B.n[0] * HOP_V, O.B.n[1] * HOP_V]; } } // (hopping down: off the top's height, rising, at a jog) // (walking on: the controller leaves at walking pace, not from rest)
+    else if (O.t >= 1) { rig.over = null; body.overContacts = null; rig.feet = footSupport(player.x, player.z); rig.vy = 0; supportRef = rig.feet; if (O.flowing) body.vcmdNext = [O.B.n[0] * 1.2, O.B.n[1] * 1.2]; if (O.flowing && O.hop) { const B = O.B, gone = (player.x - B.O[0]) * B.n[0] + (player.z - B.O[1]) * B.n[1], arc = hopArc(B, gone) || { vy: 3.0, v: 1.6 }, vy = arc.vy, v = arc.v;
+      rig.feet = B.y0 + B.Ht; rig.vy = vy; body.airborne = true; body.vcmdNext = [B.n[0] * v, B.n[1] * v]; } } // (hopping off: from the top's height, rising, as fast forward as lands it on the first clear ground past the far edge, or a metre past it) // (hopping down: off the top's height, rising, at a jog) // (walking on: the controller leaves at walking pace, not from rest)
   } else {
     let dx = (-sy * f + cy * s) * speed * dt, dz = (-cy * f - sy * s) * speed * dt;
     if (settings.forces !== 'free' && dt > 0 && !body.gap && !body.four) { // with plausible forces the controller itself speeds up, slows and turns no harder than friction allows (CTRL_ACC)
-      const vc = body.vcmd || [0, 0], wx = dx / dt - vc[0], wz = dz / dt - vc[1], wl = Math.hypot(wx, wz), k = wl > CTRL_ACC * dt ? CTRL_ACC * dt / wl : 1;
+      const vc = body.vcmd || [0, 0], wx = dx / dt - vc[0], wz = dz / dt - vc[1], wl = Math.hypot(wx, wz), acc = body.airborne ? AIR_ACC : CTRL_ACC, k = wl > acc * dt ? acc * dt / wl : 1; // (in the air, nothing to push on: a hop keeps its speed)
       body.vcmd = [vc[0] + wx * k, vc[1] + wz * k]; if (Math.hypot(...body.vcmd) < 0.02 && !(f || s)) body.vcmd = [0, 0];
       dx = body.vcmd[0] * dt; dz = body.vcmd[1] * dt;
     } else body.vcmd = [dx / (dt || 1), dz / (dt || 1)]; // (a gap plan or the crawl paces itself; the command picks up from there)
