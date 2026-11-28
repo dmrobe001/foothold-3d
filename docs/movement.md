@@ -48,7 +48,8 @@ no higher than that is stepped over (`stepOverAt`), or onto when walking slowly.
 **The mantle** is the one way up anything higher, from a knee-high wall to a chest-high root wad, and onto the top of a
 climb. `ledgeAhead` measures it along the way you are going (up to 1.6 m ahead): the near edge and the normal square to
 it, the top at the edge (H), the depth (D), a foothold for each foot side by side on the top (up to 0.3 m in, or the
-middle of a thin top), and the headroom over them (C, at least 0.42). Only solids count: the ground's own rise is
+middle of a thin top; since step 10, the nearest pair out to 0.8 m past the edge that stands on a window's floor), and
+the headroom over them (C, at least 0.42). Only solids count: the ground's own rise is
 walked or climbed on hands. The script (in the ledge's frame, from the pose you are in):
 
 1. the hands rise past the edge and come down on it;
@@ -379,7 +380,7 @@ the head whipped about.
 
 **Why it crawled.** The branch was measured as a ledge 1.4 m out, but the mantle was refused: the window over its top
 was 0.14 m, closed by a 5.7 cm branch 1.15 m up, 0.4 m beyond the edge. A body pushes a branch that thin aside. Now
-any stem or branch under 8 cm thick (`YIELD_R`, radius 0.04 m) does not close the window over a mantle.
+any stem or branch under 8 cm thick (`YIELD_R`, radius 0.04 m) does not close the window over a mantle. (Withdrawn in step 10: every branch is an obstacle again; the window was being measured in the wrong place.)
 
 **Why the head whipped.** On hands, the body turned to face up the slope under it, and the slope was read from whatever
 was underfoot. In branch clutter that swings from one branch to the next, and the head, well ahead of the hips, swung
@@ -397,3 +398,35 @@ Captured stations kept as tests live in `src/captured.js`.
 - Gym: 34/34. Station 34 expects a mantle with no hands. The build before this step crawled, ducked fully, then mantled.
 - Crowns (the step 7 and 8 measures): reversals 31 → 12; path turning 0.64 → 0.44 rad/m; mantles that began with a
   duck 5 of 18 → 3 of 19; eye height jerk 51.7 → 42.2.
+
+## Step 10: every branch an obstacle; footholds on windows' floors
+
+The rule asked for: every branch reads as an obstacle, with no exception for thin ones. Then the way over should read
+as a series of steps, and the way under as a crawl space that gets shorter as the clutter under it rises. Neither is
+forced; both should come out of the general rules.
+
+- **The way under** already worked this way. Its headroom is the ceiling minus the highest footing under it, so it
+  shrinks as branches pile up beneath, and it is closed where the floor rises more than a step.
+- **The way over** looked for footholds only on the first thing to rise more than a step, at its middle (or 0.3 m in).
+  It then required room above a span from 0.3 m before the edge to 0.4 m past the footholds. A branch just beyond, at
+  shin height once you stand on the first, counted as a roof.
+- **Now** a column of space is read as **windows** (`windowsAt`). Each floor is the ground or a solid's top, not inside
+  another solid, with the room above it up to the next underside. A foothold is the highest floor at that spot that is
+  raised (more than a third of a step), reachable (up to 1.7 m), and has at least crawling room (0.42 m) above it. The
+  pair is searched first at the middle of a thin top (or 0.3 m in), then on out to 0.8 m past the edge, then back
+  toward it. The room that counts is above the footholds and the ground just past them, where the body ends up.
+  Whatever lies further on is the next step.
+- `YIELD_R` (thin branches yield) is gone.
+
+**At the captured crown** (station 34), with every branch solid, the footholds are on the 1.0 m branch itself, with
+nothing above them. The 5.7 cm branch that closed the window before is 0.3–0.4 m further on and 0.15 m above that
+footing: the next step, not a roof. It still mantles, on its feet.
+
+**Measured:**
+- Gym: 34/34.
+- Crowns (step 7 and 8 measures), against step 9:
+  - reversals 12 and 12; path turning 0.44 and 0.45 rad/m;
+  - mantles that began with a duck: 3 of 19 against 4 of 20;
+  - eye height jerk 42.2 against 33.6;
+  - frames standing still while pushing: 286 against 469. With every branch an obstacle again, more of the way is
+    closed.

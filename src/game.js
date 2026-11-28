@@ -3794,7 +3794,6 @@ function assess(x, z, px, pz) {
 const STEP_DOWN = 0.45; // m: a drop walked off as a step down; deeper is a fall
 const STEER_TURN = 3; // rad/s: how fast the way you walk may swing off the way you push (steering round things)
 const QUAD_TURN = 1.5; // rad/s: the fastest the body turns on hands (the head is well ahead of the hips: turning swings it)
-const YIELD_R = 0.04; // m: a branch thinner than this (radius) is pushed aside, not a ceiling over a mantle
 const MANTLE_MAX = 1.7, MANTLE_LOW = 1.0; // the highest top the hands press you up onto; below MANTLE_LOW (about the waist) a mantle ranks with a hop
 function ledgeAhead(px, pz, ux, uz, reach = 1.6) {
   const feet = rig.feet, h = (x, z) => barrierTop(x, z, feet), rx = -uz, rz = ux;
@@ -3810,16 +3809,19 @@ function ledgeAhead(px, pz, ux, uz, reach = 1.6) {
   const sx = -nz, sz = nx, dist = edge(0, nx, nz, reach + 0.3); if (dist === null || dist > reach) return null;
   const O = [px + nx * dist, pz + nz * dist], at = (a, s) => [O[0] + nx * a + sx * s, O[1] + nz * a + sz * s];
   let D = 0; for (; D < 0.9; D += 0.03) if (!rises(...at(D + 0.015, 0))) break; // its depth along the normal (a wall's thickness, a log's width)
-  const aL = clamp(D / 2, 0.06, 0.3), fL = h(...at(aL, -0.11)), fR = h(...at(aL, 0.11)); // a foothold each, side by side
-  let H = 0; for (let a = 0.015; a <= aL + 0.001; a += 0.03) H = Math.max(H, h(...at(a, 0)));
-  const Ht = Math.max(fL, fR);
-  if (Math.min(fL, fR) < STEP * 0.6 || Math.abs(fL - fR) > 0.35 || Ht > MANTLE_MAX || H > MANTLE_MAX + 0.1) return null;
-  let C = Infinity; // the window over the top: headroom above the footholds, from the near side to a little past them. A branch
-  // under 8 cm thick is pushed aside by the body, so it does not close the window
-  for (let a = -0.3; a <= aL + 0.4; a += 0.05) { const [x, z] = at(a, 0); for (const o of solidsAt(x, z)) {
-    if (o.kind === 'log' && Math.max(o.r || 0, o.r0 || 0, o.r1 || 0) < YIELD_R) continue;
-    logUnder = -Infinity; if (topOf(o, x, z) === -Infinity) continue;
-    const lo = o.kind === 'box' || (o.kind === 'log' && o.r0 !== undefined) ? logUnder : -Infinity; if (lo > feet + Ht - 0.02) C = Math.min(C, lo - feet - Ht); } }
+  // the footholds: the nearest pair (side by side, from the edge to 0.8 m past it, first at the middle of a thin top or 0.3 m in) on a window's floor, each the highest floor
+  // there that is raised (more than a third of a step) and reachable, with at least crawling room above it. A branch with
+  // another just above it is no foothold; the next branch up, or one further on, may be: the way over is a series of steps.
+  const foot = (a, s) => { const [x, z] = at(a, s); let best = null; for (const w of windowsAt(x, z)) { const f = w.f - feet; if (f > STEP * 0.6 && f <= MANTLE_MAX && w.room >= CLEAR4 && (!best || f > best.f)) best = { f, room: w.room }; } return best; };
+  let aL = -1, L = null, R = null;
+  const a0 = clamp(D / 2, 0.06, 0.3), order = []; for (let a = a0; a <= 0.81; a += 0.06) order.push(a); for (let a = a0 - 0.06; a >= 0.02; a -= 0.06) order.push(a); // (first where a top's own middle is, or 0.3 m in; then on, then back)
+  for (const a of order) { const l = foot(a, -0.11), r = l && foot(a, 0.11); if (l && r && Math.abs(l.f - r.f) <= 0.35) { aL = a; L = l; R = r; break; } }
+  if (aL < 0) return null;
+  const fL = L.f, fR = R.f, Ht = Math.max(fL, fR);
+  let H = 0; for (let a = 0.015; a <= aL + 0.001; a += 0.03) H = Math.max(H, Math.min(h(...at(a, 0)), Ht + 0.3)); // where the hands go: the top on the way to the footholds
+  if (H > MANTLE_MAX + 0.1) return null;
+  let C = Math.min(L.room, R.room); // the window the body ends in: over the footholds and the ground between and just past them
+  for (const a of [aL, aL + 0.2]) for (const [lo] of colSpans(...at(a, 0))) if (lo > feet + Ht - 0.02) C = Math.min(C, lo - feet - Ht);
   if (C < CLEAR4) return null;
   return { O, n: [nx, nz], r: [sx, sz], H, D, aL, fL, fR, Ht, C, dist, y0: feet };
 }
@@ -3857,6 +3859,15 @@ const OVER_S = RIG.leg - 0.04, OVER_A = 0.06; // pelvis above the feet standing;
 function colSpans(x, z) { // the solids in the column at (x, z): [bottom, top] of each (rocks reach the ground)
   const out = [];
   for (const o of solidsAt(x, z)) { logUnder = -Infinity; const t = topOf(o, x, z); if (t === -Infinity) continue; out.push([o.kind === 'box' || (o.kind === 'log' && o.r0 !== undefined) ? logUnder : -Infinity, t]); }
+  return out;
+}
+function windowsAt(x, z) { // the windows in the column at (x, z): each floor (the ground or a solid's top, not inside another solid) and the room above it
+  const sp = colSpans(x, z), out = [];
+  for (const f of [ground(x, z), ...sp.map((q) => q[1])]) {
+    if (sp.some(([lo, hi]) => lo < f - 0.02 && hi > f + 0.02)) continue; // inside a solid
+    let room = Infinity; for (const [lo, hi] of sp) if (lo >= f - 0.02 && hi > f + 0.02) room = Math.min(room, lo - f);
+    out.push({ f, room });
+  }
   return out;
 }
 function barrierTop(x, z, feet) { // the top of what rises from your footing here (not something overhead), above the feet
