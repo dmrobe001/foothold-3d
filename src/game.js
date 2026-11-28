@@ -12,7 +12,7 @@ const $ = (id) => document.getElementById(id);
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 
 // ---------------------------------------------------------------- settings
-const settings = { seed: 1, age: 160, moisture: 'mesic', storms: 'occasional', geology: 'granite', region: 'temperate', season: 'summer', quality: isTouch ? 'low' : 'high', motion: 'full', view: 'first', body: 'hidden', place: 'forest' };
+const settings = { forces: 'limited', seed: 1, age: 160, moisture: 'mesic', storms: 'occasional', geology: 'granite', region: 'temperate', season: 'summer', quality: isTouch ? 'low' : 'high', motion: 'full', view: 'first', body: 'hidden', place: 'forest' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('foothold.settings') || '{}')); } catch (e) { /* storage unavailable */ }
 try { if (/(^|[?#&])gym\b/.test(location.search.slice(1) + '&' + location.hash.slice(1))) settings.place = 'gym'; } catch (e) { /* no location */ }
 try { // world settings in the link, e.g. #region=mediterranean&season=autumn&seed=4 (shareable, and used by tests)
@@ -3488,7 +3488,7 @@ function spring(x, v, target, k, dt, zeta = 1.1) {
 }
 function resetRig(feetY) { // stand at the player's x, z: on the ground (not a stem hung overhead), or at a given support height
   supportRef = feetY ?? ground(player.x, player.z);
-  rig.feet = feetY ?? footSupport(player.x, player.z); rig.vy = 0; rig.over = null; body.want = null; body.barrier = null;
+  rig.feet = feetY ?? footSupport(player.x, player.z); rig.vy = 0; rig.over = null; body.want = null; body.barrier = null; body.bio = null;
   Object.assign(body, { need: 0, needT: 0, four: false, mix: 0, yaw: player.yaw, head: 2, q: newQuad() }); body.q.n = [0, 1, 0];
   for (const h of body.hands) { h.hold = null; h.sw = null; }
   const rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
@@ -3896,7 +3896,7 @@ function overScript(mode, B) {
     k(0.74, { pel: [aL - 0.2, cap(Ht + 0.5), 0], U: Uup, bend: [0.4, 0, 0], ft: [lead, [-0.1, H + 0.18, 0.14]], kp: [kF[0], [0.4, 0.9, 0.2]] }); // weight onto it, the trailing foot comes up
     k(0.84, { pel: [aL - 0.08, cap(Ht + 0.55), 0], ft: [lead, trail], hd: [[aL + 0.1, Ht + 0.3, -0.22], [aL + 0.1, Ht + 0.3, 0.22]], kp: kF }); // both feet on the top, crouched; the hands leave it
     const tall = C - 0.85, low = C < DUCK_MIN; // standing, stooped under what is above, or (no room to stoop) crouched with the hands down
-    k(1, { pel: [aL, Ht + (low ? 0.42 : clamp(tall, 0.5, S)), 0], U: OV_UP, bend: [low ? 0.6 : clamp((S - tall) * 0.8, 0, 0.5), 0, 0], ft: [lead, trail], hd: low ? [[aL + 0.35, Ht + 0.04, -0.2], [aL + 0.35, Ht + 0.04, 0.2]] : hang([aL, Ht + S, 0]), kp: kF, ep: eB });
+    k(1, { pel: [aL, low ? cap(Ht + 0.42) : Ht + clamp(tall, 0.5, S), 0], U: low ? Uup : OV_UP, bend: [low ? 0.6 : clamp((S - tall) * 0.8, 0, 0.5), 0, 0], ft: [lead, trail], hd: low ? [[aL + 0.35, Ht + 0.04, -0.2], [aL + 0.35, Ht + 0.04, 0.2]] : hang([aL, Ht + S, 0]), kp: kF, ep: eB });
     return { ks, dur: 1.0 + 0.9 * clamp((H - 0.55) / 1.15, 0, 1), low };
   }
   return null;
@@ -3959,7 +3959,23 @@ function capsPen(C, x, z) { // the deepest any capsule is inside a solid: gym bo
   return { pen: worst, what };
 }
 // the mantle, from the pose you are in, onto the ledge measured ahead (the lead foot alternates from one to the next)
-function mantlePlan(M, P0) { const sc = overScript('mantle', M), side = body.mantleSide = -(body.mantleSide || 1); return { mode: 'mantle', side, keys: overWorld(M, sc, side, P0), dur: sc.dur, B: M, low: sc.low }; }
+function mantlePlan(M, P0) { const sc = overScript('mantle', M), side = body.mantleSide = -(body.mantleSide || 1), keys = overWorld(M, sc, side, P0); return { mode: 'mantle', side, keys, dur: bioTime(keys, sc.dur), B: M, low: sc.low }; }
+// With plausible forces, a script is timed so no part is asked for more than its clamp: between two keys the pose eases
+// (smoothstep), whose peak acceleration is 6·distance/time²; each stretch is lengthened until the pelvis, feet and hands
+// all fit (sqrt(6·d/a)). The keys' times are rewritten in place; the new duration is returned.
+function bioTime(keys, dur) {
+  if (settings.forces === 'free') return dur;
+  const seg = [], P = BIO.pelvis;
+  for (let i = 1; i < keys.length; i++) {
+    const A = keys[i - 1].P, Bk = keys[i].P, dp = V.sub(Bk.pelvis, A.pelvis), need = [(keys[i].t - keys[i - 1].t) * dur];
+    need.push(Math.sqrt(6 * Math.hypot(dp[0], dp[2]) / P.aH), Math.sqrt(6 * Math.abs(dp[1]) / (dp[1] > 0 ? P.aUp : P.aDown)));
+    for (let k = 0; k < 2; k++) need.push(Math.sqrt(6 * V.len(V.sub(Bk.feet[k], A.feet[k])) / BIO.feet.a), Math.sqrt(6 * V.len(V.sub(Bk.hands[k], A.hands[k])) / BIO.hands.a));
+    seg.push(Math.max(...need));
+  }
+  const total = seg.reduce((a, b) => a + b, 0); let t = 0;
+  for (let i = 1; i < keys.length; i++) { t += seg[i - 1]; keys[i].t = t / total; }
+  return total;
+}
 // ---- your weight during a way over. Each hand and foot the script puts on something carries a share of your weight
 // (a foot a whole share, a hand half). What it rests on was taken to hold you (the way over was chosen as if it would);
 // as the weight comes on, a branch is checked as one is underfoot (branchLoad: it may snap, or bend away), and a loose
@@ -4011,7 +4027,7 @@ function giveWay(msg) { // the script ends where it is: the body drops from here
 }
 function startOver(o) { rig.over = { ...o, t: 0 }; body.q.stats.overs = (body.q.stats.overs || 0) + 1; body.lastOver = o.mode; endGap(); body.cross = null; }
 function overBody(dt) { // the script owns the body: its pose, the eye in its head, the feet and hands where it put them
-  const O = rig.over, P = overPose(O.keys, O.t), sol = SK.solvePose(P); body.sol = sol;
+  const O = rig.over, P = overPose(O.keys, O.t), sol = bioSolve(P, dt); body.sol = sol;
   const J = sol.J, F = sol.head ? sol.head.F : P.frame.F;
   body.feet.forEach((ft, i) => { const a = J[i ? 'ankleR' : 'ankleL']; ft.x = ft.tx = ft.sx = a[0]; ft.y = ft.ty = ft.sy = a[1] - OVER_A; ft.z = ft.tz = ft.sz = a[2]; ft.t = 1; ft.ln = null; });
   body.hands.forEach((h, i) => { const a = J[i ? 'handR' : 'handL']; h.p.set(a[0], a[1], a[2]); h.v.set(0, 0, 0); h.hold = null; h.sw = null; });
@@ -4161,6 +4177,7 @@ function movePlayer(dt) {
   }
   const moved = Math.hypot(player.x - px, player.z - pz);
   updateBody(dt, moved, run, player.x - px, player.z - pz, f);
+  bioEye(dt);
   smoothEye(dt);
   guardEye();
 }
@@ -4175,15 +4192,15 @@ function smoothEye(dt) {
   e.x = S.x + (e.x - S.x) * a; e.z = S.z + (e.z - S.z) * a; body.eyeS = { x: e.x, z: e.z };
 }
 // The body is soft (it may press into what it climbs over or crawls under), but the camera is not: an eye inside a solid
-// (a 0.1 m ball: the near plane) is moved the least distance out of it, down, back, sideways or up, up to 0.4 m.
-const EYE_RING = [[0.12, 0], [-0.12, 0], [0, 0.12], [0, -0.12], [0.085, 0.085], [-0.085, 0.085], [0.085, -0.085], [-0.085, -0.085]];
+// (a 0.1 m ball: the near plane) is moved the least distance out of it, down, back, sideways or up, up to 0.8 m.
+const EYE_RING = [[0.135, 0], [-0.135, 0], [0, 0.135], [0, -0.135], [0.095, 0.095], [-0.095, 0.095], [0.095, -0.095], [-0.095, -0.095]];
 const EYE_DIRS = [[0, -1, 0], [0, 0, 1], [-1, 0, 0], [1, 0, 0], [0, 1, 0], [0, -0.7, 0.7]];
 function guardEye() {
   const e = body.eye; if (!e || !bodyOn) return;
-  const inside = (x, y, z) => colBlocked(x, z, y - 0.12, y + 0.12) || EYE_RING.some(([u, v]) => colBlocked(x + u, z + v, y - 0.09, y + 0.09)); // (the ball as five columns, a little larger than the near plane: cheap on the 1 m grid)
+  const inside = (x, y, z) => colBlocked(x, z, y - 0.135, y + 0.135) || EYE_RING.some(([u, v]) => colBlocked(x + u, z + v, y - 0.1, y + 0.1)); // (the ball as five columns, a little larger than the near plane: cheap on the 1 m grid)
   if (!inside(e.x, e.y, e.z)) return;
   const yw = body.yaw ?? player.yaw, c = Math.cos(yw), sn = Math.sin(yw); // (directions in the body's frame: +z back, +x right)
-  for (let d = 0.03; d <= 0.401; d += 0.03) for (const [lx, ly, lz] of EYE_DIRS) {
+  for (let d = 0.03; d <= 0.81; d += d < 0.3 ? 0.03 : 0.06) for (const [lx, ly, lz] of EYE_DIRS) {
     const x = e.x + lx * c + lz * sn, z = e.z - lx * sn + lz * c, y = e.y + ly;
     const X = e.x + (x - e.x) * d, Y = e.y + (y - e.y) * d, Z = e.z + (z - e.z) * d;
     if (!inside(X, Y, Z)) { e.x = X; e.y = Y; e.z = Z; player.eye = Y; return; }
@@ -4330,6 +4347,96 @@ function quadPose() {
     kneePole: [knee(-1), knee(1)],
     elbowPole: [elbow(-1), elbow(1)],
   };
+}
+// ---- plausible forces (docs/movement.md, step 11). The pose the gait, the crawl or a script asks for is a target; the
+// skeleton shown follows it, each part no faster than a plausible force or torque could accelerate it. Per channel: a
+// follower (gain w, with the target's own velocity fed forward, so it does not lag a steady motion) whose acceleration
+// is clamped, and which brakes in time not to overshoot. The clamps come from rough adult numbers (70 kg; segment masses after
+// Winter's tables; peak joint torques from isometric strength data): acceleration = torque / the inertia it turns, or
+// force / mass. They are the acceleration beyond what holds the part against gravity (the support is the allowed
+// "magic"). Not forward dynamics: the channels are limited one by one, not as one coupled body.
+const BIO = {
+  pelvis: { w: 25, aH: 8, aUp: 15, aDown: 10 }, // the whole body: friction (0.8 g) sideways; ground reaction up to 2.5 body weights up; down no faster than falling
+  frame: { w: 25, a: 40 },   // the trunk about the hips: hip torque ~200 N·m over ~5 kg·m² (trunk, head and arms)
+  bend: { w: 30, a: 60 },    // the spine: lumbar torque ~150 N·m over ~2.5 kg·m²
+  neck: { w: 30, a: 300 },   // the head: neck torque ~40 N·m over ~0.13 kg·m²
+  feet: { w: 40, a: 60 },    // a leg swung at the hip: ~120 N·m over ~1.9 kg·m², at 0.9 m
+  hands: { w: 40, a: 100 },  // an arm at the shoulder: ~70 N·m over ~0.4 kg·m², at 0.6 m
+  pole: { w: 20, a: 200 },   // knee and elbow directions (unit vectors: rad/s²)
+  eye: { w: 30, aH: 8, aUp: 15, aDown: 10 }, // the camera rides the head: no harder than the body under it
+};
+const bioStats = { n: 0, over: {}, peakT: {}, peakS: {} }; // per channel: frames whose target asked for more than the clamp; peak asked and shown
+function bioClamp(a, c) {
+  if (c.aH !== undefined) { const h = Math.hypot(a[0], a[2]); if (h > c.aH) { a[0] *= c.aH / h; a[2] *= c.aH / h; } a[1] = clamp(a[1], -c.aDown, c.aUp); return a; }
+  const l = Math.hypot(...a); if (l > c.a) for (let k = 0; k < a.length; k++) a[k] *= c.a / l; return a;
+}
+// The acceleration wanted: toward the speed that closes the gap e no faster than the clamp can brake to a stop (sqrt(2 a d)),
+// near the target the speed w·d, plus the target's own velocity. Clamped, this does not overshoot (a clamped spring does).
+function bioWant(e, vT, v, c) {
+  const d = Math.hypot(...e), aB = c.aH !== undefined ? Math.min(c.aH, c.aDown) : c.a, sp = d > 1e-9 ? Math.min(c.w * d, Math.sqrt(2 * aB * d)) / d : 0;
+  return e.map((x, k) => 2 * c.w * (vT[k] + x * sp - v[k]));
+}
+function bioFollow(key, xT, dt, c, stat = key) { // a vector (any length) followed under channel c's clamp
+  const S = body.bio || (body.bio = {}); let f = S[key];
+  if (!f || f.x.length !== xT.length || Math.hypot(...xT.map((v, k) => v - f.x[k])) > 1.5) { S[key] = { x: [...xT], v: xT.map(() => 0), pT: [...xT], vT: xT.map(() => 0) }; return [...xT]; } // (new, or a jump: a teleport, a restart)
+  const vT = xT.map((v, k) => (v - f.pT[k]) / dt), aT = vT.map((v, k) => (v - f.vT[k]) / dt); f.pT = [...xT]; f.vT = vT;
+  const aTm = c.aH !== undefined ? Math.max(Math.hypot(aT[0], aT[2]) / c.aH, aT[1] > 0 ? aT[1] / c.aUp : -aT[1] / c.aDown) : Math.hypot(...aT) / c.a; // what the target asks for, as a share of the clamp
+  bioStats.peakT[stat] = Math.max(bioStats.peakT[stat] || 0, aTm); if (aTm > 1) bioStats.over[stat] = (bioStats.over[stat] || 0) + 1;
+  const n = Math.max(1, Math.ceil(c.w * dt / 0.25)), h = dt / n; let shown = 0;
+  for (let i = 0; i < n; i++) {
+    const a = bioClamp(bioWant(xT.map((v, k) => v - f.x[k]), vT, f.v, c), c);
+    shown = Math.max(shown, c.aH !== undefined ? Math.max(Math.hypot(a[0], a[2]) / c.aH, a[1] > 0 ? a[1] / c.aUp : -a[1] / c.aDown) : Math.hypot(...a) / c.a);
+    for (let k = 0; k < xT.length; k++) { f.v[k] += a[k] * h; f.x[k] += f.v[k] * h; }
+  }
+  bioStats.peakS[stat] = Math.max(bioStats.peakS[stat] || 0, shown);
+  return [...f.x];
+}
+const _bq = new THREE.Quaternion(), _bq2 = new THREE.Quaternion(), _bm = new THREE.Matrix4(), _bv = new THREE.Vector3();
+function bioFrame(fr, dt) { // the pelvis frame followed as a rotation (angular acceleration clamped)
+  const S = body.bio || (body.bio = {}), mk = (f) => { _bm.makeBasis(_bv.set(...f.R), new THREE.Vector3(...f.U), new THREE.Vector3(...f.F).negate()); return new THREE.Quaternion().setFromRotationMatrix(_bm); };
+  const qT = mk(fr); let f = S.frame;
+  if (!f) { S.frame = { q: qT.clone(), w: [0, 0, 0], pT: qT.clone(), wT: [0, 0, 0] }; return fr; }
+  const rv = (qa, qb) => { _bq.copy(qa).multiply(_bq2.copy(qb).invert()); if (_bq.w < 0) { _bq.x = -_bq.x; _bq.y = -_bq.y; _bq.z = -_bq.z; _bq.w = -_bq.w; } const s = Math.hypot(_bq.x, _bq.y, _bq.z), ang = 2 * Math.atan2(s, _bq.w); return s > 1e-9 ? [_bq.x / s * ang, _bq.y / s * ang, _bq.z / s * ang] : [0, 0, 0]; }; // rotation vector taking qb to qa
+  const wT = rv(qT, f.pT).map((v) => v / dt), aT = wT.map((v, k) => (v - f.wT[k]) / dt); f.pT = qT.clone(); f.wT = wT;
+  const c = BIO.frame, aTm = Math.hypot(...aT) / c.a; bioStats.peakT.frame = Math.max(bioStats.peakT.frame || 0, aTm); if (aTm > 1) bioStats.over.frame = (bioStats.over.frame || 0) + 1;
+  if (Math.hypot(...rv(qT, f.q)) > 2.5) { f.q.copy(qT); f.w = [0, 0, 0]; return fr; } // (a jump: no swing round)
+  const n = Math.max(1, Math.ceil(c.w * dt / 0.25)), h = dt / n; let shown = 0;
+  for (let i = 0; i < n; i++) {
+    const e = rv(qT, f.q), a = bioClamp(bioWant(e, wT, f.w, c), c); shown = Math.max(shown, Math.hypot(...a) / c.a);
+    for (let k = 0; k < 3; k++) f.w[k] += a[k] * h;
+    const wl = Math.hypot(...f.w); if (wl > 1e-9) { _bq.setFromAxisAngle(_bv.set(f.w[0] / wl, f.w[1] / wl, f.w[2] / wl), wl * h); f.q.premultiply(_bq).normalize(); }
+  }
+  bioStats.peakS.frame = Math.max(bioStats.peakS.frame || 0, shown);
+  _bm.makeRotationFromQuaternion(f.q); const R = new THREE.Vector3(), U = new THREE.Vector3(), Fn = new THREE.Vector3(); _bm.extractBasis(R, U, Fn);
+  return { R: [R.x, R.y, R.z], U: [U.x, U.y, U.z], F: [-Fn.x, -Fn.y, -Fn.z] };
+}
+// the pose shown: each part of the asked-for pose followed under its clamp (Settings → Body forces: Unlimited shows the target as is)
+function bioPose(P, dt) {
+  if (settings.forces === 'free' || !(dt > 0)) return P;
+  bioStats.n++;
+  const nv = (v) => { const l = Math.hypot(...v) || 1; return v.map((x) => x / l); };
+  const bend = bioFollow('bend', [...P.bend], dt, BIO.bend), neck = bioFollow('neck', [P.neckPitch || 0], dt, BIO.neck)[0];
+  return {
+    pelvis: bioFollow('pelvis', P.pelvis, dt, BIO.pelvis), frame: bioFrame(P.frame, dt), bend, neckPitch: neck,
+    feet: P.feet.map((f, i) => bioFollow('foot' + i, f, dt, BIO.feet, 'feet')), toes: P.toes.map((t, i) => nv(bioFollow('toe' + i, t, dt, BIO.pole, 'pole'))),
+    hands: P.hands.map((f, i) => bioFollow('hand' + i, f, dt, BIO.hands, 'hands')),
+    kneePole: P.kneePole.map((t, i) => nv(bioFollow('knee' + i, t, dt, BIO.pole, 'pole'))), elbowPole: P.elbowPole.map((t, i) => nv(bioFollow('elbow' + i, t, dt, BIO.pole, 'pole'))),
+  };
+}
+// solve the shown pose; then each knee and elbow follows under its limb's clamp, and the limb is solved again bending toward
+// where it got to (the bones keep their lengths). A knee whose direction lies along the hip-to-foot line is ill-defined and
+// flips from frame to frame; this keeps it where it could physically be.
+function bioSolve(P, dt) {
+  const Q = bioPose(P, dt); let sol = SK.solvePose(Q);
+  if (settings.forces === 'free' || !(dt > 0)) return sol;
+  const J = sol.J, mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+  const pole = (name, a, m, b, c) => { const f = bioFollow(name, J[m], dt, c, name.slice(0, -1)), o = mid(J[a], J[b]); return [f[0] - o[0], f[1] - o[1], f[2] - o[2]]; };
+  return SK.solvePose({ ...Q, kneePole: ['L', 'R'].map((s) => pole('kneeJ' + s, 'hip' + s, 'knee' + s, 'ankle' + s, BIO.feet)), elbowPole: ['L', 'R'].map((s) => pole('elbowJ' + s, 'shoulder' + s, 'elbow' + s, 'hand' + s, BIO.hands)) });
+}
+function bioEye(dt) { // the walking camera (placed from the posture, not the solved head): followed as the head is
+  const e = body.eye; if (body.bio && (rig.over || settings.forces === 'free')) body.bio.eye = null; // (restarts from wherever a script leaves the eye)
+  if (!e || settings.forces === 'free' || rig.over || !(dt > 0)) return;
+  const [x, y, z] = bioFollow('eye', [e.x, e.y, e.z], dt, BIO.eye); e.x = x; e.y = y; e.z = z; player.eye = y;
 }
 // the whole body: the walking posture and the posture on hands, mixed by how much the hands are needed
 function bodyPose() {
@@ -4850,7 +4957,8 @@ function updateBody(dt, moved, run, dx, dz, fwdInput) {
     feedbackMap(body.st, ux, uz); // (a swinging foot picks its share up next frame, with its arc)
     sol = SK.solvePose(bodyPose()); body.sol = sol;
   }
-  if (body.st && !four) for (const ft of body.feet) if (ft.t >= 1) { // a planted leg takes its share at the knee (the foot stays put)
+  if (settings.forces !== 'free') { sol = bioSolve(bodyPose(), dt); body.sol = sol; } // shown: the asked-for pose under plausible forces
+  if (body.st && !four && settings.forces === 'free') for (const ft of body.feet) if (ft.t >= 1) { // a planted leg takes its share at the knee (the foot stays put; not with plausible forces: it is applied after the limits)
     const s = ft.side < 0 ? 'L' : 'R', a = body.st.off[CAP['thigh' + s]], b = body.st.off[CAP['shin' + s]], k = sol.J['knee' + s];
     const o = [a[0] * 0.5 + b[0] * 0.75, a[1] * 0.5 + b[1] * 0.75, a[2] * 0.5 + b[2] * 0.75], l = Math.hypot(...o), m = l > 0.2 ? 0.2 / l : 1;
     k[0] += o[0] * m; k[1] += o[1] * m; k[2] += o[2] * m;
@@ -5170,6 +5278,7 @@ fMotion.addEventListener('change', () => { settings.motion = fMotion.value; save
 fView.value = settings.view || 'first'; fBody.value = settings.body || 'hidden';
 fView.addEventListener('change', () => { settings.view = fView.value; saveSettings(); });
 fBody.addEventListener('change', () => { settings.body = fBody.value; saveSettings(); });
+$('fForces').value = settings.forces || 'limited'; $('fForces').addEventListener('change', () => { settings.forces = $('fForces').value; body.bio = null; saveSettings(); });
 syncForm();
 $('bDice').addEventListener('click', () => { fSeed.value = 1 + Math.floor(Math.random() * 99999); });
 $('bRegen').addEventListener('click', () => {
@@ -5431,6 +5540,7 @@ window.foothold = {
         out.push(`t ${t.toFixed(2)} ${(g.pen * 100).toFixed(0)}cm ${g.what} | pel ${loc(J.pelvis)} chest ${loc(J.chest)} head ${loc(J.head)} | kneeL ${loc(J.kneeL)} ankL ${loc(J.ankleL)} kneeR ${loc(J.kneeR)} ankR ${loc(J.ankleR)} | hL ${loc(J.handL)} hR ${loc(J.handR)} short ${['footL','footR','handL','handR'].map((k) => (sol.short[k] * 100).toFixed(0)).join('/')}`); }
       return `H ${B.H.toFixed(2)} D ${B.D.toFixed(2)} top ${B.Ht.toFixed(2)}\n` + out.join('\n'); }, barrier: () => body.barrier, measure: () => ledgeAhead(player.x, player.z, -Math.sin(player.yaw), -Math.cos(player.yaw)), supportAt: (x, z) => supportAt(x, z), gapAhead: (x, z, ux, uz) => gapAhead(x, z, ux, uz, rig.feet), shimmyFits: (x, z, ux, uz) => shimmyFits(x, z, ux, uz, rig.feet), rig: () => rig, stepOverAt: (x, z, s, ux, uz) => stepOverAt(x, z, s, ux, uz), footSupport: (x, z) => footSupport(x, z), bodyBlocked: (x, z, ux, uz) => { const r = bodyBlocked(x, z, ux, uz, rig.feet); return r ? colWhy : ''; } },
   gym: { pen: () => gymPen(), progress: () => gymProgress(), get at() { return gymAt; }, go: (i) => goStation(i), run: (i, secs) => gymRun(i, secs), penDiag: () => gymRun.penDiag, capture: () => captureSpot(), stationOrigin },
+  bio: { BIO, stats: bioStats, reset() { bioStats.n = 0; bioStats.over = {}; bioStats.peakT = {}; bioStats.peakS = {}; } },
   loco: { stemAt, stemUnder, assess, grade, holdsNear, placeContact, stability, quadAllows, limbAt, GAIT4, TRACTION, get need() { return body.need; }, get q() { return body.q; } }, col: { topOf, supportAt, ceilingAt, duckPosture, saplings: () => saplingCells, steerAround, stemPushOut, stemObstacles, footSupport, supportGrad, slopeAt, trunkHit, solids: () => solids }, rig,
   pause() { running = false; },
   info() { return { near: Object.fromEntries(Object.entries(near.b).map(([k, v]) => [k, v.n])), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries }; },

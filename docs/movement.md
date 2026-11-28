@@ -430,3 +430,69 @@ footing: the next step, not a roof. It still mantles, on its feet.
   - eye height jerk 42.2 against 33.6;
   - frames standing still while pushing: 286 against 469. With every branch an obstacle again, more of the way is
     closed.
+
+## Step 11: plausible forces
+
+The request: the skeleton moves only as plausible forces and torques could move it. A little "magic" may hold it up or
+track where the player wants to be, but no larger than plausible, so the skeleton does not rattle.
+
+**What it is.** The gait, the crawl and the scripts still produce a target pose each frame. The skeleton shown follows
+it, each part accelerating no faster than a plausible force or torque could drive it (`BIO`, `bioPose`, `bioSolve`).
+- **The follower, per channel:** it closes the gap toward the target, with the target's own velocity fed forward so a
+  steady motion is not lagged. Its acceleration is clamped, and it brakes in time not to overshoot (a clamped spring
+  overshoots, and did, pushing the head into the slab of gym station 25).
+- **Limits:** acceleration = torque / the inertia it turns, or force / mass. These are rough adult numbers: 70 kg,
+  segment masses after Winter's tables, peak joint torques from isometric strength data.
+
+  | channel | limit | from |
+  |---|---|---|
+  | pelvis (the whole body) | 8 m/s² sideways; 15 up; 10 down | friction 0.8 g; ground reaction up to 2.5 body weights; no faster than falling |
+  | trunk about the hips | 40 rad/s² | ~200 N·m over ~5 kg·m² |
+  | spine bend | 60 rad/s² | ~150 N·m over ~2.5 kg·m² |
+  | head | 300 rad/s² | ~40 N·m over ~0.13 kg·m² |
+  | foot (and knee) | 60 m/s² | hip ~120 N·m over ~1.9 kg·m², at 0.9 m |
+  | hand (and elbow) | 100 m/s² | shoulder ~70 N·m over ~0.4 kg·m², at 0.6 m |
+  | the walking camera | as the pelvis | it rides the body |
+
+  The limits are on acceleration beyond what holds a part against gravity: the support is the allowed magic.
+- **Not forward dynamics.** The channels are limited one by one, not solved as one coupled body. Reaction forces
+  (a swung leg pushing back on the trunk) are not modelled.
+- **Knees and elbows** are limited as joints. After solving, each follows under its limb's limit, and the limb is
+  solved again bending toward where it got to (bone lengths exact).
+- **Two fixes in the solver** (`skeleton.js`), for both settings:
+  - The last 4 cm of a limb's reach is eased in ("soft IK"). Near full extension the middle joint swings fastest for
+    the least change in reach.
+  - A pole within about 17° of the limb's line blends toward a fallback side: knees forward, elbows back and out.
+- **Scripts are timed to the limits** (`bioTime`). Between keys a pose eases with peak acceleration 6·d/t². Each stretch
+  of the mantle is lengthened until the pelvis, feet and hands fit. Asked to rise faster than it could, the pelvis
+  lagged while the planted foot did not, and the leg folded to 0.15 m between hip and ankle, where the knee flails.
+  A 1.4 m mantle now takes about twice as long.
+- **The low-window mantle** ends with the trunk level (it ended upright, the head 0.6 m into the slab). The camera guard
+  searches up to 0.8 m.
+- The knee push from body collisions (applied after the pose is solved) is skipped with plausible forces.
+
+Settings → **Body forces**: Plausible (default) or Unlimited (the target pose as is, as before).
+
+**Measured** (24 crossings of 8 fallen crowns, plant collisions on; the shown skeleton's joint accelerations from
+frame-to-frame second differences, m/s²: median / 99th percentile / maximum):
+
+| joint | Unlimited | Plausible |
+|---|---|---|
+| pelvis | 5 / 117 / 3755 | 9 / 17 / 17 |
+| chest | 6 / 128 / 3755 | 10 / 22 / 36 |
+| head | 6 / 137 / 3755 | 10 / 33 / 85 |
+| hand | 7 / 129 / 744 | 7 / 58 / 117 |
+| ankle | 8 / 441 / 2758 | 10 / 112 / 4089 |
+| knee | 16 / 875 / 4822 | 17 / 269 / 3484 |
+| camera | 3 / 320 / 7010 | 6 / 33 / 1993 |
+
+- The medians rise a little: motion that was jagged is now spread over more frames.
+- **Remaining spikes:** the joint maxima for knee and ankle, and the camera maximum (the camera guard moves the eye out
+  of a solid in one step). Their 99th percentiles are within or near the limits, not at them.
+- **The asked-for pose exceeded a limit** in about a quarter of frames for the pelvis and feet (2374 and 2959 of 14800
+  frames, the busiest channels). The gait and controller often ask for more than a body could do; the limits absorb it.
+- **Crown measures** against step 10:
+  - eye height jerk 33.6 → 20.2;
+  - mantles that began with a duck 4 of 20 → 6 of 22;
+  - reversals 12 → 31; distance 306 → 273 m (mantles take twice as long: 3077 frames against 1437).
+- Gym 34/34. Frame cost unchanged: median 0.6 ms (plant collisions off), 1.9 ms (on).
