@@ -837,3 +837,38 @@ there a moment like a gargoyle, and then jumped off. The landing was too soft.
   in; one frame at the very start, with the walking hand still beside a branch, is not counted. Pelvis peaks
   0.19–0.40 m above the top (0.17–0.41 before).
 - Gym 36/36.
+
+## Step 22: no speed boost; lower or farther; the view tilts again
+
+From play:
+1. It was too fast, like a magnet pulling you onto the barrier and launching you off it. Parkour games often make
+   stunts a speed boost; this should not be that exaggerated.
+2. The legs sometimes swung up the higher side of an angled barrier. "Lower or wider" in step 15 should have been
+   "lower or farther": met at an angle, swinging the legs forward, the way you are heading along it, is easier.
+3. The view no longer tilted as the legs came up to the side (lost when the old vault was replaced in step 6).
+
+**The rules now:**
+- **Speed.** The pace into the swing is yours, with no minimum (it was raised to at least 1.2 m/s). The jump keeps 85% of
+  it going forward (`SWING_KEEP`). The seat slows at 2 m/s² again. You leave no faster than you arrived.
+- **Side** (`swingSide`).
+  - Heading along the barrier favours swinging the legs that way, by 1.2 × the sine of the angle (`SIDE_FAR`), against
+    the summed top heights.
+  - Heights are now read where the hands grip and the feet land, 0.3 and 0.6 m out to each side (they were read at the
+    near edge, 0.35 and 0.55 m out).
+- **The view** rolls with the trunk's lean during any scripted move: the chest's tilt toward the view's right, eased in,
+  up to 0.6 rad (the camera turns by half of it, as for ducking).
+
+**Measured** (gym, pushing forward; the published step 21 build in brackets):
+
+| station | approach speed | fastest forward speed until 2 m past | to 2 m past (s) | camera roll, most (rad) |
+|---|---|---|---|---|
+| wall 0.85 m | 1.58 | 1.66 (1.74) | 2.38 (2.20) | 0.48 (0) |
+| wall 1.1 m | 1.59 | 1.64 (1.64) | 2.43 (2.20) | 0.46 (0) |
+| wall 1.4 m | 1.57 | 1.64 (1.62) | 2.45 (2.20) | 0.48 (0) |
+| rail 1.0 m | 1.57 | 1.64 (1.70) | 2.35 (2.18) | 0.46 (0) |
+
+- The fastest speeds are the walk after the landing. The swing itself goes forward at 0.85 of the approach, and slower
+  over a wide top.
+- A level wall met 23° off square, either way: the legs swung the way of heading in both. The step 21 build also did
+  here, by its alternation; the rule now makes it so.
+- Gym 36/36.

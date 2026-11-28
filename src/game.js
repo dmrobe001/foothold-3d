@@ -3795,7 +3795,9 @@ function assess(x, z, px, pz) {
 const LAND_GIVE = 0.12; // how much the knees give on landing, per m/s of impact (0.3 before: too soft)
 const AIR_ACC = 1; // m/s²: steering in the air
 const CTRL_ACC = 8; // m/s²: the controller's own acceleration with plausible forces (friction, 0.8 g)
-const SWING_HANDS = 4, SWING_VY = 3.2, SEAT_DRAG = 1, SCOOT_VY = 0.6; // the swing's path: the hands take 4 m/s² of the body's weight in the air; the legs' spring up to 3.2 m/s; the seat slows at 2 m/s² on the top; off the edge, the hands push up at 0.6 m/s
+const SIDE_FAR = 1.2; // how much heading along a barrier (per unit sine of the angle) favours swinging the legs that way, against its top's height (summed over 4 points, m)
+const SWING_KEEP = 0.85; // the share of the approach speed the jump keeps going forward
+const SWING_HANDS = 4, SWING_VY = 3.2, SEAT_DRAG = 2, SCOOT_VY = 0.6; // the swing's path: the hands take 4 m/s² of the body's weight in the air; the legs' spring up to 3.2 m/s; the seat slows at 2 m/s² on the top; off the edge, the hands push up at 0.6 m/s
 const SCOOT_REACH = 0.7, ROLL_DROP = 0.25, SEAT_REACH = 0.8, SCOOT_V = 1.6; // the seat: a far edge within 0.7 m of the footholds is slid off; a floor beyond within 0.25 m of the top is rolled up onto, within 0.8 m the feet reach it first; deeper, the seat slides off at 1.6 m/s
 const SWING_V = 0.5; // m/s: arriving faster than this (and pushing on), the mantle is the flowing swing
 const STEP_DOWN = 0.45; // m: a drop walked off as a step down; deeper is a fall
@@ -3924,10 +3926,10 @@ function overScript(mode, B) {
     // and feet are keyed at the phases' times. Lengths in the ledge's frame (a along its normal from the near face, y up from your footing).
     const { Ht, fL, aL, D, a0 } = B, gE = 9.8 - SWING_HANDS, dip = clamp(0.25 * (H - 0.9), 0.04, 0.18);
     const deep = D - aL > SCOOT_REACH, drop = deep ? 0 : (B.beyond === null || B.beyond === undefined ? Infinity : Ht - B.beyond), roll = drop <= ROLL_DROP;
-    const v0 = clamp(B.v, 0.6, 5), vb = Math.max(v0, 1.2), y0 = S, yB = S - 0.03 - dip, yS = Ht + 0.14, yA = Ht + 0.18, Tp = 0.2;
+    const v0 = clamp(B.v, 0.6, 5), vb = v0, y0 = S, yB = S - 0.03 - dip, yS = Ht + 0.14, yA = Ht + 0.18, Tp = 0.2;
     const aA = deep ? aL + 0.05 : clamp(D * 0.5, 0.05, D), aE = roll ? -1 : D + FOOT + 0.06; // the arc's peak over the middle of the top; where it is off the far edge
     let vy = gE * (-Tp / 2 + Math.sqrt(Tp * Tp / 4 + 2 * (yA - yB) / gE)); vy = Math.min(vy, SWING_VY); // the spring for a peak just above sitting height
-    const tAp = vy / gE; let vf = vb, aB = aA - ((vb + vf) / 2 * Tp + vf * tAp); // taking off as far back as the pace carries it
+    const tAp = vy / gE; let vf = vb * SWING_KEEP, aB = aA - ((vb + vf) / 2 * Tp + vf * tAp); // taking off as far back as the pace carries it (the jump costs forward speed: no boost)
     if (aB < a0 + 0.05) { aB = a0 + 0.05; vf = Math.max(0.5, (aA - aB - vb * Tp / 2) / (Tp / 2 + tAp)); } // (too close for the pace: the peak comes with less speed)
     const T1 = Math.max(0.1, 2 * (aB - a0) / (v0 + vb)), aP = aB + (vb + vf) / 2 * Tp, yP = yB + 0.5 * vy * Tp;
     const t1 = T1, t2 = t1 + Tp, tA = t2 + tAp, yAt = (q) => yP + vy * q - 0.5 * gE * q * q;
@@ -4040,10 +4042,13 @@ function mantlePlan(M, P0) {
   if (sc.flow) { const fk = overWorld(B, { ...sc, ks: sc.flow }, side, P0); o.flowKeys = fk; o.scoot = !!sc.scoot; o.flowDur = bioTime(fk, sc.flowDur || sc.dur); fk.dur = o.flowDur; if (swing) fk[0].vel = keys[0].vel; o.branch = keys[sc.pre].t * dur; } // (seconds into the script when the ending is chosen: the lead foot on the top)
   return o;
 }
-// the side the swing's legs go to: where the top is lower, or (as low) more open above; level and open both ways, alternating.
+// the side the swing's legs go to: where the top is lower or farther (met at an angle, the way you are heading along it), or more open
+// above; all equal, alternating.
 // -1: toward -s (left of the ledge's frame), +1: toward +s.
 function swingSide(M) {
-  const cost = (sd) => { let c = 0; for (const a of [0.05, M.aL]) for (const q of [0.35, 0.55]) { const x = M.O[0] + M.n[0] * a + M.r[0] * q * sd, z = M.O[1] + M.n[1] * a + M.r[1] * q * sd, top = Math.max(barrierTop(x, z, M.y0), 0);
+  const vc = body.vcmd || [0, 0], vl = Math.hypot(vc[0], vc[1]) || 1, along = (vc[0] * M.r[0] + vc[1] * M.r[1]) / vl; // heading along it (+: toward +s): the barrier is farther that way, and the legs swing forward more easily
+  const G = M.grip ? M.grip[0] : 0.05;
+  const cost = (sd) => { let c = -sd * along * SIDE_FAR; for (const a of [G, M.aL]) for (const q of [0.3, 0.6]) { const x = M.O[0] + M.n[0] * a + M.r[0] * q * sd, z = M.O[1] + M.n[1] * a + M.r[1] * q * sd, top = Math.max(barrierTop(x, z, M.y0), 0);
     c += top + (colBlocked(x, z, M.y0 + top + 0.05, M.y0 + top + 0.6) ? 0.8 : 0) + (trunkHit(x, z) ? 2 : 0); } return c; };
   const l = cost(-1), r = cost(1);
   return Math.abs(l - r) < 0.1 ? (body.mantleSide = -(body.mantleSide || 1)) : (body.mantleSide = l < r ? -1 : 1);
@@ -4134,7 +4139,8 @@ function overBody(dt) { // the script owns the body: its pose, the eye in its he
   const J = sol.J, F = sol.head ? sol.head.F : P.frame.F;
   body.feet.forEach((ft, i) => { const a = J[i ? 'ankleR' : 'ankleL']; ft.x = ft.tx = ft.sx = a[0]; ft.y = ft.ty = ft.sy = a[1] - OVER_A; ft.z = ft.tz = ft.sz = a[2]; ft.t = 1; ft.ln = null; });
   body.hands.forEach((h, i) => { const a = J[i ? 'handR' : 'handL']; h.p.set(a[0], a[1], a[2]); h.v.set(0, 0, 0); h.hold = null; h.sw = null; });
-  body.pelvis.y = J.pelvis[1]; body.base = J.pelvis[1]; body.pvy = body.vbase = 0; body.lean = body.roll = body.crouch = body.duck = body.duckLean = 0; body.vlean = body.vroll = body.vcrouch = 0;
+  body.pelvis.y = J.pelvis[1]; body.base = J.pelvis[1]; body.pvy = body.vbase = 0; body.lean = body.crouch = body.duck = body.duckLean = 0; body.vlean = body.vroll = body.vcrouch = 0;
+  { const yw = player.yaw, Rx = Math.cos(yw), Rz = -Math.sin(yw), U = sol.chest.U, rollT = Math.atan2(U[0] * Rx + U[2] * Rz, Math.max(0.2, U[1])); body.roll += (clamp(rollT, -0.6, 0.6) - body.roll) * Math.min(1, dt * 10); } // the trunk leaning to the side as the legs swing up: the view tilts with it
   const fh = Math.hypot(P.frame.F[0], P.frame.F[2]); if (fh > 0.3) body.yaw = body.shimYaw = Math.atan2(-P.frame.F[0], -P.frame.F[2]);
   body.eye = { x: J.head[0] + F[0] * 0.08, y: J.head[1] + 0.02, z: J.head[2] + F[2] * 0.08 }; player.eye = body.eye.y;
   body.speed = 0; body.moving = false; body.straddle = false; body.mix = 0; body.four = false; body.need = 0;
@@ -4178,7 +4184,7 @@ function movePlayer(dt) {
     const P = overPose(O.keys, O.t);
     player.x = P.pelvis[0]; player.z = P.pelvis[2]; rig.feet = Math.min(P.feet[0][1], P.feet[1][1]) - OVER_A; needT = 0;
     if (overLoad(O, P)) { /* something gave way: you drop from here */ }
-    else if (O.t >= 1) { rig.over = null; body.overContacts = null; rig.feet = footSupport(player.x, player.z); rig.vy = 0; supportRef = rig.feet; if (O.mode === 'swing') { const ve = O.scoot ? O.vEnd : Math.max(O.vEnd, 1.2); body.vcmdNext = [O.B.n[0] * ve, O.B.n[1] * ve]; if (O.scoot) { const P = overPose(O.keys, 1); rig.feet = Math.min(P.feet[0][1], P.feet[1][1]) - OVER_A; rig.vy = Math.max(O.vyEnd, -3) + SCOOT_VY * 0.5; body.airborne = true; } } // (the swing leaves at the speed its path has: off the edge into the air, or walking on)
+    else if (O.t >= 1) { rig.over = null; body.overContacts = null; rig.feet = footSupport(player.x, player.z); rig.vy = 0; supportRef = rig.feet; if (O.mode === 'swing') { const ve = Math.min(O.scoot ? O.vEnd : Math.max(O.vEnd, 1.0), O.B.v || O.vEnd); body.vcmdNext = [O.B.n[0] * ve, O.B.n[1] * ve]; if (O.scoot) { const P = overPose(O.keys, 1); rig.feet = Math.min(P.feet[0][1], P.feet[1][1]) - OVER_A; rig.vy = Math.max(O.vyEnd, -3) + SCOOT_VY * 0.5; body.airborne = true; } } // (the swing leaves at the speed its path has: off the edge into the air, or walking on)
       else if (O.flowing) body.vcmdNext = [O.B.n[0] * 1.2, O.B.n[1] * 1.2]; if (O.flowing && O.scoot) { const P = overPose(O.keys, 1); rig.feet = Math.min(P.feet[0][1], P.feet[1][1]) - OVER_A; rig.vy = 0; body.airborne = true; body.vcmdNext = [O.B.n[0] * SCOOT_V, O.B.n[1] * SCOOT_V]; } } // (scooting off: the seat leaves the edge at a pace, the feet dangling; they land where they will) // (hopping down: off the top's height, rising, at a jog) // (walking on: the controller leaves at walking pace, not from rest)
   } else {
     let dx = (-sy * f + cy * s) * speed * dt, dz = (-cy * f - sy * s) * speed * dt;
