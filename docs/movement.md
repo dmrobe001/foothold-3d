@@ -370,3 +370,30 @@ duck). Two causes:
 The eye's jerk barely changed. The routes differ between builds (a small change sends the walk across different
 branches), so this total is a rough guide. With the step down but without the diagonal, it was 40.1 (reversals 75).
 Without the knees giving on a step down, it was 61.0.
+
+## Step 9: thin branches yield; a steadier head on hands; captures keep the crown
+
+From play (a captured crown, now gym station 34): a branch across the way, top at 1.0 m with 0.84 m under it, branches
+underneath. Going over felt right; the body crawled under, ducking fully, then mantled from underneath. While crawling
+the head whipped about.
+
+**Why it crawled.** The branch was measured as a ledge 1.4 m out, but the mantle was refused: the window over its top
+was 0.14 m, closed by a 5.7 cm branch 1.15 m up, 0.4 m beyond the edge. A body pushes a branch that thin aside. Now
+any stem or branch under 8 cm thick (`YIELD_R`, radius 0.04 m) does not close the window over a mantle.
+
+**Why the head whipped.** On hands, the body turned to face up the slope under it, and the slope was read from whatever
+was underfoot. In branch clutter that swings from one branch to the next, and the head, well ahead of the hips, swung
+with it. Now on hands the body faces up a slope only if it is the ground's own, or a log at least 0.2 m thick that you
+are climbing along; otherwise the way you are going. It turns at most 1.5 rad/s (`QUAD_TURN`). The camera's horizontal
+position follows the head through a low-pass (0.18 s, `EYE_LAG`), blended in as the hands come down.
+
+**Captures now include a crown's branches** (the branch solids that exist while plant collisions are on), as logs.
+Captured stations kept as tests live in `src/captured.js`.
+
+**Measured:**
+- The captured spot, in the forest (plant collisions on): looking ahead it now mantles over the branch; it never goes on
+  hands. Looking down (forcing the way under), crawling turned the body 1.06 rad in all (2.17 before), and the camera
+  moved 0.64 m sideways (2.09 before).
+- Gym: 34/34. Station 34 expects a mantle with no hands. The build before this step crawled, ducked fully, then mantled.
+- Crowns (the step 7 and 8 measures): reversals 31 → 12; path turning 0.64 → 0.44 rad/m; mantles that began with a
+  duck 5 of 18 → 3 of 19; eye height jerk 51.7 → 42.2.

@@ -3127,6 +3127,8 @@ function captureSpot(R = 5) {
   const turn = new THREE.Matrix4().makeRotationY(-Y);
   for (const a of solids.values()) for (const o of a) {
     if (seen.has(o)) continue; seen.add(o);
+    if ((o.limb || o.branch) && o.ya0 !== undefined && near2(o.x, o.z, 1)) { // a crown's branches (solid while plant collisions are on): as logs, by their bottoms
+      const r = Math.max(o.r || 0, o.r0 || 0, o.r1 || 0); feats.push({ log: [...loc(o.x0, o.z0), q(o.ya0 - r - g0), ...loc(o.x1, o.z1), q(o.ya1 - r - g0)], r: q(Math.max(0.01, r)), branch: 1 }); }
     if (o.kind === 'ell' && near2(o.x, o.z, 1)) { const [x, f] = loc(o.x, o.z), ux = o.ux * Math.cos(Y) - o.uz * Math.sin(Y), uz = o.ux * Math.sin(Y) + o.uz * Math.cos(Y); feats.push({ wad: [x, f, q(o.y - g0)], a: [q(o.ax), q(o.ay), q(o.az)], u: [q(ux), q(uz)] }); }
     if (o.kind === 'mesh' && o.big !== undefined && near2(o.x, o.z, 3)) {
       const M = new THREE.Matrix4().fromArray(o.e); M.elements[12] -= px; M.elements[13] -= g0; M.elements[14] -= pz; M.premultiply(turn);
@@ -3791,6 +3793,8 @@ function assess(x, z, px, pz) {
 // Only solids count: a slope of the ground rising ahead is walked (or climbed on hands), not mantled.
 const STEP_DOWN = 0.45; // m: a drop walked off as a step down; deeper is a fall
 const STEER_TURN = 3; // rad/s: how fast the way you walk may swing off the way you push (steering round things)
+const QUAD_TURN = 1.5; // rad/s: the fastest the body turns on hands (the head is well ahead of the hips: turning swings it)
+const YIELD_R = 0.04; // m: a branch thinner than this (radius) is pushed aside, not a ceiling over a mantle
 const MANTLE_MAX = 1.7, MANTLE_LOW = 1.0; // the highest top the hands press you up onto; below MANTLE_LOW (about the waist) a mantle ranks with a hop
 function ledgeAhead(px, pz, ux, uz, reach = 1.6) {
   const feet = rig.feet, h = (x, z) => barrierTop(x, z, feet), rx = -uz, rz = ux;
@@ -3810,8 +3814,12 @@ function ledgeAhead(px, pz, ux, uz, reach = 1.6) {
   let H = 0; for (let a = 0.015; a <= aL + 0.001; a += 0.03) H = Math.max(H, h(...at(a, 0)));
   const Ht = Math.max(fL, fR);
   if (Math.min(fL, fR) < STEP * 0.6 || Math.abs(fL - fR) > 0.35 || Ht > MANTLE_MAX || H > MANTLE_MAX + 0.1) return null;
-  let C = Infinity; // the window over the top: headroom above the footholds, from the near side to a little past them
-  for (let a = -0.3; a <= aL + 0.4; a += 0.05) for (const [lo] of colSpans(...at(a, 0))) if (lo > feet + Ht - 0.02) C = Math.min(C, lo - feet - Ht);
+  let C = Infinity; // the window over the top: headroom above the footholds, from the near side to a little past them. A branch
+  // under 8 cm thick is pushed aside by the body, so it does not close the window
+  for (let a = -0.3; a <= aL + 0.4; a += 0.05) { const [x, z] = at(a, 0); for (const o of solidsAt(x, z)) {
+    if (o.kind === 'log' && Math.max(o.r || 0, o.r0 || 0, o.r1 || 0) < YIELD_R) continue;
+    logUnder = -Infinity; if (topOf(o, x, z) === -Infinity) continue;
+    const lo = o.kind === 'box' || (o.kind === 'log' && o.r0 !== undefined) ? logUnder : -Infinity; if (lo > feet + Ht - 0.02) C = Math.min(C, lo - feet - Ht); } }
   if (C < CLEAR4) return null;
   return { O, n: [nx, nz], r: [sx, sz], H, D, aL, fL, fR, Ht, C, dist, y0: feet };
 }
@@ -4142,7 +4150,18 @@ function movePlayer(dt) {
   }
   const moved = Math.hypot(player.x - px, player.z - pz);
   updateBody(dt, moved, run, player.x - px, player.z - pz, f);
+  smoothEye(dt);
   guardEye();
+}
+// On hands the head rides on a body that sways sideways before each limb lifts and turns with the surface: the camera's
+// horizontal position follows it through a low-pass (time constant EYE_LAG s), blended in as the hands come down.
+const EYE_LAG = 0.18;
+function smoothEye(dt) {
+  const e = body.eye, k = smoothstep(0, 1, body.mix || 0); if (!e) return;
+  const S = body.eyeS; body.eyeS = { x: e.x, z: e.z };
+  if (!S || k <= 0 || rig.over || Math.hypot(e.x - S.x, e.z - S.z) > 0.5) return; // (a teleport or a scripted move: no lag)
+  const a = lerp(1, 1 - Math.exp(-dt / EYE_LAG), k);
+  e.x = S.x + (e.x - S.x) * a; e.z = S.z + (e.z - S.z) * a; body.eyeS = { x: e.x, z: e.z };
 }
 // The body is soft (it may press into what it climbs over or crawls under), but the camera is not: an eye inside a solid
 // (a 0.1 m ball: the near plane) is moved the least distance out of it, down, back, sideways or up, up to 0.4 m.
@@ -4178,13 +4197,15 @@ function surfaceFrame(dt, ux, uz, moving) {
   else { supportRef = rig.feet; const e = 0.3, gx = (supportAt(x + e, z) - supportAt(x - e, z)) / (2 * e), gz = (supportAt(x, z + e) - supportAt(x, z - e)) / (2 * e); n = V.nrm([-gx, 1, -gz]); }
   let yawT = player.yaw;
   if (body.need > 0.3) {
-    const hh = Math.hypot(n[0], n[2]);
-    if (st && st.slope > 0.3) yawT = Math.atan2(-st.ah[0], -st.ah[1]);
-    else if (hh > 0.3) yawT = Math.atan2(n[0], n[2]); // uphill is against the normal's lean
+    // on hands: up a steep log you are climbing along, or up steep ground (the terrain's own slope, not the clutter of branches
+    // under you, whose slope swings from one branch to the next); otherwise the way you are going, or as you are
+    const e = 0.5, tgx = (ground(x + e, z) - ground(x - e, z)) / (2 * e), tgz = (ground(x, z + e) - ground(x, z - e)) / (2 * e), tg = Math.hypot(tgx, tgz);
+    if (st && st.slope > 0.3 && Math.max(st.rx || 0, st.rz || 0) >= 0.1) yawT = Math.atan2(-st.ah[0], -st.ah[1]);
+    else if (tg > 0.3) yawT = Math.atan2(-tgx, -tgz); // uphill (facing (-sin, -cos) of the yaw along the gradient)
     else if (moving) yawT = Math.atan2(-ux, -uz);
     else yawT = body.yaw;
   }
-  let dy = yawT - body.yaw; dy -= Math.round(dy / 6.2832) * 6.2832; body.yaw += dy * Math.min(1, dt * 5);
+  let dy = yawT - body.yaw; dy -= Math.round(dy / 6.2832) * 6.2832; body.yaw += body.need > 0.3 ? clamp(dy * Math.min(1, dt * 5), -QUAD_TURN * dt, QUAD_TURN * dt) : dy * Math.min(1, dt * 5);
   q.n = q.n ? V.nrm(V.add(q.n, V.sub(n, q.n), Math.min(1, dt * 6))) : n;
   const F = [-Math.sin(body.yaw), 0, -Math.cos(body.yaw)], a = V.nrm(V.sub(F, q.n.map((v) => v * V.dot(F, q.n))));
   let R = V.nrm(V.cross(a, q.n)); if (R[0] * Math.cos(body.yaw) - R[2] * Math.sin(body.yaw) < 0) R = R.map((v) => -v);

@@ -29,6 +29,7 @@
 // pitch: where you look while walking it (radians, + up; default -0.12). Over-or-under choices follow the gaze.
 import { N, NF, WORLD, HALF, GEOLOGY, SPECIES, standStats, treeHeight, clamp } from './worldgen.js';
 import { trunkProfile } from './deadfall.js';
+import { CAPTURED } from './captured.js';
 
 // Every station is plain solids (boxes, and round rails), so what it tests is spatial: the size of a gap, the height of a
 // barrier, what lies beyond. Side walls close the lane, so the opening is the only way through. Each station names the
@@ -83,6 +84,7 @@ export const STATIONS = [
   st('Wall 0.4 m, slowly', 'step onto it, then down', [wall(0.4)], { cross: true, hands: false, stepOn: 0.4 }, { slow: true }),
   st('Rail at 0.5 m, slowly', 'step onto it, then down', [rail(0.5)], { cross: true, hands: false, stepOn: 0.5 }, { slow: true }),
   st('Wall 0.7 m, slowly', 'low mantle, then down', [wall(0.7)], { cross: true, stepOn: 0.7, mantle: true }, { slow: true }),
+  ...CAPTURED,
 ];
 
 const COLS = 6, DX = 14, DZ = 18;
