@@ -640,3 +640,20 @@ From play: the legs should swing toward the lower (more open) side of the barrie
 
 **Measured:** two new gym stations, a 1.0 m wall that is 1.3 m on its right half (station 34) and on its left half
 (station 35). The legs went left and right respectively. Gym 36/36.
+
+## Step 16: hopping down off a shallow top
+
+From play: walking on over a shallow ledge, the free foot should not step down. Once it is through and dangling off the
+far side, push off the ledge and hop down.
+
+- **When:** the swing's walk-on ending, over a top under 0.5 m deep (`HOP_DEPTH`) with the floor beyond more than
+  0.3 m lower (`HOP_DROP`), and no more than 2.0 m lower. Deeper tops, or a smaller drop, still step on; stepping
+  down is allowed to 1.2 m, as before.
+- **The tail:** the free foot slips through and dangles 0.3 m below the top, past the far edge. Then the push: the
+  pelvis rises a little, and moves forward until the body (and its foot-sized footing check) is clear of the far edge.
+- **Then airborne:** the script ends with the feet at the top's height, rising at 1.4 m/s (`HOP_VY`), and the controller
+  carrying on at 1.8 m/s (`HOP_V`). The ordinary fall takes over and lands you, the knees taking the impact.
+
+**Measured** (gym): wall 0.7 m, peak 0.09 m above the top, landing 0.88 m on; wall 1.1 m, 0.09 m, 1.01 m on;
+rail at 1.0 m, 0.08 m, 0.99 m on; wall 1.4 m, 0.09 m, 1.12 m on. The 1.0 m block (1.2 m deep) walks on, as it should.
+Gym 36/36.
