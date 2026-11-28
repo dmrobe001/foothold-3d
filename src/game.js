@@ -3824,7 +3824,8 @@ function ledgeAhead(px, pz, ux, uz, reach = 1.6) {
   let C = Math.min(L.room, R.room); // the window the body ends in: over the footholds and the ground between and just past them
   for (const a of [aL, aL + 0.2]) for (const [lo] of colSpans(...at(a, 0))) if (lo > feet + Ht - 0.02) C = Math.min(C, lo - feet - Ht);
   if (C < CLEAR4) return null;
-  return { O, n: [nx, nz], r: [sx, sz], H, D, aL, fL, fR, Ht, C, dist, y0: feet };
+  let fwd = null; { const [x, z] = at(aL + 0.42, 0.1); for (const w of windowsAt(x, z)) { const f = w.f - feet; if (f <= Ht + 0.3 && f >= Ht - 1.2 && w.room >= 1.0 && (fwd === null || f > fwd)) fwd = f; } } // where a foot would plant walking on: the highest floor ahead with room to stand, from a step up to a drop
+  return { O, n: [nx, nz], r: [sx, sz], H, D, aL, fL, fR, Ht, C, dist, y0: feet, fwd };
 }
 // the way under what is ahead, ranked as the tiers in docs/movement.md: 0 walking (stooped at most), 2 on hands and knees,
 // 3 crawling flat; Infinity if no crawl fits all the way through or the floor rises more than a step on the way
@@ -3888,17 +3889,26 @@ function overScript(mode, B) {
     const lowWin = C < 1.3, Uup = lowWin ? [1, 0.35, 0] : [0.35, 1, 0]; // under a low window, the trunk goes in near level, head first
     const s0 = stand(-0.38, 0, 0), grip = [[0.06, H + 0.04, -0.22], [0.06, H + 0.04, 0.22]];
     const lead = [aL - 0.04, fL + A, -0.12], trail = [aL + 0.02, fR + A, 0.12], hangL = [-0.24, Math.max(A, press - 0.95), -0.1], hangR = [-0.26, Math.max(A, press - 0.98), 0.1];
-    k(0.1, { ...s0, bend: [0.25, 0, 0], hd: [[-0.1, H + 0.16, -0.22], [-0.1, H + 0.16, 0.22]], kp: kF, ep: eUp }); // the hands rise past the edge
-    k(0.2, { hd: grip, ep: eB }); // and come down on it
-    if (dip > 0.03) k(0.3, { pel: [-0.36, S - dip, 0], bend: [0.35, 0, 0] }); // the dip
+    k(0.1, { ...s0, pel: [-0.38, S - 0.03 - dip * 0.3, 0], bend: [0.25, 0, 0], hd: [[-0.1, H + 0.16, -0.22], [-0.1, H + 0.16, 0.22]], kp: kF, ep: eUp }); // the hands rise past the edge (already settling into the dip: no part holds still for long)
+    k(0.2, { pel: [-0.37, S - 0.05 - dip * 0.7, 0], hd: grip, ep: eB }); // and come down on it
+    if (dip > 0.03) k(0.3, { pel: [-0.36, S - 0.05 - dip, 0], bend: [0.35, 0, 0] }); // the dip
     k(0.44, { pel: [-0.16, press, 0], U: lowWin ? Uup : [0.3, 1, 0], bend: [0.35, 0, 0], ft: [hangL, hangR], kp: kF }); // up onto straight arms
     k(0.54, { pel: [-0.12, cap(press + 0.04), 0.02], ft: [[-0.06, H + 0.2, -0.14], hangR], kp: [[0.4, 0.9, -0.2], kF[1]] }); // the lead knee up, its foot over the edge
-    k(0.62, { ft: [lead, hangR] }); // planted on the top
+    k(0.62, { pel: [-0.06, cap(press + 0.12), 0.01], ft: [lead, hangR] }); // planted on the top, the body already rising over it
+    const pre = ks.length; // (the keys so far are shared by both endings)
+    let flow = null;
+    if (!lowWin && B.fwd !== null && B.fwd !== undefined) { // still pushing toward it: the lead foot up to one side, the trailing foot swung past it and planted ahead, walking on
+      const Fw = B.fwd, aF = aL + 0.42, side = [aL - 0.02, fL + A, -0.17];
+      flow = [...ks.slice(0, pre - 1), { ...ks[pre - 1], ft: [side, hangR] },
+        { t: 0.72, pel: [aL - 0.06, Ht + S - 0.25, -0.04], U: [0.3, 1, 0], bend: [0.3, 0, 0], ft: [side, [aL - 0.12, H + 0.3, 0.1]], hd: [[aL + 0.05, Ht + 0.35, -0.22], [aL + 0.05, Ht + 0.35, 0.22]], kp: [kF[0], [0.5, 0.8, 0.1]] }, // weight over the lead foot, the trailing knee comes through
+        { t: 0.86, pel: [aL + 0.18, Math.max(Ht, Fw) + S - 0.12, -0.02], U: [0.15, 1, 0], bend: [0.12, 0, 0], ft: [side, [aF, Fw + A, 0.1]], hd: hang([aL + 0.18, Math.max(Ht, Fw) + S, 0]), kp: kF, ep: eB }, // planted ahead
+        { t: 1, pel: [aL + 0.36, Fw + S - 0.04, 0], U: OV_UP, bend: [0.05, 0, 0], ft: [[aL + 0.2, Math.max(Fw, fL) + A + 0.1, -0.11], [aF, Fw + A, 0.1]], hd: hang([aL + 0.36, Fw + S, 0]) }]; // the lead foot leaves the top behind: mid-stride, walking on
+    }
     k(0.74, { pel: [aL - 0.2, cap(Ht + 0.5), 0], U: Uup, bend: [0.4, 0, 0], ft: [lead, [-0.1, H + 0.18, 0.14]], kp: [kF[0], [0.4, 0.9, 0.2]] }); // weight onto it, the trailing foot comes up
     k(0.84, { pel: [aL - 0.08, cap(Ht + 0.55), 0], ft: [lead, trail], hd: [[aL + 0.1, Ht + 0.3, -0.22], [aL + 0.1, Ht + 0.3, 0.22]], kp: kF }); // both feet on the top, crouched; the hands leave it
     const tall = C - 0.85, low = C < DUCK_MIN; // standing, stooped under what is above, or (no room to stoop) crouched with the hands down
     k(1, { pel: [aL, low ? cap(Ht + 0.42) : Ht + clamp(tall, 0.5, S), 0], U: low ? Uup : OV_UP, bend: [low ? 0.6 : clamp((S - tall) * 0.8, 0, 0.5), 0, 0], ft: [lead, trail], hd: low ? [[aL + 0.35, Ht + 0.04, -0.2], [aL + 0.35, Ht + 0.04, 0.2]] : hang([aL, Ht + S, 0]), kp: kF, ep: eB });
-    return { ks, dur: 1.0 + 0.9 * clamp((H - 0.55) / 1.15, 0, 1), low };
+    return { ks, dur: 1.0 + 0.9 * clamp((H - 0.55) / 1.15, 0, 1), low, flow, pre };
   }
   return null;
 }
@@ -3922,15 +3932,24 @@ function overWorld(B, sc, side, P0) {
   }
   return keys;
 }
+// The pose at time t: each number moves through the keys on a monotone cubic (Fritsch–Carlson): its speed carries on
+// through a key unless it turns there or holds still on either side (a planted foot stays planted), so the body eases
+// only at the start, the end and where a part really stops; between keys it never overshoots them.
 function overPose(keys, t) {
   let i = 1; while (i < keys.length - 1 && keys[i].t < t) i++;
-  const a = keys[i - 1], b = keys[i], u = clamp((t - a.t) / Math.max(1e-6, b.t - a.t), 0, 1), e = u * u * (3 - 2 * u), A = a.P, Bp = b.P;
-  const mix = (p, q) => [lerp(p[0], q[0], e), lerp(p[1], q[1], e), lerp(p[2], q[2], e)];
+  const k0 = keys[i - 1], k1 = keys[i], h = Math.max(1e-6, k1.t - k0.t), u = clamp((t - k0.t) / h, 0, 1), kp = keys[i - 2], kn = keys[i + 1];
+  const h00 = 2 * u * u * u - 3 * u * u + 1, h10 = u * u * u - 2 * u * u + u, h01 = -2 * u * u * u + 3 * u * u, h11 = u * u * u - u * u;
+  const slope = (a, b, ta, tb) => (b - a) / Math.max(1e-6, tb - ta);
+  const tang = (pv, v, nv, tp, tc, tn) => { // the speed at a key: zero at the ends, where it turns, or beside a hold; else the harmonic mean of the slopes either side
+    if (pv === undefined || nv === undefined) return 0; const d0 = slope(pv, v, tp, tc), d1 = slope(v, nv, tc, tn);
+    return d0 * d1 <= 0 ? 0 : 2 / (1 / d0 + 1 / d1); };
+  const num = (get) => { const a = get(k0.P), b = get(k1.P), m0 = tang(kp && get(kp.P), a, b, kp?.t, k0.t, k1.t), m1 = tang(a, b, kn && get(kn.P), k0.t, k1.t, kn?.t); return h00 * a + h10 * h * m0 + h01 * b + h11 * h * m1; };
+  const vec = (get) => [0, 1, 2].map((c) => num((P) => get(P)[c]));
   return {
-    pelvis: mix(A.pelvis, Bp.pelvis), frame: SK.frameFrom(V.nrm(mix(A.frame.U, Bp.frame.U)), mix(A.frame.F, Bp.frame.F)),
-    bend: mix(A.bend, Bp.bend), neckPitch: lerp(A.neckPitch || 0, Bp.neckPitch || 0, e),
-    feet: A.feet.map((f, k) => mix(f, Bp.feet[k])), toes: A.toes.map((f, k) => V.nrm(mix(f, Bp.toes[k]))), hands: A.hands.map((f, k) => mix(f, Bp.hands[k])),
-    kneePole: A.kneePole.map((f, k) => mix(f, Bp.kneePole[k])), elbowPole: A.elbowPole.map((f, k) => mix(f, Bp.elbowPole[k])),
+    pelvis: vec((P) => P.pelvis), frame: SK.frameFrom(V.nrm(vec((P) => P.frame.U)), vec((P) => P.frame.F)),
+    bend: vec((P) => P.bend), neckPitch: num((P) => P.neckPitch || 0),
+    feet: [0, 1].map((k) => vec((P) => P.feet[k])), toes: [0, 1].map((k) => V.nrm(vec((P) => P.toes[k]))), hands: [0, 1].map((k) => vec((P) => P.hands[k])),
+    kneePole: [0, 1].map((k) => vec((P) => P.kneePole[k])), elbowPole: [0, 1].map((k) => vec((P) => P.elbowPole[k])),
   };
 }
 function capsOf(J) { // the body's ten capsules from solved joints (as bodyCapsules)
@@ -3960,7 +3979,14 @@ function capsPen(C, x, z) { // the deepest any capsule is inside a solid: gym bo
   return { pen: worst, what };
 }
 // the mantle, from the pose you are in, onto the ledge measured ahead (the lead foot alternates from one to the next)
-function mantlePlan(M, P0) { const sc = overScript('mantle', M), side = body.mantleSide = -(body.mantleSide || 1), keys = overWorld(M, sc, side, P0); return { mode: 'mantle', side, keys, dur: bioTime(keys, sc.dur), B: M, low: sc.low }; }
+function mantlePlan(M, P0) {
+  const sc = overScript('mantle', M), side = body.mantleSide = -(body.mantleSide || 1), keys = overWorld(M, sc, side, P0), dur = bioTime(keys, sc.dur), o = { mode: 'mantle', side, keys, dur, B: M, low: sc.low };
+  if (sc.flow) { const fk = overWorld(M, { ...sc, ks: sc.flow }, side, P0); o.flowKeys = fk; o.flowDur = bioTime(fk, sc.dur); o.branch = keys[sc.pre].t * dur; } // (seconds into the script when the ending is chosen: the lead foot on the top)
+  return o;
+}
+// still pushing toward the ledge (the stick or keys forward, along its normal)?
+function pushingOn(n) { let f = input.f, s = input.s; if (input.keys.has('KeyW') || input.keys.has('ArrowUp')) f += 1; if (input.keys.has('KeyS') || input.keys.has('ArrowDown')) f -= 1; if (input.keys.has('KeyD')) s += 1; if (input.keys.has('KeyA')) s -= 1;
+  const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw), dx = -sy * f + cy * s, dz = -cy * f - sy * s, l = Math.hypot(dx, dz); return l > 0.3 && (dx * n[0] + dz * n[1]) / l > 0.5; }
 // With plausible forces, a script is timed so no part is asked for more than its clamp: between two keys the pose eases
 // (smoothstep), whose peak acceleration is 6·distance/time²; each stretch is lengthened until the pelvis, feet and hands
 // all fit (sqrt(6·d/a)). The keys' times are rewritten in place; the new duration is returned.
@@ -4071,10 +4097,12 @@ function movePlayer(dt) {
   if (!rig.over && rig.vy === 0) { const here = footSupport(px, pz); if (here - rig.feet > STEP) rig.feet = here; } // embedded (e.g. a rock streamed in around you): climb out
   let needT = body.needT;
   if (rig.over) { // a way over: the script carries the body; the controller follows its pelvis
-    const O = rig.over; O.t = Math.min(1, O.t + dt / O.dur); const P = overPose(O.keys, O.t);
+    const O = rig.over; O.t = Math.min(1, O.t + dt / O.dur);
+    if (O.flowKeys && !O.chosen && O.t * O.dur >= O.branch) { O.chosen = true; if (pushingOn(O.B.n)) { const el = O.t * O.dur; O.keys = O.flowKeys; O.dur = O.flowDur; O.t = el / O.dur; O.flowing = true; } } // the ending: walk on, or stand up on it
+    const P = overPose(O.keys, O.t);
     player.x = P.pelvis[0]; player.z = P.pelvis[2]; rig.feet = Math.min(P.feet[0][1], P.feet[1][1]) - OVER_A; needT = 0;
     if (overLoad(O, P)) { /* something gave way: you drop from here */ }
-    else if (O.t >= 1) { rig.over = null; body.overContacts = null; rig.feet = footSupport(player.x, player.z); rig.vy = 0; supportRef = rig.feet; }
+    else if (O.t >= 1) { rig.over = null; body.overContacts = null; rig.feet = footSupport(player.x, player.z); rig.vy = 0; supportRef = rig.feet; if (O.flowing) body.vcmdNext = [O.B.n[0] * 1.2, O.B.n[1] * 1.2]; } // (walking on: the controller leaves at walking pace, not from rest)
   } else {
     let dx = (-sy * f + cy * s) * speed * dt, dz = (-cy * f - sy * s) * speed * dt;
     if (settings.forces !== 'free' && dt > 0 && !body.gap && !body.four) { // with plausible forces the controller itself speeds up, slows and turns no harder than friction allows (CTRL_ACC)
@@ -4175,7 +4203,7 @@ function movePlayer(dt) {
       }
     }
   }
-  if (body.vcmd && dt > 0) { const ax = (player.x - px) / dt, az = (player.z - pz) / dt, al = Math.hypot(ax, az), cl = Math.hypot(...body.vcmd); if (rig.over) body.vcmd = [0, 0]; else if (al < 0.05 && cl > 0.05) { const k = Math.max(0, 1 - CTRL_ACC * dt / cl); body.vcmd = body.vcmd.map((v) => v * k); } } // (carried by a script: from rest after; held up: the command slows as a stop does, not at once, so a moment's wait does not stutter)
+  if (body.vcmd && dt > 0) { const ax = (player.x - px) / dt, az = (player.z - pz) / dt, al = Math.hypot(ax, az), cl = Math.hypot(...body.vcmd); if (body.vcmdNext && !rig.over) { body.vcmd = body.vcmdNext; body.vcmdNext = null; } else if (rig.over) body.vcmd = [0, 0]; else if (al < 0.05 && cl > 0.05) { const k = Math.max(0, 1 - CTRL_ACC * dt / cl); body.vcmd = body.vcmd.map((v) => v * k); } } // (carried by a script: from rest after; held up: the command slows as a stop does, not at once, so a moment's wait does not stutter)
   body.needT = needT;
   body.need = clamp(body.need + clamp(needT - body.need, -dt * 2.5, dt * 4), 0, 1);
   body.four = body.four ? body.need > 0.25 : body.need > 0.6; // hands down / hands free, with hysteresis

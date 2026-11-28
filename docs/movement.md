@@ -538,3 +538,48 @@ back. Walking: 0.15 m and 0.16 m.
     I could not reproduce them in a single crossing.
   - mantles that began with a duck 6 of 22 → 2 of 19; eye height jerk 20.2 → 17.3.
 - Gym 34/34.
+
+## Step 13: a continuous mantle, and walking on from it
+
+From play: the mantle stopped at a few poses. With the stick still pushing toward the ledge, it should flow on: one
+foot hikes up to one side, the other slips over and plants ahead. Otherwise, the current ending, smoother, standing on
+whatever was climbed.
+
+**Why it stopped.** Between two keys each part eased in and out (smoothstep), so every part came to rest at every key.
+Timing the script to the force limits (step 11) lengthened those rests. Some keys also held the pelvis exactly where the
+previous key had it, while the hands reached or the lead foot planted.
+
+**The rules now:**
+- **Keys are waypoints on one curve** (`overPose`). Each number moves through the keys on a monotone cubic
+  (Fritsch–Carlson). Its speed carries on through a key unless it turns there or holds still on either side, so a
+  planted foot stays planted and nothing overshoots a key.
+- **The pelvis never holds still for long.** It settles into the dip while the hands reach and come down on the edge,
+  and starts rising over the lead foot as it plants.
+- **Two endings, chosen when the lead foot is on the top.**
+  - **Still pushing toward the ledge** (the stick or keys within 60° of its normal), and the window over the top is not
+    low, and there is a floor ahead (0.42 m past the footholds) with room to stand, from 0.3 m up to 1.2 m down
+    (`fwd`): the lead foot is placed up to one side (0.17 m). The weight goes over it and the trailing knee comes
+    through. The trailing foot plants ahead, and the script ends mid-stride, with the controller leaving at walking
+    pace (1.2 m/s).
+  - **Otherwise:** as before, both feet on the top, then the pose the window allows.
+  - Both endings share every key up to the lead foot's plant, and are timed to the limits separately (the shared part
+    gets the same seconds), so the switch is seamless.
+
+**Measured** (gym walls of 0.7, 1.1 and 1.4 m and the captured crown, station 34; holding forward throughout, or
+letting go once the mantle starts). "Stalled frames" means the pelvis below 0.05 m/s during the mantle (after its first
+0.1 s).
+
+| | stalled frames, step 12 | stalled frames, now | seconds, now (step 12) | walks on |
+|---|---|---|---|---|
+| 0.7 m, holding | 11 | 1 | 2.97 (2.50) | yes |
+| 0.7 m, let go | 11 | 1 | 2.53 (2.50) | no |
+| 1.1 m, holding | 12 | 0 | 3.38 (2.73) | yes |
+| 1.1 m, let go | 12 | 0 | 2.77 (2.73) | no |
+| 1.4 m, holding | 12 | 0 | 3.12 (3.13) | no: 1.4 m down beyond the wall is more than 1.2 |
+| crown, holding | 11 | 1 | 3.90 (2.55) | yes |
+| crown, let go | 13 | 1 | 2.58 (2.55) | no |
+
+- The walk-on ending takes longer because it carries the body another 0.36 m forward and down.
+- The second after a walk-on covers 1.59 m on the walls, against 1.45 m before (when the body stood, then set off).
+  At the crown it covers 0.41 m: the branches beyond close the way.
+- Gym 34/34.
