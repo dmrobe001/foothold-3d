@@ -758,3 +758,44 @@ step 13.
 - Forest (14 fallen trees, two crossings each): 6 walk-on endings, 3 scoots and 3 roll-ups or feet first. The scoots
   landed 0.33, 0.33 and 0.57 m past the far edge, on the ground twice and once on something 0.49 m up.
 - Gym 36/36.
+
+## Step 20: the swing's pelvis follows a point mass, not keys
+
+From play: the swing still felt like static control, pushing up and lowering down, rather than a parkour effort to keep
+momentum. It should jump up and project off the far side. The inside foot sliding through will cost speed, but slowing
+should be delayed and speed picked up again as soon as possible. The suspicion was a limitation of how the motion is
+specified, and it was: key poses joined by a monotone cubic carry no momentum. A coordinate that turns at a key stops
+there, and the timing rule then stretched every stretch to fit.
+
+**Now the pelvis (the body's mass) is not keyed in the swing.** It follows a point mass under a few forces (`path` in
+`overScript('swing')`); the hands and feet are keyed at the phases' times, and the pelvis's sideways offset still comes
+from the keys. In the ledge's frame:
+1. **In:** from where you are at your speed (at least 1.2 m/s by the bob), easing down into the bob.
+2. **The legs push** for 0.2 s. The spring is solved to land the seat on the top (0.14 m above it) with the forward speed
+   kept. If that needs more than 3.2 m/s up (`SWING_VY`), forward speed is given up, 8% at a time.
+3. **In the air** over the edge, the hands on it take 4 m/s² of the body's weight (`SWING_HANDS`).
+4. **The seat slides** over the top while the inside foot comes through. It slows at 2 m/s² (`SEAT_DRAG`: the drag less
+   the hands' push), never below 0.6 m/s.
+5. **Off:**
+   - a decline beyond: off the far edge at the speed left, the hands pushing up at 0.6 m/s (`SCOOT_VY`), into the
+     ordinary fall;
+   - a table (a deep top, or the floor beyond within 0.25 m of the top): up to a stand in 0.3 s on the move, walking
+     on at that speed (at least 1.2 m/s).
+
+The swing is no longer retimed by `bioTime`: its pelvis is plausible by construction, and its limbs pass through the
+force limits as everything does. It now commits when it starts: letting go midway no longer switches to the standing
+ending. The plain mantle is unchanged.
+
+**Measured** (gym; the slowest forward speed of the shown pelvis before 1 m past the barrier, and the seconds from the
+start of the move to 2 m past it):
+
+| station | step 19 | now |
+|---|---|---|
+| wall 0.85 m | 0.01 m/s, 3.92 s | 0.85 m/s, 2.33 s |
+| wall 1.1 m | 0.01, 4.05 | 0.86, 2.35 |
+| wall 1.4 m | 0.00, 4.35 | 0.49, 2.98 |
+| rail at 1.0 m | 0.00, 4.03 | 1.00, 2.28 |
+| block 1.0 × 1.2 m (roll up) | 0.00, 4.15 | 1.14, 2.22 |
+| wall 0.6 m, 0.8 m lower beyond | 0.01, 4.00 | 0.88, 2.40 |
+
+On the 1.4 m wall the 3.2 m/s spring limit costs forward speed. Gym 36/36.
