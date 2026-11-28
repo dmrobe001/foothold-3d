@@ -799,3 +799,41 @@ start of the move to 2 m past it):
 | wall 0.6 m, 0.8 m lower beyond | 0.01, 4.00 | 0.88, 2.40 |
 
 On the 1.4 m wall the 3.2 m/s spring limit costs forward speed. Gym 36/36.
+
+## Step 21: one arc, a small bob, hands on the leading top, a stiffer landing
+
+From play: the wind-up was exaggerated, and the hands often went deep into the barrier rather than onto its leading top.
+The drag as the free foot swept over was too much and too late: the body pounced superhumanly onto the top, perched
+there a moment like a gargoyle, and then jumped off. The landing was too soft.
+
+- **The bob** is about half as deep: 0.25 × (H − 0.9), 4–18 cm (it was 6–38), with less forward bend.
+- **The hands** grip the leading top: the first point from the near edge whose top is within 6 cm of the crest, at the
+  height of the surface under either hand (`grip`). They stay planted there through the move; they used to travel to
+  beside the hips. On the way in they always rise over the top, in front of its face, first. A hand going straight from
+  the hip to the top cut through the face.
+- **One arc.** The spring is solved for a single arc peaking just above sitting height (0.18 m above the top) over the
+  middle of the top.
+  - Where you take off follows from your pace: faster, from further back. Only if you are already too close is the
+    forward speed reduced.
+  - Over a thin top the arc goes off the far edge without the seat touching.
+  - Over a wider one the seat brushes the top where the arc comes down to it, and slides on, slowing at 1 m/s² (was 2),
+    with no minimum time there (it was at least 0.14 s).
+  - Off the edge, the fall starts with the arc's own falling speed, plus the hands' last small push.
+- **Landing**: the knees give 0.12 per m/s of impact (`LAND_GIVE`; was 0.3).
+
+**Measured:**
+- Gym (step 20 → now). The 0.6 m wall's figures are inflated by its standing pelvis being near its seat height.
+
+  | station | slowest forward speed (m/s) | to 2 m past (s) | pelvis peak above the top (m) | frames at seat height, still |
+  |---|---|---|---|---|
+  | wall 0.85 m | 0.85 → 1.26 | 2.33 → 2.20 | 0.24 → 0.19 | 0 → 7 |
+  | wall 1.1 m | 0.86 → 1.26 | 2.35 → 2.20 | 0.63 → 0.19 | 0 → 7 |
+  | wall 1.4 m | 0.49 → 1.32 | 2.98 → 2.20 | 0.36 → 0.38 | 8 → 0 |
+  | rail 1.0 m | 1.00 → 1.31 | 2.28 → 2.18 | 0.44 → 0.19 | 0 → 4 |
+  | block 1.0 × 1.2 m | 1.14 → 1.30 | 2.22 → 2.15 | 0.75 → 0.75 (standing on it) | 12 → 6 |
+  | wall 0.6 m, 0.8 m lower beyond | 0.88 → 1.28 | 2.40 → 2.25 | 0.31 → 0.26 | 36 → 30 |
+
+- Forest, six swings onto logs: hands below the surface 0 in all, from the reach on. Before, two were 0.11 and 0.19 m
+  in; one frame at the very start, with the walking hand still beside a branch, is not counted. Pelvis peaks
+  0.19–0.40 m above the top (0.17–0.41 before).
+- Gym 36/36.
