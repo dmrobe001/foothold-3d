@@ -496,3 +496,45 @@ frame-to-frame second differences, m/s²: median / 99th percentile / maximum):
   - mantles that began with a duck 4 of 20 → 6 of 22;
   - reversals 12 → 31; distance 306 → 273 m (mantles take twice as long: 3077 frames against 1437).
 - Gym 34/34. Frame cost unchanged: median 0.6 ms (plant collisions off), 1.9 ms (on).
+
+## Step 12: the body stays with the controller
+
+From play: with plausible forces the body got far from where the controller was. When the controller stopped, the body
+flew on what felt like several feet and swung back.
+
+**Why (measured, gym lane 1):** the pelvis and camera followed the controller's position under their clamps. The
+controller changed speed at once (stopping from a run asks for 250 m/s² in one frame), so the body lagged and then
+overshot. Running then stopping: the pelvis fell 1.09 m behind, and the camera ran 1.06 m past the stop and came 1.12 m
+back. Walking: 0.15 m and 0.16 m.
+
+**The rules now:**
+- **The controller itself** speeds up, slows and turns no harder than friction allows: 8 m/s² (`CTRL_ACC`).
+  - Stopping takes 0.15 m from a walk (1.6 m/s) and 1.07 m from a run (4.2 m/s).
+  - Held up by something, the commanded speed bleeds off at the same rate, so a moment's wait while steering turns
+    does not make it stutter.
+  - A gap plan and the crawl on hands pace themselves and are exempt.
+- **The pelvis and camera** follow under their clamps on a 10 cm leash (`LEASH`, `EYE_LEASH`). They are never further
+  than that, sideways, from where the controller puts them, with no speed outward past it. A 20 cm leash for the camera
+  measured slightly smoother (camera 99th percentile 98 against 108 m/s²) but swung back 11 cm after a run stopped.
+- **On hands along a stem:** the stem you are on is kept while it is still under you, and the pull onto its axis is at
+  most half the step.
+- **A restart** (a new gym station, a teleport) clears the plan state: an unfinished gap plan, the remembered steering
+  angle, the held over-or-under decision. These used to carry over, which failed station 14 after 13.
+
+**Measured:**
+- Gym lane 1 (camera after the controller stops; pelvis behind the controller while moving):
+
+  | | before | now |
+  |---|---|---|
+  | walk: pelvis behind / camera past the stop / camera back | 0.15 / 0.15 / 0.16 m | 0.05 / 0.16 / 0.03 m |
+  | run: the same | 1.09 / 1.06 / 1.12 m | 0.10 / 1.04 / 0.04 m |
+
+  The camera still travels about a metre after a run is let go of: the controller itself is now stopping at 8 m/s².
+- Crowns, joint accelerations (99th percentile, m/s²), against step 11:
+  - pelvis 17 and 17; head 33 and 33; chest 22 and 23; knee 269 and 294; camera 33 and 97.
+  - The camera is jerkier than in step 11 because the leash cuts; it is still well under unlimited's 320.
+- Crowns, steering and ducking, against step 11:
+  - reversals 31 → 44; one crossing has 22 reversals on hands. They depend on the order the test runs crossings in, and
+    I could not reproduce them in a single crossing.
+  - mantles that began with a duck 6 of 22 → 2 of 19; eye height jerk 20.2 → 17.3.
+- Gym 34/34.

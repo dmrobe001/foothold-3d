@@ -3488,7 +3488,7 @@ function spring(x, v, target, k, dt, zeta = 1.1) {
 }
 function resetRig(feetY) { // stand at the player's x, z: on the ground (not a stem hung overhead), or at a given support height
   supportRef = feetY ?? ground(player.x, player.z);
-  rig.feet = feetY ?? footSupport(player.x, player.z); rig.vy = 0; rig.over = null; body.want = null; body.barrier = null; body.bio = null;
+  rig.feet = feetY ?? footSupport(player.x, player.z); rig.vy = 0; rig.over = null; body.want = null; body.barrier = null; body.bio = null; body.vcmd = null; body.steerOff = undefined; body.ou = null; body.cross = null; endGap();
   Object.assign(body, { need: 0, needT: 0, four: false, mix: 0, yaw: player.yaw, head: 2, q: newQuad() }); body.q.n = [0, 1, 0];
   for (const h of body.hands) { h.hold = null; h.sw = null; }
   const rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
@@ -3791,6 +3791,7 @@ function assess(x, z, px, pz) {
 // the headroom over them. Up to MANTLE_MAX it is mantled (hands on the edge, a dip as deep as the press needs, up onto
 // straight arms, one foot up, then the other); the window above sets the pose you end in. Higher is the wall climb.
 // Only solids count: a slope of the ground rising ahead is walked (or climbed on hands), not mantled.
+const CTRL_ACC = 8; // m/s²: the controller's own acceleration with plausible forces (friction, 0.8 g)
 const STEP_DOWN = 0.45; // m: a drop walked off as a step down; deeper is a fall
 const STEER_TURN = 3; // rad/s: how fast the way you walk may swing off the way you push (steering round things)
 const QUAD_TURN = 1.5; // rad/s: the fastest the body turns on hands (the head is well ahead of the hips: turning swings it)
@@ -4076,15 +4077,23 @@ function movePlayer(dt) {
     else if (O.t >= 1) { rig.over = null; body.overContacts = null; rig.feet = footSupport(player.x, player.z); rig.vy = 0; supportRef = rig.feet; }
   } else {
     let dx = (-sy * f + cy * s) * speed * dt, dz = (-cy * f - sy * s) * speed * dt;
+    if (settings.forces !== 'free' && dt > 0 && !body.gap && !body.four) { // with plausible forces the controller itself speeds up, slows and turns no harder than friction allows (CTRL_ACC)
+      const vc = body.vcmd || [0, 0], wx = dx / dt - vc[0], wz = dz / dt - vc[1], wl = Math.hypot(wx, wz), k = wl > CTRL_ACC * dt ? CTRL_ACC * dt / wl : 1;
+      body.vcmd = [vc[0] + wx * k, vc[1] + wz * k]; if (Math.hypot(...body.vcmd) < 0.02 && !(f || s)) body.vcmd = [0, 0];
+      dx = body.vcmd[0] * dt; dz = body.vcmd[1] * dt;
+    } else body.vcmd = [dx / (dt || 1), dz / (dt || 1)]; // (a gap plan or the crawl paces itself; the command picks up from there)
     // a narrow hold steers you along it: on a stem, a move mostly along it follows its axis, and the body settles
     // over the axis (a stem is narrower than the footprint; off its crown the hands and feet would find nothing)
     if (body.four) {
-      const st = stemUnder(px, pz, rig.feet) || stemAt(px, pz, rig.feet - 0.15, 0.5), l = Math.hypot(dx, dz);
+      let st = stemUnder(px, pz, rig.feet) || stemAt(px, pz, rig.feet - 0.15, 0.5); const l = Math.hypot(dx, dz);
+      { const L = body.lastStem; if (L && st && L !== st && L.o === st.o) st = L; } // (same solid: keep it)
+      { const L = body.lastStem; if (L && st && st !== L && Math.hypot(L.cx - px, L.cz - pz) < 0.35 && Math.abs((stemAt(px, pz, rig.feet - 0.15, 0.5)?.cy ?? -9) - L.cy) < 0.3) st = L; } body.lastStem = st; // (the stem you were on, while it is still under you: two stems meeting are not swapped frame by frame)
       if (st) {
         const al = dx * st.ah[0] + dz * st.ah[1];
         if (l === 0 || Math.abs(al) > 0.5 * l) {
           const t = (px - st.cx) * st.ah[0] + (pz - st.cz) * st.ah[1], ox = px - st.cx - st.ah[0] * t, oz = pz - st.cz - st.ah[1] * t, pull = Math.min(1, dt * 10);
-          dx = st.ah[0] * Math.sign(al) * l - ox * pull; dz = st.ah[1] * Math.sign(al) * l - oz * pull;
+          let qx = ox * pull, qz = oz * pull; const ql = Math.hypot(qx, qz); if (ql > 0.5 * l) { qx *= 0.5 * l / ql; qz *= 0.5 * l / ql; } // (settling onto the axis no faster than half the step)
+          dx = st.ah[0] * Math.sign(al) * l - qx; dz = st.ah[1] * Math.sign(al) * l - qz;
         }
       }
     }
@@ -4166,6 +4175,7 @@ function movePlayer(dt) {
       }
     }
   }
+  if (body.vcmd && dt > 0) { const ax = (player.x - px) / dt, az = (player.z - pz) / dt, al = Math.hypot(ax, az), cl = Math.hypot(...body.vcmd); if (rig.over) body.vcmd = [0, 0]; else if (al < 0.05 && cl > 0.05) { const k = Math.max(0, 1 - CTRL_ACC * dt / cl); body.vcmd = body.vcmd.map((v) => v * k); } } // (carried by a script: from rest after; held up: the command slows as a stop does, not at once, so a moment's wait does not stutter)
   body.needT = needT;
   body.need = clamp(body.need + clamp(needT - body.need, -dt * 2.5, dt * 4), 0, 1);
   body.four = body.four ? body.need > 0.25 : body.need > 0.6; // hands down / hands free, with hysteresis
@@ -4417,7 +4427,7 @@ function bioPose(P, dt) {
   const nv = (v) => { const l = Math.hypot(...v) || 1; return v.map((x) => x / l); };
   const bend = bioFollow('bend', [...P.bend], dt, BIO.bend), neck = bioFollow('neck', [P.neckPitch || 0], dt, BIO.neck)[0];
   return {
-    pelvis: bioFollow('pelvis', P.pelvis, dt, BIO.pelvis), frame: bioFrame(P.frame, dt), bend, neckPitch: neck,
+    pelvis: bioRel('pelvis', P.pelvis, dt, BIO.pelvis), frame: bioFrame(P.frame, dt), bend, neckPitch: neck,
     feet: P.feet.map((f, i) => bioFollow('foot' + i, f, dt, BIO.feet, 'feet')), toes: P.toes.map((t, i) => nv(bioFollow('toe' + i, t, dt, BIO.pole, 'pole'))),
     hands: P.hands.map((f, i) => bioFollow('hand' + i, f, dt, BIO.hands, 'hands')),
     kneePole: P.kneePole.map((t, i) => nv(bioFollow('knee' + i, t, dt, BIO.pole, 'pole'))), elbowPole: P.elbowPole.map((t, i) => nv(bioFollow('elbow' + i, t, dt, BIO.pole, 'pole'))),
@@ -4433,10 +4443,19 @@ function bioSolve(P, dt) {
   const pole = (name, a, m, b, c) => { const f = bioFollow(name, J[m], dt, c, name.slice(0, -1)), o = mid(J[a], J[b]); return [f[0] - o[0], f[1] - o[1], f[2] - o[2]]; };
   return SK.solvePose({ ...Q, kneePole: ['L', 'R'].map((s) => pole('kneeJ' + s, 'hip' + s, 'knee' + s, 'ankle' + s, BIO.feet)), elbowPole: ['L', 'R'].map((s) => pole('elbowJ' + s, 'shoulder' + s, 'elbow' + s, 'hand' + s, BIO.hands)) });
 }
+// a point carried by the body: followed under its clamp, but held within LEASH of where the controller puts it (the
+// controller is limited itself), so the body never falls far behind, nor flies past and swings back when it stops
+function bioRel(key, p, dt, c, leash = LEASH) {
+  const o = bioFollow(key, p, dt, c), f = body.bio?.[key], dx = o[0] - p[0], dz = o[2] - p[2], d = Math.hypot(dx, dz);
+  if (d > leash && f) { const k = leash / d; o[0] = p[0] + dx * k; o[2] = p[2] + dz * k; f.x[0] = o[0]; f.x[2] = o[2]; const ux = dx / d, uz = dz / d, vo = f.v[0] * ux + f.v[2] * uz; if (vo > 0) { f.v[0] -= vo * ux; f.v[2] -= vo * uz; } } // (on the leash: no further, and no speed outward)
+  return o;
+}
+const EYE_LEASH = 0.1; // m: the camera's leash (0.2 measured: little smoother, an 11 cm swing back after a run stops)
+const LEASH = 0.1; // m: the farthest the shown body (and the camera) may be from where the controller puts it, sideways
 function bioEye(dt) { // the walking camera (placed from the posture, not the solved head): followed as the head is
   const e = body.eye; if (body.bio && (rig.over || settings.forces === 'free')) body.bio.eye = null; // (restarts from wherever a script leaves the eye)
   if (!e || settings.forces === 'free' || rig.over || !(dt > 0)) return;
-  const [x, y, z] = bioFollow('eye', [e.x, e.y, e.z], dt, BIO.eye); e.x = x; e.y = y; e.z = z; player.eye = y;
+  const [x, y, z] = bioRel('eye', [e.x, e.y, e.z], dt, BIO.eye, EYE_LEASH); e.x = x; e.y = y; e.z = z; player.eye = y;
 }
 // the whole body: the walking posture and the posture on hands, mixed by how much the hands are needed
 function bodyPose() {
