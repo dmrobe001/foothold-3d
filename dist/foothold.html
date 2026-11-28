@@ -6879,16 +6879,7 @@ function assess(x, z, px, pz) {
 // Only solids count: a slope of the ground rising ahead is walked (or climbed on hands), not mantled.
 const AIR_ACC = 1; // m/s²: steering in the air
 const CTRL_ACC = 8; // m/s²: the controller's own acceleration with plausible forces (friction, 0.8 g)
-const HOP_REACH = 0.7, HOP_VY = 1.4, HOP_LAND = 1.0; // walking on over a top whose far edge is within 0.7 m of the footholds: a hop off it, 1.4 m/s up, landing about 1 m past the far edge
-const canHop = (B) => !!B.land && B.D - B.aL <= HOP_REACH && !!hopArc(B, Math.max(B.aL + 0.24, B.D + FOOT + 0.1));
-// the hop off a top: the least spring (1.4 to 3 m/s up) whose arc, from the top's height at `gone` along the normal, clears every top on
-// the way (8 cm) and comes down on the clear ground found past the far edge; null if none does
-function hopArc(B, gone) {
-  const L = B.land; if (!L) return null; const h = Math.max(0, B.Ht - L.f), far = B.D + L.past - gone;
-  for (const vy of [1.4, 1.8, 2.2, 2.6, 3.0]) { const tf = (vy + Math.sqrt(vy * vy + 2 * 9.8 * h)) / 9.8, v = clamp(far / tf, 0.8, 3.5);
-    if (L.path.every(([b2, top]) => { const t = (B.D + b2 - gone) / v; return t < -1e-6 ? true : B.Ht + vy * Math.max(0, t) - 4.9 * t * t >= top + 0.08; })) return { vy, v }; }
-  return null;
-} // (the default walking on, whatever the floor's height: wherever the free foot gets past the far edge, there is clear ground to come down on, and nothing on the way much above the top)
+const SCOOT_REACH = 0.7, ROLL_DROP = 0.25, SEAT_REACH = 0.8, SCOOT_V = 1.6; // the seat: a far edge within 0.7 m of the footholds is slid off; a floor beyond within 0.25 m of the top is rolled up onto, within 0.8 m the feet reach it first; deeper, the seat slides off at 1.6 m/s
 const SWING_V = 0.5; // m/s: arriving faster than this (and pushing on), the mantle is the flowing swing
 const STEP_DOWN = 0.45; // m: a drop walked off as a step down; deeper is a fall
 const STEER_TURN = 3; // rad/s: how fast the way you walk may swing off the way you push (steering round things)
@@ -6907,7 +6898,7 @@ function ledgeAhead(px, pz, ux, uz, reach = 1.6) {
   if (nx * ux + nz * uz < 0.5) return null;
   const sx = -nz, sz = nx, dist = edge(0, nx, nz, reach + 0.3); if (dist === null || dist > reach) return null;
   const O = [px + nx * dist, pz + nz * dist], at = (a, s) => [O[0] + nx * a + sx * s, O[1] + nz * a + sz * s];
-  let D = 0; for (; D < 0.9; D += 0.03) if (!rises(...at(D + 0.015, 0))) break; // its depth along the normal (a wall's thickness, a log's width)
+  let D = 0; for (; D < 2.0; D += 0.03) if (!rises(...at(D + 0.015, 0))) break; // its depth along the normal (a wall's thickness, a log's width)
   // the footholds: the nearest pair (side by side, from the edge to 0.8 m past it, first at the middle of a thin top or 0.3 m in) on a window's floor, each the highest floor
   // there that is raised (more than a third of a step) and reachable, with at least crawling room above it. A branch with
   // another just above it is no foothold; the next branch up, or one further on, may be: the way over is a series of steps.
@@ -6924,11 +6915,7 @@ function ledgeAhead(px, pz, ux, uz, reach = 1.6) {
   if (C < CLEAR4) return null;
   let fwd = null; { const [x, z] = at(aL + 0.42, 0.1); for (const w of windowsAt(x, z)) { const f = w.f - feet; if (f <= Ht + 0.3 && f >= Ht - 2.0 && w.room >= 1.0 && (fwd === null || f > fwd)) fwd = f; } } // where a foot would plant walking on: the highest floor ahead with room to stand, from a step up to a drop (stepped down to 1.2 m, hopped down to 2.0)
   let beyond = null; { const [x, z] = at(D + 0.35, 0); for (const w of windowsAt(x, z)) { const f = w.f - feet; if (f <= Ht + 0.3 && w.room >= 1.0 && (beyond === null || f > beyond)) beyond = f; } } // the floor just past the far edge (however far down)
-  let land = null; for (let a = D + 0.6; a <= D + 1.61 && !land; a += 0.1) { // where a hop off it would come down: the first clear ground past the far edge (no wood or branches on it), both feet's width
-    let ok = true, fl = -Infinity; for (const da of [-0.25, 0, 0.25]) for (const q of [-0.25, 0, 0.25]) { if (!ok) break; const [x, z] = at(a + da, q), g = ground(x, z); let top = g; for (const w of windowsAt(x, z)) if (w.f > top) top = w.f; if (top - g > 0.12 || trunkHit(x, z)) ok = false; fl = Math.max(fl, top - feet); } // (a patch as wide as the footing check that lands you)
-    if (ok) { const path = []; for (let b2 = 0; b2 <= a - D + 0.001; b2 += 0.1) { let top = -Infinity; for (const q of [-0.22, 0, 0.22]) { const [x, z] = at(D + b2, q); top = Math.max(top, ground(x, z) - feet); for (const w of windowsAt(x, z)) if (w.f - feet <= Ht + 1.5) top = Math.max(top, w.f - feet); } path.push([b2, top]); } land = { past: a - D, f: fl, path }; }
-  } // (with the tops under the way there, for the hop to clear)
-  return { O, n: [nx, nz], r: [sx, sz], H, D, aL, fL, fR, Ht, C, dist, y0: feet, fwd, beyond, land };
+  return { O, n: [nx, nz], r: [sx, sz], H, D, aL, fL, fR, Ht, C, dist, y0: feet, fwd, beyond };
 }
 // the way under what is ahead, ranked as the tiers in docs/movement.md: 0 walking (stooped at most), 2 on hands and knees,
 // 3 crawling flat; Infinity if no crawl fits all the way through or the floor rises more than a step on the way
@@ -7000,12 +6987,7 @@ function overScript(mode, B) {
     k(0.62, { pel: [-0.06, cap(press + 0.12), 0.01], ft: [lead, hangR] }); // planted on the top, the body already rising over it
     const pre = ks.length; // (the keys so far are shared by both endings)
     let flow = null;
-    if (!lowWin && canHop(B)) { const side = [aL - 0.02, fL + A, -0.17]; // still pushing, over a top the free foot can get past: it dangles off the far side, then push off and hop down
-      flow = [...ks.slice(0, pre - 1), { ...ks[pre - 1], ft: [side, hangR] },
-        { t: 0.74, pel: [aL + 0.02, Ht + S - 0.15, -0.03], U: [0.2, 1, 0], bend: [0.15, 0, 0], ft: [side, [aL - 0.05, Ht + 0.2, 0.1]], hd: [[aL + 0.05, Ht + 0.3, -0.22], [aL + 0.05, Ht + 0.3, 0.22]], kp: [kF[0], [0.5, 0.8, 0.1]] },
-        { t: 0.87, pel: [aL + 0.12, Ht + S - 0.08, -0.02], U: [0.12, 1, 0], bend: [0.08, 0, 0], ft: [side, [B.D + 0.18, Ht - 0.3, 0.12]], hd: hang([aL + 0.12, Ht + S, 0]), kp: kF, ep: eB }, // through, dangling past the far edge
-        { t: 1, pel: [Math.max(aL + 0.24, B.D + FOOT + 0.1), Ht + S + 0.03, 0], U: [0.08, 1, 0], bend: [0.04, 0, 0], ft: [[side[0] + 0.02, side[1], side[2]], [B.D + 0.3, Ht - 0.34, 0.1]], hd: hang([aL + 0.24, Ht + S, 0]) }]; // the push (then airborne)
-    } else if (!lowWin && B.fwd !== null && B.fwd !== undefined && B.fwd >= Ht - 1.2) { // still pushing toward it: the lead foot up to one side, the trailing foot swung past it and planted ahead, walking on
+    if (!lowWin && B.fwd !== null && B.fwd !== undefined && B.fwd >= Ht - 1.2) { // still pushing toward it: the lead foot up to one side, the trailing foot swung past it and planted ahead, walking on
       const Fw = B.fwd, aF = aL + 0.42, side = [aL - 0.02, fL + A, -0.17];
       flow = [...ks.slice(0, pre - 1), { ...ks[pre - 1], ft: [side, hangR] },
         { t: 0.72, pel: [aL - 0.06, Ht + S - 0.25, -0.04], U: [0.3, 1, 0], bend: [0.3, 0, 0], ft: [side, [aL - 0.12, H + 0.3, 0.1]], hd: [[aL + 0.05, Ht + 0.35, -0.22], [aL + 0.05, Ht + 0.35, 0.22]], kp: [kF[0], [0.5, 0.8, 0.1]] }, // weight over the lead foot, the trailing knee comes through
@@ -7016,7 +6998,7 @@ function overScript(mode, B) {
     k(0.84, { pel: [aL - 0.08, cap(Ht + 0.55), 0], ft: [lead, trail], hd: [[aL + 0.1, Ht + 0.3, -0.22], [aL + 0.1, Ht + 0.3, 0.22]], kp: kF }); // both feet on the top, crouched; the hands leave it
     const tall = C - 0.85, low = C < DUCK_MIN; // standing, stooped under what is above, or (no room to stoop) crouched with the hands down
     k(1, { pel: [aL, low ? cap(Ht + 0.42) : Ht + clamp(tall, 0.5, S), 0], U: low ? Uup : OV_UP, bend: [low ? 0.6 : clamp((S - tall) * 0.8, 0, 0.5), 0, 0], ft: [lead, trail], hd: low ? [[aL + 0.35, Ht + 0.04, -0.2], [aL + 0.35, Ht + 0.04, 0.2]] : hang([aL, Ht + S, 0]), kp: kF, ep: eB });
-    return { ks, dur: 1.0 + 0.9 * clamp((H - 0.55) / 1.15, 0, 1), low, flow, pre, hop: !lowWin && canHop(B) };
+    return { ks, dur: 1.0 + 0.9 * clamp((H - 0.55) / 1.15, 0, 1), low, flow, pre };
   }
   if (mode === 'swing') { // arriving at a pace: lean in and reach, the last step a bob with the hands landing on the edge, a spring with the hips swung out to
     // one side, the legs up level with the top beside the hands, the outer foot down on it; then walk on (still pushing) or stand. Keys in seconds.
@@ -7034,15 +7016,20 @@ function overScript(mode, B) {
     const stand = tail([[0.16, { pel: [aL, Ht + S - 0.09, 0], U: OV_UP, F: OV_N, bend: [0.05, 0, 0], ft: [lead, [aL + 0.02, fR + A, 0.12]], kp: kF }],
       [0.16, { pel: [aL, Ht + clamp(tall, 0.5, S), 0], bend: [clamp((S - tall) * 0.8, 0, 0.5), 0, 0], hd: hang([aL, Ht + S, 0]), ep: eB }]]);
     let walk = null;
-    const hop = canHop(B); // a top whose far edge the free foot can reach past, with a drop beyond: it dangles off the far side, and you push off and hop down
-    if (hop) walk = tail([
-      [0.12, { pel: [aL + 0.06, Ht + S - 0.1, -0.05], U: [0.15, 1, 0.05], F: OV_N, bend: [0.1, 0, 0], ft: [lead, [aL + 0.04, Ht + 0.08, -0.08]], kp: [kF[0], [0.8, 0.2, 0.2]], ep: eB }], // the inside foot sweeps just over the top, under the outside knee
-      [0.12, { pel: [aL + 0.12, Ht + S - 0.08, -0.03], U: [0.12, 1, 0], bend: [0.08, 0, 0], ft: [lead, [B.D + 0.22, Ht - 0.3, 0.02]], hd: hang([aL + 0.12, Ht + S, 0]), kp: kF }], // and out past the far edge, dangling
-      [0.14, { pel: [Math.max(aL + 0.24, B.D + FOOT + 0.1), Ht + S + 0.03, 0], U: [0.08, 1, 0], bend: [0.04, 0, 0], ft: [[lead[0] + 0.02, lead[1], lead[2]], [B.D + 0.3, Ht - 0.34, 0.1]], hd: hang([aL + 0.24, Ht + S, 0]) }]]); // the push off the top (then airborne), the body clear of the far edge
-    else if (B.fwd !== null && B.fwd !== undefined && B.fwd >= Ht - 1.2) { const Fw = B.fwd, aF = aL + 0.42; walk = tail([
-      [0.18, { pel: [aL + 0.15, Math.max(Ht, Fw) + S - 0.06, -0.02], U: [0.1, 1, 0], F: OV_N, bend: [0.06, 0, 0], ft: [lead, [aF, Fw + A, 0.1]], hd: hang([aL + 0.15, Math.max(Ht, Fw) + S, 0]), kp: kF }], // the trailing foot slips over and plants ahead
-      [0.2, { pel: [aL + 0.36, Fw + S - 0.02, 0], U: OV_UP, bend: [0.03, 0, 0], ft: [[aL + 0.2, Math.max(Fw, fL) + A + 0.1, -0.11], [aF, Fw + A, 0.1]], hd: hang([aL + 0.36, Fw + S, 0]) }]]); } // mid-stride, walking on
-    return { ks: stand.ks, dur: stand.dur, flow: walk && walk.ks, flowDur: walk && walk.dur, pre, low: false, hop };
+    // pushing on: the seat. The inside foot never lands on the top: it slides over, under the outside knee, and the pelvis comes down onto
+    // the top with the hands beside it and the outside foot still on it. What follows depends only on the floor past the far edge.
+    const deep = B.D - aL > SCOOT_REACH, drop = deep ? 0 : (B.beyond === null || B.beyond === undefined ? Infinity : Ht - B.beyond), seatA = deep ? aL + 0.15 : Math.min(B.D, aL + 0.2);
+    const seat = [0.16, { pel: [seatA, Ht + 0.14, -0.06], U: [0.25, 1, 0.1], F: OV_N, bend: [0.2, 0, 0], ft: [lead, [deep ? seatA + 0.35 : B.D + 0.2, deep ? Ht + 0.12 : Ht - 0.35, 0.04]], hd: [[seatA - 0.06, Ht + 0.04, -0.24], [seatA - 0.06, Ht + 0.04, 0.2]], kp: [kF[0], [0.7, 0.2, 0.3]], ep: [[-1, 0.3, -0.4], [-1, 0.3, 0.4]] }]; // sitting on it, the inside leg over
+    let scoot = false;
+    if (drop <= ROLL_DROP) { const F2 = deep ? Ht : Ht - Math.max(0, drop), aP = deep ? seatA + 0.42 : B.D + 0.28; walk = tail([seat, // a table behind the edge: the hands push, the outside foot swings a little, up to a stand
+      [0.16, { pel: [aP - 0.18, F2 + S - 0.14, -0.02], U: [0.2, 1, 0], bend: [0.15, 0, 0], ft: [[lead[0] + 0.1, lead[1], lead[2]], [aP, F2 + A, 0.08]], hd: [[seatA - 0.02, Ht + 0.04, -0.24], [seatA - 0.02, Ht + 0.04, 0.2]], kp: kF, ep: eB }],
+      [0.16, { pel: [aP + 0.05, F2 + S - 0.02, 0], U: OV_UP, bend: [0.03, 0, 0], ft: [[aP - 0.12, Math.max(F2, fL) + A + 0.08, -0.1], [aP, F2 + A, 0.08]], hd: hang([aP + 0.05, F2 + S, 0]) }]]); }
+    else if (drop <= SEAT_REACH) { const F2 = Ht - drop, aP = B.D + 0.3; walk = tail([seat, // a short drop the feet reach from the seat: they land first, and it is the roll up onto the lower floor
+      [0.16, { pel: [B.D + 0.12, F2 + S - 0.16, -0.03], U: [0.2, 1, 0], bend: [0.15, 0, 0], ft: [[B.D + 0.05, Ht + 0.06, -0.12], [aP, F2 + A, 0.06]], hd: [[seatA, Ht + 0.04, -0.24], [seatA, Ht + 0.04, 0.2]], kp: kF, ep: eB }],
+      [0.16, { pel: [aP + 0.05, F2 + S - 0.02, 0], U: OV_UP, bend: [0.03, 0, 0], ft: [[aP - 0.1, F2 + A + 0.1, -0.1], [aP, F2 + A, 0.06]], hd: hang([aP + 0.05, F2 + S, 0]) }]]); }
+    else { scoot = true; walk = tail([seat, // any deeper decline: the outside foot swings forward, the hands push, and the seat slides off the far edge (then the feet land where they will)
+      [0.14, { pel: [B.D + FOOT + 0.06, Ht + 0.1, -0.03], U: [0.15, 1, 0], bend: [0.12, 0, 0], ft: [[B.D + 0.25, Ht - 0.1, -0.1], [B.D + 0.3, Ht - 0.4, 0.04]], hd: [[seatA + 0.05, Ht + 0.04, -0.24], [seatA + 0.05, Ht + 0.04, 0.2]], kp: kF, ep: [[-1, 0.2, -0.4], [-1, 0.2, 0.4]] }]]); }
+    return { ks: stand.ks, dur: stand.dur, flow: walk && walk.ks, flowDur: walk && walk.dur, pre, low: false, scoot };
   }
   return null;
 }
@@ -7118,7 +7105,7 @@ function mantlePlan(M, P0) {
   const vc = body.vcmd || [0, 0], v = Math.max(0, vc[0] * M.n[0] + vc[1] * M.n[1]), swing = v > SWING_V && !body.slow && M.C >= 1.3 && pushingOn(M.n); // arriving at a pace: the flowing version
   const B = { ...M, a0: -M.dist, v }, sc = overScript(swing ? 'swing' : 'mantle', B), side = swing ? swingSide(M) : (body.mantleSide = -(body.mantleSide || 1)), keys = overWorld(B, sc, side, P0), dur = bioTime(keys, sc.dur), o = { mode: swing ? 'swing' : 'mantle', side, keys, dur, B, low: sc.low };
   keys.dur = dur; if (swing) keys[0].vel = [vc[0], 0, vc[1]]; // (the approach carries on into the script: its pace is the pelvis's speed at the start)
-  if (sc.flow) { const fk = overWorld(B, { ...sc, ks: sc.flow }, side, P0); o.flowKeys = fk; o.hop = !!sc.hop; o.flowDur = bioTime(fk, sc.flowDur || sc.dur); fk.dur = o.flowDur; if (swing) fk[0].vel = keys[0].vel; o.branch = keys[sc.pre].t * dur; } // (seconds into the script when the ending is chosen: the lead foot on the top)
+  if (sc.flow) { const fk = overWorld(B, { ...sc, ks: sc.flow }, side, P0); o.flowKeys = fk; o.scoot = !!sc.scoot; o.flowDur = bioTime(fk, sc.flowDur || sc.dur); fk.dur = o.flowDur; if (swing) fk[0].vel = keys[0].vel; o.branch = keys[sc.pre].t * dur; } // (seconds into the script when the ending is chosen: the lead foot on the top)
   return o;
 }
 // the side the swing's legs go to: where the top is lower, or (as low) more open above; level and open both ways, alternating.
@@ -7259,8 +7246,7 @@ function movePlayer(dt) {
     const P = overPose(O.keys, O.t);
     player.x = P.pelvis[0]; player.z = P.pelvis[2]; rig.feet = Math.min(P.feet[0][1], P.feet[1][1]) - OVER_A; needT = 0;
     if (overLoad(O, P)) { /* something gave way: you drop from here */ }
-    else if (O.t >= 1) { rig.over = null; body.overContacts = null; rig.feet = footSupport(player.x, player.z); rig.vy = 0; supportRef = rig.feet; if (O.flowing) body.vcmdNext = [O.B.n[0] * 1.2, O.B.n[1] * 1.2]; if (O.flowing && O.hop) { const B = O.B, gone = (player.x - B.O[0]) * B.n[0] + (player.z - B.O[1]) * B.n[1], arc = hopArc(B, gone) || { vy: 3.0, v: 1.6 }, vy = arc.vy, v = arc.v;
-      rig.feet = B.y0 + B.Ht; rig.vy = vy; body.airborne = true; body.vcmdNext = [B.n[0] * v, B.n[1] * v]; } } // (hopping off: from the top's height, rising, as fast forward as lands it on the first clear ground past the far edge, or a metre past it) // (hopping down: off the top's height, rising, at a jog) // (walking on: the controller leaves at walking pace, not from rest)
+    else if (O.t >= 1) { rig.over = null; body.overContacts = null; rig.feet = footSupport(player.x, player.z); rig.vy = 0; supportRef = rig.feet; if (O.flowing) body.vcmdNext = [O.B.n[0] * 1.2, O.B.n[1] * 1.2]; if (O.flowing && O.scoot) { const P = overPose(O.keys, 1); rig.feet = Math.min(P.feet[0][1], P.feet[1][1]) - OVER_A; rig.vy = 0; body.airborne = true; body.vcmdNext = [O.B.n[0] * SCOOT_V, O.B.n[1] * SCOOT_V]; } } // (scooting off: the seat leaves the edge at a pace, the feet dangling; they land where they will) // (hopping down: off the top's height, rising, at a jog) // (walking on: the controller leaves at walking pace, not from rest)
   } else {
     let dx = (-sy * f + cy * s) * speed * dt, dz = (-cy * f - sy * s) * speed * dt;
     if (settings.forces !== 'free' && dt > 0 && !body.gap && !body.four) { // with plausible forces the controller itself speeds up, slows and turns no harder than friction allows (CTRL_ACC)

@@ -717,3 +717,44 @@ hop off should be the default, even if the far side is not much lower. Not pushi
 Along the way, with the hop allowed regardless, all 6 walk-ons hopped, but 3 came down on wood 0.3–1.1 m above the
 ground. Something higher than the top just past it (a second log, a branch) leaves no arc that clears it. Those 3 now
 step off. The remaining bad landing is on a stick between the points the patch test samples. Gym 36/36.
+
+## Step 19: the seat and the scoot (replacing the hop)
+
+From play (a correction): "hop off" meant **scoot off**. The inside foot never stands on the barrier: it slides over,
+leaving the pelvis, hands and outside leg on the barrier. The outside foot swings forward and the hands push to
+speed the dismount. What lies past the peak hardly matters:
+- a table behind the edge: swing the outside foot less, push with the hands, and roll up to a stand;
+- any decline: scoot down to wherever it is, with no distance or depth limits; the seat follows a normal trajectory
+  and the feet land where they will;
+- a floor too close below for that: the feet land before the scoot, and it becomes the roll-up.
+
+**The swing's pushing-on ending is now** (after the outside foot lands alone, step 18):
+1. **The seat**: the inside foot slides over, under the outside knee. The pelvis comes down onto the top (0.14 m above
+   it), with the hands beside it and the outside foot still on it. On a deep top the inside foot goes ahead onto the top.
+2. Then, by the floor just past the far edge (`beyond`, 0.35 m past it):
+   - **roll up**: the top is deep (its far edge more than 0.7 m past the footholds, `SCOOT_REACH`), or the floor is
+     within 0.25 m of the top (`ROLL_DROP`). The hands push, the outside foot swings a little, the inside foot plants
+     ahead, and you rise to a stand;
+   - **feet first**: within 0.8 m below (`SEAT_REACH`, what the feet reach from the seat). The inside foot plants down
+     there, the seat slides off onto it, and you stand on the lower floor;
+   - **scoot**: deeper, or no floor found. The outside foot swings forward over the edge, the hands push, the seat
+     moves past the far edge, and the script ends airborne at the feet's height, with no upward speed and 1.6 m/s on
+     (`SCOOT_V`). The ordinary fall lands you.
+3. Not pushing: as before, both feet up, stand.
+
+The hop of steps 16–18 is gone: no landing spot, no arc, no limits. The depth of a top is now measured up to 2 m (it
+stopped at 0.9 m, which made the far edge of the 1.2 m block appear mid-block). The plain mantle's walk-on is as in
+step 13.
+
+**Measured:**
+- Gym (the endings; frames with both feet on the top during the move):
+
+  | station | ending | both feet on top |
+  |---|---|---|
+  | wall 0.7 m (0.7 m down beyond) | feet first | 0 |
+  | wall 0.85, 1.1, 1.4 m; rail 1.0 m; wall 0.6 m with 0.8 m lower beyond | scoot, landing on the ground | 0 |
+  | block 1.0 m high, 1.2 m deep | roll up | 48 (standing on the table) |
+
+- Forest (14 fallen trees, two crossings each): 6 walk-on endings, 3 scoots and 3 roll-ups or feet first. The scoots
+  landed 0.33, 0.33 and 0.57 m past the far edge, on the ground twice and once on something 0.49 m up.
+- Gym 36/36.
