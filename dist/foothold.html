@@ -6852,6 +6852,7 @@ function assess(x, z, px, pz) {
 // the headroom over them. Up to MANTLE_MAX it is mantled (hands on the edge, a dip as deep as the press needs, up onto
 // straight arms, one foot up, then the other); the window above sets the pose you end in. Higher is the wall climb.
 // Only solids count: a slope of the ground rising ahead is walked (or climbed on hands), not mantled.
+const STEER_TURN = 3; // rad/s: how fast the way you walk may swing off the way you push (steering round things)
 const MANTLE_MAX = 1.7, MANTLE_LOW = 1.0; // the highest top the hands press you up onto; below MANTLE_LOW (about the waist) a mantle ranks with a hop
 function ledgeAhead(px, pz, ux, uz, reach = 1.6) {
   const feet = rig.feet, h = (x, z) => barrierTop(x, z, feet), rx = -uz, rz = ux;
@@ -6887,13 +6888,13 @@ function underTier(px, pz, ux, uz) {
   return head >= DUCK_MIN ? 0 : head >= 0.6 ? 2 : head >= CLEAR4 ? 3 : Infinity;
 }
 let overPlan = null; // going up onto something ahead: its overhead part is not ducked under on the way to it
-// Over or under? The ledge ahead, if a mantle onto it ranks before going under (a low mantle is tier 1, a high one tier 4,
-// with the wall climb); looking down at your feet takes the way under whenever one fits.
+// Over or under? The ledge ahead, if a mantle onto it ranks before going under: every mantle is tier 1 (only the wall climb,
+// on holds, is tier 4); looking down at your feet takes the way under whenever one fits.
 function mantleAhead(px, pz, ux, uz) {
   const M = ledgeAhead(px, pz, ux, uz); if (!M) return null;
   const under = underTier(px, pz, ux, uz);
   if (under < Infinity && player.pitch < -0.3) return null;
-  return (M.H <= MANTLE_LOW ? 1 : 4) <= under ? M : null;
+  return under >= 2 ? M : null; // any mantle (tier 1) before going under on knees or crawling; a stooped walk under (tier 0) before it
 }
 // ---- the mantle as a script of key poses in the ledge's frame (a: along the normal from its near face, y: up from your
 // footing, s: along it, to the right): the pelvis and its frame, the spine's bend, where the feet, hands, knees and elbows
@@ -7106,7 +7107,7 @@ function movePlayer(dt) {
         }
       }
     }
-    const step = Math.hypot(dx, dz); body.want = step > 0 ? [dx, dz] : null;
+    const step = Math.hypot(dx, dz); body.want = step > 0 ? [dx, dz] : null; if (!step) body.steerOff = undefined;
     body.plan = step > 0 ? planScan(px, pz, dx / step, dz / step) : null; // what is in the way, and what to do about each
     let vault = null;
     overPlan = null;
@@ -7115,38 +7116,56 @@ function movePlayer(dt) {
       if (M) { body.barrier = M; if (M.dist <= 0.75) { const o = mantlePlan(M, bodyPose()); startOver(o); vault = o; needT = 0; } else overPlan = { over: 'mantle' }; }
     }
     if (step > 0 && !vault) {
+      const raw = Math.atan2(dz, dx); // the way you push, before any steering
       [dx, dz] = steerAround(px, pz, dx, dz);
       const lim = (v) => clamp(v, -HALF + 6, HALF - 6);
-      let ok = false;
-      // try straight on, then veer up to ~50° either way (favouring the side that worked last), then axis slides.
-      // Head-on into a wall nothing fits and you stop; at an edge or round a boulder you sidestep.
-      const veer = [];
-      for (const a of [0.35, 0.6, 0.87]) for (const sd of [body.veer || 1, -(body.veer || 1)]) {
-        const c = Math.cos(a * sd), sn = Math.sin(a * sd), k = Math.cos(a) * 0.9;
-        veer.push([(dx * c - dz * sn) * k, (dx * sn + dz * c) * k, sd]);
-      }
       const gapC = gapPlan(px, pz, dx, dz, dt); // a narrow gap only a side-on body fits: a committed plan (to its mouth, turn, through)
       { const cr = crossPlan(px, pz, dx, dz); if (cr) { dx = cr[0]; dz = cr[1]; } } // squared up to a barrier being stepped over
       let wide = false; { const l = Math.hypot(dx, dz) || 1, ux0 = dx / l, uz0 = dz / l, lo = rig.feet + STEP + 0.02, hi = rig.feet + CLEAR4; // a wall across the way (blocked at both shoulders and the middle): you stop, not slide along it
         wide = [-0.3, 0.3].every((q) => colBlocked(px + ux0 * 0.45 - uz0 * q, pz + uz0 * 0.45 + ux0 * q, lo, hi)); } // (both shoulders: a wall, or a gap too narrow to face; you stop rather than edge in by angles)
-      for (const [mx, mz, sd, tag] of body.four ? [[dx, dz, 0]] : body.gap ? gapC.map((c) => [...c, 'gap']) : [[dx, dz, 0], ...(wide ? [] : veer), [dx, 0, 0], [0, dz, 0]]) { // on hands, you go where the holds lead or not at all
-        if (!mx && !mz) continue;
-        if (sd) body.veer = sd;
-        const [nx, nz] = stemPushOut(lim(px + mx), lim(pz + mz));
-        const st = assess(nx, nz, px, pz);
-        if (st === null) continue;
+      let held = false; // held back by the limbs where the hands aren't needed: stand up
+      const inStem = (([cx, cz]) => cx !== px || cz !== pz)(stemPushOut(px, pz)); // standing inside a stem's push-out ring already
+      const tryMove = (mx, mz, sd, tag) => { // can the body go to (px + mx, pz + mz)? where it ends up, or null. No side effects.
+        if (!mx && !mz) return null;
+        let [nx, nz] = stemPushOut(lim(px + mx), lim(pz + mz));
+        { // pushed out round a stem: a slide along it, never a throw backwards or further than the step (that is a stop: no response)
+          const ex = nx - px, ez = nz - pz, el = Math.hypot(ex, ez), ml = Math.hypot(mx, mz);
+          if (inStem) { if (el > ml + 0.02) { nx = px + ex * (ml + 0.02) / el; nz = pz + ez * (ml + 0.02) / el; } } // (already inside one: eased out, 2 cm a step at most)
+          else if (ex * mx + ez * mz < 0 || el > ml * 1.5 + 0.01) return null;
+        }
+        const st = assess(nx, nz, px, pz); if (st === null) return null;
         let sx = nx, sz = nz, shim = false;
         if (tag !== 'gap') { const ml = Math.hypot(mx, mz) || 1, ux2 = mx / ml, uz2 = mz / ml, fe = Math.max(rig.feet, st.sup); // the whole body must fit: facing the way, or else turned sideways (a shimmy)
           if (bodyBlocked(nx, nz, ux2, uz2, fe)) {
             let room = null; if (!sd) for (const q of [0.1, -0.1, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4]) if (!bodyBlocked(nx - uz2 * q, nz + ux2 * q, ux2, uz2, fe)) { room = q; break; } // facing the way fits a little to one side: step across to it (not a shimmy)
             if (room !== null) { const k = Math.sign(room) * Math.min(Math.abs(room), Math.hypot(mx, mz) * 0.8); sx = px - uz2 * k; sz = pz + ux2 * k; }
-            else { if (sd || body.four || !shimmyFits(nx, nz, ux2, uz2, fe)) continue; shim = true; const k = (body.shimTurn ?? 1) < 0.3 ? 0.45 : 0; sx = lerp(px, nx, k); sz = lerp(pz, nz, k); } } } // (turned side-on first, then side-stepping)
-        if (tag !== 'gap') { body.shimmy = shim ? (body.shimmy || 0) + dt : 0; if (shim) body.shimDir = [mx, mz]; }
-        if (!quadAllows(nx, nz, px, pz)) { if (!st.need) needT = 0; continue; } // held back by the limbs where hands aren't needed: stand up
-        needT = st.need;
-        player.x = sx; player.z = sz;
-        ok = true; break;
+            else { if (sd || body.four || !shimmyFits(nx, nz, ux2, uz2, fe)) return null; shim = true; const k = (body.shimTurn ?? 1) < 0.3 ? 0.45 : 0; sx = lerp(px, nx, k); sz = lerp(pz, nz, k); } } } // (turned side-on first, then side-stepping)
+        if (!quadAllows(nx, nz, px, pz)) { if (!st.need) held = true; return null; }
+        return { sx, sz, st, shim, mx, mz, tag };
+      };
+      let go = null;
+      if (body.four) go = tryMove(dx, dz, 0); // on hands, you go where the holds lead or not at all
+      else if (body.gap) { for (const c of gapC) if ((go = tryMove(...c, 'gap'))) break; }
+      else {
+        // Walking: straight on, or veering up to ~50° either way. The way taken is an angle off the way you push (o), and it
+        // is sticky: the candidate nearest the last one taken is tried first, and the body turns toward a new one at most
+        // STEER_TURN rad/s, standing still while the way it is turning through does not fit. Head-on into a wall nothing
+        // fits and you stop (no response, not a search back and forth); at an edge or round a boulder you veer.
+        const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a)), base = wrap(Math.atan2(dz, dx) - raw), prev = body.steerOff ?? base;
+        const cand = (o) => { const v = wrap(o - base), k = v ? Math.max(0.5, Math.cos(v) * 0.9) : 1, a = raw + o; return tryMove(Math.cos(a) * step * k, Math.sin(a) * step * k, v ? Math.sign(v) : 0); };
+        const offs = [0]; if (!wide) for (const a of [0.35, 0.6, 0.87]) offs.push(a, -a);
+        offs.sort((u, v) => Math.abs(wrap(base + u - prev)) + 0.15 * Math.abs(u) - Math.abs(wrap(base + v - prev)) - 0.15 * Math.abs(v));
+        let T = null; for (const v of offs) { const r = cand(base + v); if (r) { T = base + v; go = r; break; } }
+        if (T !== null) {
+          const d = wrap(T - prev), A = Math.abs(d) <= STEER_TURN * dt ? T : prev + Math.sign(d) * STEER_TURN * dt;
+          if (A !== T) go = cand(A); // turning toward it: go the way it is turned so far, or wait
+          body.steerOff = A; const v = wrap(A - base); if (Math.abs(v) > 0.05) body.veer = Math.sign(v);
+        }
       }
+      if (go) {
+        if (go.tag !== 'gap') { body.shimmy = go.shim ? (body.shimmy || 0) + dt : 0; if (go.shim) body.shimDir = [go.mx, go.mz]; }
+        needT = go.st.need; player.x = go.sx; player.z = go.sz;
+      } else if (held) needT = 0;
     } else if (!vault) needT = needHere();
     if (!rig.over) {
       let sup = footSupport(player.x, player.z); { const w = body.want, wl = w ? Math.hypot(w[0], w[1]) : 0; if (wl) { const so = stepOverAt(player.x, player.z, sup, w[0] / wl, w[1] / wl); if (so !== null) sup = Math.max(so, Math.min(sup, rig.feet)); } } // (over a thin top, the body stays at the footing either side)

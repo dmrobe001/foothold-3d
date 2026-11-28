@@ -34,10 +34,10 @@ highest footing under the window near where it wants to land. Windows are ranked
 | tier | way | where |
 |---|---|---|
 | 0 | walk, step (up to 0.55 m), stoop | headroom 1.0 m or more, floor within a step |
-| 1 | hop; **low mantle** | a top up to about the waist (1.0 m) |
+| 1 | hop; **any mantle** | a top up to 1.7 m |
 | 2 | knees | headroom 0.6–1.0 m |
 | 3 | crawl | headroom 0.42–0.6 m |
-| 4 | **high mantle**; climb | a top from 1.0 to 1.7 m; higher is the wall climb on holds (rock faces, steep stems) |
+| 4 | climb | the wall climb on holds (rock faces, steep stems): anything higher than a mantle |
 
 Looking down at your feet (pitch below −0.3) takes the way under whenever one fits.
 
@@ -303,3 +303,35 @@ opening, which stopped you before (the straddle's legs did not fit), is now mant
 - Root wads (walking straight at six of them): three mantled. Tops at the footholds were 0.97, 1.32 and 1.40 m; the
   edges were 0.97, 1.18 and 1.39 m, so the dips were none, 0.10 and 0.21 m. The other three were not taken. Why is not
   yet known: too high, no footholds, or the angle of approach.
+
+## Step 7: every mantle before crawling; steering that commits
+
+From play: any jump up that does not need the wall climb should come before going under on knees or crawling (the tier
+table above now has every mantle in tier 1), and pushing through crowns jittered.
+
+**Where the jitter came from (measured).** At one crown the path ran in a 23-frame cycle: walk forward, then thrown 25 cm
+backwards by the push-out round a stem (`stemPushOut`: saplings, tall plants and trunks push a candidate point out of
+a ring round them), then forward again. Elsewhere the candidate chosen could change every frame: straight on, then a veer
+one way, then the other, then a slide along a world axis.
+
+**The rules now (walking; on hands and in a gap plan they are as before):**
+- The way taken is an angle off the way you push. Candidates are straight on and veers of 0.35, 0.6 and 0.87 rad either
+  way (the slides along world axes are gone). They are tried nearest first to the angle taken last.
+- The body turns toward a new angle at most 3 rad/s (`STEER_TURN`). While the angle it has turned to so far does not
+  fit, it stands still. Turning the view still changes the way you push at once.
+- A push-out round a stem may slide you along it but never throw you backwards, or further than the step. If that is
+  all it can do, the candidate fails. Already standing inside a ring, you are eased out at 2 cm a step at most.
+- If nothing fits, nothing happens: no search back and forth, and the remembered veer side is not changed.
+
+**Measured** (24 crossings of 8 fallen crowns, 10 s each, plant collisions on, foliage off; same walk on each build):
+
+| | build before step 6 | step 6 (the one played) | step 7 |
+|---|---|---|---|
+| turning of the path, rad per metre walked | 4.79 | 6.27 | 0.49 |
+| reversals (a frame moving against the last) | 477 | 603 | 25 |
+| distance walked (m) | 345 | 333 | 312 |
+| frames standing still while pushing | 207 | 249 | 448 |
+| stop-go switches | 113 | 91 | 113 |
+
+Gym: 33/33. The cost of committing is a little less ground covered (6%) and more time standing still where the way
+ahead is closed.
