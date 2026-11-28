@@ -657,3 +657,26 @@ far side, push off the ledge and hop down.
 **Measured** (gym): wall 0.7 m, peak 0.09 m above the top, landing 0.88 m on; wall 1.1 m, 0.09 m, 1.01 m on;
 rail at 1.0 m, 0.08 m, 0.99 m on; wall 1.4 m, 0.09 m, 1.12 m on. The 1.0 m block (1.2 m deep) walks on, as it should.
 Gym 36/36.
+
+## Step 17: the hop wherever the free foot can get past
+
+From play: in the forest the push-off would not happen, and it should have no maximum height.
+
+**Why not.** Two conditions. A fallen log's top is often more than 0.5 m deep where it stands more than a step high,
+so the depth limit failed. And the floor was looked for 0.42 m past the footholds, which on a wide log is still on the
+log.
+
+**Now** (`canHop`): the hop happens if the far edge is within 0.7 m of the footholds (`HOP_REACH`: the free foot can
+reach past it), and the floor just past the far edge (0.35 m beyond it, `beyond`) is more than 0.3 m lower. There is no
+lower limit. The plain mantle's walk-on ending, used when arriving slowly or with little room overhead, now hops on
+the same terms.
+
+**Measured** (14 fallen trees, two crossings each, walking at them; plant collisions on):
+
+| | published (step 16) | now |
+|---|---|---|
+| mantles (swing) | 9 (7) | 9 (6) |
+| walk-on endings | 6 | 6 |
+| ... that hopped | 3 | 5 |
+
+The one walk-on that stepped had the floor beyond only 0.27 m lower. Gym 36/36.
