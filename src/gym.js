@@ -23,9 +23,9 @@
 //   cross: reach the goal line          stop: never get past f = 1         height: the feet reach at least this high
 //   clean: no head, neck or chest in a stem, camera 0.12 m clear of it      hands: true (must go on hands) / false (must not)
 //   lean:  'left' or 'right' (the torso leans that way, more than 0.15 rad, to get the head under)
-//   vault: true (goes over with a vault) / 'left' or 'right' (and its legs pass that side)
+//   mantle: true (gets up onto it with a mantle) / false (must not)
 //   plan:  the intended way through, in words; mode: the traversal the station's numbers call for (reported, not scored yet)
-//   solid: no part of the body (its ten capsules) more than 2 cm inside any solid, all the way
+//   camera: the camera (a 0.1 m ball at the eye) never inside any solid, all the way (the body itself is soft)
 // pitch: where you look while walking it (radians, + up; default -0.12). Over-or-under choices follow the gaze.
 import { N, NF, WORLD, HALF, GEOLOGY, SPECIES, standStats, treeHeight, clamp } from './worldgen.js';
 import { trunkProfile } from './deadfall.js';
@@ -33,14 +33,14 @@ import { trunkProfile } from './deadfall.js';
 // Every station is plain solids (boxes, and round rails), so what it tests is spatial: the size of a gap, the height of a
 // barrier, what lies beyond. Side walls close the lane, so the opening is the only way through. Each station names the
 // traversal its numbers call for (a body 1.75 m tall; see docs/movement.md), and scores crossing (or stopping, where
-// nothing fits) with no part of the body more than 2 cm inside any solid.
+// nothing fits) with the camera never inside a solid.
 const WALL_H = 2.6, SIDE = 5.5, LANE = 12;
 const box = (x, f, w, h, l, y = 0, more = {}) => ({ block: [x, f], size: [w, h, l], y, ...more });
 const sides = (w, l, f = 0, h = WALL_H) => [box(-(w / 2 + SIDE / 2), f, SIDE, h, l), box(w / 2 + SIDE / 2, f, SIDE, h, l)]; // an opening w wide
 const tunnel = (w, c, l = 1.5) => [...sides(w, l), box(0, 0, w + 0.02, WALL_H - c, l, c)]; // w wide, c of headroom, l long
 const wall = (h, d = 0.2, f = 0, y = 0) => box(0, f, LANE, h, d, y); // across the whole lane
 const rail = (top, r = 0.05) => ({ log: [-LANE / 2, 0, top - 2 * r, LANE / 2, 0, top - 2 * r], r });
-const st = (name, mode, features, expect, more = {}) => ({ name, plan: mode, mode, features, expect: { solid: true, ...expect }, ...more });
+const st = (name, mode, features, expect, more = {}) => ({ name, plan: mode, mode, features, expect: { camera: true, ...expect }, ...more });
 export const STATIONS = [
   // headroom (0.9 m wide, 1.5 m long)
   st('Headroom 1.85 m', 'walk', tunnel(0.9, 1.85), { cross: true, hands: false }),
@@ -60,29 +60,29 @@ export const STATIONS = [
   st('Gap 0.55 m wide, 0.5 m tall', 'army crawl', tunnel(0.55, 0.5), { cross: true, hands: true }),
   // a gap at an angle
   st('Sloped roof', 'stooped walk, leaning right (the roof is higher on the right)', [...sides(1.2, 1.5), box(0, 0, 1.22, 1.2, 1.5, 1.55, { roll: 15 })], { cross: true, lean: 'right' }),
-  // barriers across the lane, nothing to stand on at the top
+  // barriers across the lane: anything more than a step high (0.55 m) is mantled, up onto its top, and stepped or dropped off
   st('Wall 0.4 m', 'step over', [wall(0.4)], { cross: true, hands: false }),
-  st('Wall 0.7 m', 'high step over', [wall(0.7)], { cross: true }),
-  st('Wall 0.85 m', 'straddle over', [wall(0.85)], { cross: true }),
-  st('Wall 1.1 m', 'vault (hands on top)', [wall(1.1)], { cross: true, vault: true }),
-  st('Wall 1.25 m', 'roll over (belly on top)', [wall(1.25)], { cross: true }),
-  st('Wall 1.4 m', 'straddle-mount (climb astride, swing over)', [wall(1.4)], { cross: true }),
-  st('Wall 1.8 m', 'nothing fits (no holds): stop', [wall(1.8)], { stop: true }),
-  st('Wall 1.25 m in a 1.2 m opening', 'straddle-mount (too narrow to roll over)', [wall(1.25), ...sides(1.2, 0.2, 0, WALL_H)], { cross: true }),
-  st('Wall 0.85 m in a 0.6 m opening', 'nothing fits (too high to step, too narrow to straddle): stop', [wall(0.85), ...sides(0.6, 0.2, 0, WALL_H)], { stop: true }),
-  st('Wall 1.0 m under a slab, 0.45 m between', 'window: slide through on the top', [wall(1.0), box(0, 0, LANE, WALL_H, 0.6, 1.45)], { cross: true }),
+  st('Wall 0.7 m', 'low mantle (no dip), down off it', [wall(0.7)], { cross: true, mantle: true }),
+  st('Wall 0.85 m', 'low mantle, down off it', [wall(0.85)], { cross: true, mantle: true }),
+  st('Wall 1.1 m', 'mantle (a small dip), down off it', [wall(1.1)], { cross: true, mantle: true }),
+  st('Wall 1.25 m', 'mantle, down off it', [wall(1.25)], { cross: true, mantle: true }),
+  st('Wall 1.4 m', 'mantle (a deep dip), down off it', [wall(1.4)], { cross: true, mantle: true }),
+  st('Wall 1.8 m', 'too high to mantle, no holds to climb: stop', [wall(1.8)], { stop: true }),
+  st('Wall 1.25 m in a 1.2 m opening', 'mantle', [wall(1.25), ...sides(1.2, 0.2, 0, WALL_H)], { cross: true, mantle: true }),
+  st('Wall 0.85 m in a 0.6 m opening', 'low mantle (the body is narrower than the opening)', [wall(0.85), ...sides(0.6, 0.2, 0, WALL_H)], { cross: true, mantle: true }),
+  st('Wall 1.0 m under a slab, 0.45 m between', 'low mantle into the window, crouched with hands down, then off', [wall(1.0), box(0, 0, LANE, WALL_H, 0.6, 1.45)], { cross: true, mantle: true }),
   // rails
   st('Rail at 0.5 m', 'step over', [rail(0.5)], { cross: true, hands: false }),
-  st('Rail at 1.0 m (0.9 m under)', 'vault over, or monkey crawl under', [rail(1.0)], { cross: true }),
+  st('Rail at 1.0 m (0.9 m under)', 'low mantle (tier 1 beats crawling under, tier 2)', [rail(1.0)], { cross: true, mantle: true }),
   // footing on top
-  st('Block 1.0 m high, 1.2 m deep', 'climb onto, walk off', [box(0, 0.6, LANE, 1.0, 1.2)], { cross: true, height: 0.95 }),
+  st('Block 1.0 m high, 1.2 m deep', 'low mantle onto it, walk off', [box(0, 0.6, LANE, 1.0, 1.2)], { cross: true, height: 0.95, mantle: true }),
   // what lies beyond (only a step-over cares: anything else slides off)
   st('Wall 0.6 m, ground 0.3 m lower beyond', 'step over (and down)', [box(0, -3.5, LANE, 0.3, 7), wall(0.6, 0.2, -0.1, 0.3)], { cross: true }),
-  st('Wall 0.6 m, ground 0.8 m lower beyond', 'straddle over and slide off (too far down to step)', [box(0, -3.5, LANE, 0.8, 7), wall(0.6, 0.2, -0.1, 0.8)], { cross: true }),
-  // approached slowly (a careful walk): a foot goes onto the top instead of over it
+  st('Wall 0.6 m, ground 0.8 m lower beyond', 'low mantle, then drop off the far side', [box(0, -3.5, LANE, 0.8, 7), wall(0.6, 0.2, -0.1, 0.8)], { cross: true, mantle: true }),
+  // approached slowly (a careful walk): a foot goes onto the top instead of over it; higher than a step it is a mantle anyway
   st('Wall 0.4 m, slowly', 'step onto it, then down', [wall(0.4)], { cross: true, hands: false, stepOn: 0.4 }, { slow: true }),
   st('Rail at 0.5 m, slowly', 'step onto it, then down', [rail(0.5)], { cross: true, hands: false, stepOn: 0.5 }, { slow: true }),
-  st('Wall 0.7 m, slowly', 'step on (hands on the top), then down', [wall(0.7)], { cross: true, stepOn: 0.7 }, { slow: true }),
+  st('Wall 0.7 m, slowly', 'low mantle, then down', [wall(0.7)], { cross: true, stepOn: 0.7, mantle: true }, { slow: true }),
 ];
 
 const COLS = 6, DX = 14, DZ = 18;

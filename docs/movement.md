@@ -24,41 +24,68 @@ Every gap must be at least 0.5 m wide unless stated.
 
 Leaning in any mode is possible where the gap exists at an angle.
 
-## Barriers with nothing to stand on at the top
+## Over or under: steps, mantles and windows
 
-A barrier too narrow on top to stand or kneel on (a rail, a thin wall, a log), too high to step over, with too little
-room under it to crouch through. Its numbers: top height H above your footing, depth D along your way, clearance U under
-it, clearance C above its top, the far side's footing relative to yours (Δ), the usable span along the barrier (W),
-whether its top can be gripped or pressed, and what load it holds (a hand, sitting, the whole body).
+The rule since step 6. Ahead of you there may be several **windows**: places the body could be, each with a floor (the
+highest solid under it) and a ceiling. The floor of the window is where the feet go: each foot, when it moves, takes the
+highest footing under the window near where it wants to land. Windows are ranked by the effort of getting into them, by
+**tier**, lowest first:
 
-Under:
-1. **Crawl under** in the tallest mode U allows (the gap table).
-2. **Lean or tilt under**, where a tilt fits and upright does not.
+| tier | way | where |
+|---|---|---|
+| 0 | walk, step (up to 0.55 m), stoop | headroom 1.0 m or more, floor within a step |
+| 1 | hop; **low mantle** | a top up to about the waist (1.0 m) |
+| 2 | knees | headroom 0.6–1.0 m |
+| 3 | crawl | headroom 0.42–0.6 m |
+| 4 | **high mantle**; climb | a top from 1.0 to 1.7 m; higher is the wall climb on holds (rock faces, steep stems) |
 
-Over, by rising H:
+Looking down at your feet (pitch below −0.3) takes the way under whenever one fits.
+
+**The step** is the gait: a foot lifts as high as the rise it is stepping onto needs, up to 0.55 m (`STEP`). A thin top
+no higher than that is stepped over (`stepOverAt`), or onto when walking slowly.
+
+**The mantle** is the one way up anything higher, from a knee-high wall to a chest-high root wad, and onto the top of a
+climb. `ledgeAhead` measures it along the way you are going (up to 1.6 m ahead): the near edge and the normal square to
+it, the top at the edge (H), the depth (D), a foothold for each foot side by side on the top (up to 0.3 m in, or the
+middle of a thin top), and the headroom over them (C, at least 0.42). Only solids count: the ground's own rise is
+walked or climbed on hands. The script (in the ledge's frame, from the pose you are in):
+
+1. the hands rise past the edge and come down on it;
+2. the **dip**, 0.55 × (H − 1.0), from nothing at the waist to 0.35 m at 1.65 m;
+3. up onto straight arms: the pelvis just above the top, the trunk over the hands;
+4. the lead knee up, its foot onto the top (the lead side alternates);
+5. weight onto it, the trailing foot comes up beside it;
+6. the pose the window allows: standing, stooped under what is above, or crouched with the hands down (C under 1.0 m:
+   the crawl takes over from there). Under a low window (C under 1.3 m) the trunk goes in near level, head first, and
+   the pelvis stays 0.3 m under what is above.
+
+It takes 1.0 s at a knee-high wall and 1.9 s at 1.7 m. Off the far side is ordinary walking: a step down, or a drop.
+
+**The body is soft.** Nothing checks the body's capsules against solids any more (that check, 72 solved poses for each
+candidate way over, was most of the cost of walking through fallen crowns). Only the **camera** is kept out: an eye inside
+a solid (a 0.12 m ball, a little larger than the near plane) is moved the least distance out of it, down, back, sideways
+or up, up to 0.4 m (`guardEye`).
+
+## Barriers with nothing to stand on at the top (before step 6)
+
+The original table, kept for its numbers. Step 6 replaced every way over in it with the mantle.
 
 | mode | H up to | needs |
 |---|---|---|
 | step over | knee height or so (0.5) | — |
 | high step over | about 0.7 | D under about 0.4; weight stays on the near foot |
-| straddle over (sit astride, swing over) | about 0.9 | W more than shoulder width: chest depth plus bent legs (start at 0.8 m); the top holds sitting weight |
-| vault (hands on top) | about 1.15 | top grippable or pressable, holds a hand load; C at least 0.5 |
-| roll over (belly on top) | about 1.3 | W at least the body's length (1.75 m); top holds the whole body; C at least 0.4 |
-| straddle-mount (climb astride, swing over) | about 1.4 | W at least 0.8; a top to sit on and something to pull on |
-| climb over on holds | higher | footholds within a step of each other on its face |
-| window (slide through over the top) | — | C 0.4–0.5 between the top and something above; top holds the body |
-| none of these | | go round; stop if there is no way round |
-
-The far side matters only to a step over (Δ within a step). Every other way over slides off whatever lies beyond.
-(In life you would turn to face the barrier, hang and drop; here the body slides off.)
-
-A width under 0.5 m allows a sideways version of a mode (a sideways step over, a shimmy); under 0.4 m nothing fits.
+| straddle over | about 0.9 | W more than shoulder width; the top holds sitting weight |
+| vault (hands on top) | about 1.15 | top grippable or pressable; C at least 0.5 |
+| roll over (belly on top) | about 1.3 | W at least the body's length; top holds the whole body; C at least 0.4 |
+| straddle-mount | about 1.4 | W at least 0.8; a top to sit on and something to pull on |
+| window (slide through over the top) | — | C 0.4–0.5 between the top and something above |
 
 ## The gym
 
 `src/gym.js`: 30 stations of plain boxes and rails, side walls closing each lane so the opening is the only way. Each
-names the mode its numbers call for and scores crossing (or stopping, where nothing fits) with no body capsule more than
-2 cm inside any solid (exact box distance, `gymPen` in game.js).
+names the mode its numbers call for and scores crossing (or stopping, where nothing fits). Since step 6 it scores the
+camera never inside a solid (a 0.1 m ball at the eye, exact box distance); before, it scored no body capsule more than
+2 cm inside any solid (`gymPen` in game.js).
 
 Baseline, the movement as it stands (2/30):
 - Every headroom tunnel stops you at its mouth, even at 1.85 m: the movement reads the world as surfaces seen from above,
@@ -179,6 +206,8 @@ barrier. Forest walk unchanged (37.5 m).
 
 ## Step 4: ways over a barrier (28/30)
 
+(Replaced in step 6 by the mantle; the scripts below are gone.)
+
 Each way over is a **template**: a script of key poses in the barrier's own frame (along its normal from the near face,
 up from your footing, along it), giving the pelvis and its frame, the spine's bend, and where the feet, hands, knees and
 elbows go. The barrier is measured first (`barrierAt`): its normal (square to the near edge, as for stepping over), top H,
@@ -217,6 +246,8 @@ dip at station 14's mouth (7 cm) and the forearm climbing onto the block (22 cm)
 
 ## Step 5: slowly, a foot goes on it (31/33)
 
+(The step-on way over is replaced in step 6 by the low mantle; standing on a thin top below a step's height remains.)
+
 Two rules from play:
 - **Planning assumes every branch holds your weight.** Any branch at least 1 cm thick within 1 m of the ground is now
   solid, on standing trees and fallen ones alike. Before, the cut-off was 2.5 cm live and 3.5 cm dead on standing trees,
@@ -251,3 +282,24 @@ drop ("It gave way under you").
   - a 1.8 cm branch with its top at 0.64 m: step on, and the branch broke under the foot;
   - 1.0 and 2.1 cm branches at about 0.25 m: stood on, and both broke.
 - Cost: 6.9 ms a step against 6.5 ms before, over 75 s of forest walking, with 960 branch solids loaded.
+
+## Step 6: one step, one mantle (33/33)
+
+Removed: the seven scripted ways over (step on, high step, straddle, vault, roll over, straddle-mount, window), the
+older hurdle vault, the ledge pull-up, and the capsule check on every candidate. In their place: the step (the gait, as
+before), the mantle, and the tiers above.
+
+The gym now scores the camera, not the body: `camera` (default on every station) fails if the eye's 0.1 m ball is ever
+inside a solid. Stations whose old way over is gone now expect a mantle (`mantle: true`). The 0.85 m wall in a 0.6 m
+opening, which stopped you before (the straddle's legs did not fit), is now mantled.
+
+**Measured:**
+- Gym: 33/33. Before the camera guard, the crawls at 0.45 m and 0.5 m headroom put the camera 3 and 10 cm into the
+  roof, the 1.4 m mantle 5 cm into the wall's face, and the window 36 cm into the slab.
+- Forest (seed 1, 40 s of walking in an arc, collisions on): mantles onto a 0.6–0.7 m log and a 1.6–1.7 m top.
+  - Plant collisions off: median step 0.6 ms against 0.5 before; 95th percentile 1.4 against 1.5.
+  - Plant collisions on: median 1.9 against 1.7; 95th percentile 3.8 against 5.8; 99th 6.7 against 9.8.
+  - Frames standing still while trying to move: 1 and 28, against 0 and 79.
+- Root wads (walking straight at six of them): three mantled. Tops at the footholds were 0.97, 1.32 and 1.40 m; the
+  edges were 0.97, 1.18 and 1.39 m, so the dips were none, 0.10 and 0.21 m. The other three were not taken. Why is not
+  yet known: too high, no footholds, or the angle of approach.
