@@ -6852,6 +6852,7 @@ function assess(x, z, px, pz) {
 // the headroom over them. Up to MANTLE_MAX it is mantled (hands on the edge, a dip as deep as the press needs, up onto
 // straight arms, one foot up, then the other); the window above sets the pose you end in. Higher is the wall climb.
 // Only solids count: a slope of the ground rising ahead is walked (or climbed on hands), not mantled.
+const STEP_DOWN = 0.45; // m: a drop walked off as a step down; deeper is a fall
 const STEER_TURN = 3; // rad/s: how fast the way you walk may swing off the way you push (steering round things)
 const MANTLE_MAX = 1.7, MANTLE_LOW = 1.0; // the highest top the hands press you up onto; below MANTLE_LOW (about the waist) a mantle ranks with a hop
 function ledgeAhead(px, pz, ux, uz, reach = 1.6) {
@@ -6879,22 +6880,30 @@ function ledgeAhead(px, pz, ux, uz, reach = 1.6) {
 }
 // the way under what is ahead, ranked as the tiers in docs/movement.md: 0 walking (stooped at most), 2 on hands and knees,
 // 3 crawling flat; Infinity if no crawl fits all the way through or the floor rises more than a step on the way
-function underTier(px, pz, ux, uz) {
+function underTier(px, pz, ux, uz, far = 1.8) {
   const feet = rig.feet, U = [ux, uz]; let head = Infinity;
-  for (let d = 0.2; d <= 1.8; d += 0.1) {
+  for (let d = 0.2; d <= far + 1e-6; d += 0.1) {
     const x = px + ux * d, z = pz + uz * d, fl = supportAt(x, z); if (fl - feet > STEP) return Infinity; // (a wall: nothing to go under)
     const c = ceilingAt(x, z, feet, U); if (c < Infinity) head = Math.min(head, c - Math.max(fl, feet));
   }
   return head >= DUCK_MIN ? 0 : head >= 0.6 ? 2 : head >= CLEAR4 ? 3 : Infinity;
 }
 let overPlan = null; // going up onto something ahead: its overhead part is not ducked under on the way to it
-// Over or under? The ledge ahead, if a mantle onto it ranks before going under: every mantle is tier 1 (only the wall climb,
-// on holds, is tier 4); looking down at your feet takes the way under whenever one fits.
-function mantleAhead(px, pz, ux, uz) {
-  const M = ledgeAhead(px, pz, ux, uz); if (!M) return null;
-  const under = underTier(px, pz, ux, uz);
-  if (under < Infinity && player.pitch < -0.3) return null;
-  return under >= 2 ? M : null; // any mantle (tier 1) before going under on knees or crawling; a stooped walk under (tier 0) before it
+// Over or under? Decided for the ledge ahead as soon as it is in view (2.2 m, before ducking would start), and held: every
+// mantle is tier 1 (only the wall climb, on holds, is tier 4), so it comes before going under on knees or crawling, and a
+// stooped walk under (tier 0) before it; the way under is judged across the whole obstacle. Looking down at your feet takes
+// the way under whenever one fits. A decision changes only once the other has won for 0.4 s, or at once if the way under
+// closes; an "over" is kept for 0.4 s if the ledge drops out of the measure for a moment.
+const DECIDE_AHEAD = 2.2, DECIDE_HOLD = 0.4;
+function overOrUnder(px, pz, ux, uz, dt) {
+  const M = ledgeAhead(px, pz, ux, uz, DECIDE_AHEAD), D = body.ou;
+  if (!M) { if (D && D.choice === 'over' && (D.lost += dt) < DECIDE_HOLD) return { choice: 'over', M: null }; body.ou = null; return null; }
+  const under = underTier(px, pz, ux, uz, Math.min(DECIDE_AHEAD + 1, M.dist + M.D + 0.6));
+  const raw = under < Infinity && (player.pitch < -0.3 || under < 2) ? 'under' : 'over';
+  if (!D || Math.hypot(M.O[0] - D.O[0], M.O[1] - D.O[1]) > 0.6) { body.ou = { choice: raw, O: M.O, lost: 0, want: 0 }; return { choice: raw, M }; } // a new ledge
+  D.O = M.O; D.lost = 0;
+  if (raw !== D.choice) { D.want += dt; if ((D.choice === 'under' && under === Infinity) || D.want > DECIDE_HOLD) { D.choice = raw; D.want = 0; } } else D.want = 0;
+  return { choice: D.choice, M };
 }
 // ---- the mantle as a script of key poses in the ledge's frame (a: along the normal from its near face, y: up from your
 // footing, s: along it, to the right): the pelvis and its frame, the spine's bend, where the feet, hands, knees and elbows
@@ -7107,13 +7116,15 @@ function movePlayer(dt) {
         }
       }
     }
-    const step = Math.hypot(dx, dz); body.want = step > 0 ? [dx, dz] : null; if (!step) body.steerOff = undefined;
+    const step = Math.hypot(dx, dz); body.want = step > 0 ? [dx, dz] : null; if (!step) { body.steerOff = undefined; body.ou = null; }
     body.plan = step > 0 ? planScan(px, pz, dx / step, dz / step) : null; // what is in the way, and what to do about each
     let vault = null;
-    overPlan = null;
+    overPlan = body.ou?.choice === 'over' ? { over: 'mantle' } : null; // (held while falling or between measures too: a decision to go over is not undone by a duck)
     if (step > 0 && rig.vy === 0) { // something more than a step high ahead: up onto it (a mantle), if that ranks before going under
-      const M = mantleAhead(px, pz, dx / step, dz / step);
-      if (M) { body.barrier = M; if (M.dist <= 0.75) { const o = mantlePlan(M, bodyPose()); startOver(o); vault = o; needT = 0; } else overPlan = { over: 'mantle' }; }
+      const ou = overOrUnder(px, pz, dx / step, dz / step, dt), M = ou?.choice === 'over' ? ou.M : null;
+
+      if (ou?.choice === 'over') overPlan = { over: 'mantle' };
+      if (M) { body.barrier = M; if (M.dist <= 0.75) { const o = mantlePlan(M, bodyPose()); startOver(o); vault = o; needT = 0; } }
     }
     if (step > 0 && !vault) {
       const raw = Math.atan2(dz, dx); // the way you push, before any steering
@@ -7138,7 +7149,9 @@ function movePlayer(dt) {
         if (tag !== 'gap') { const ml = Math.hypot(mx, mz) || 1, ux2 = mx / ml, uz2 = mz / ml, fe = Math.max(rig.feet, st.sup); // the whole body must fit: facing the way, or else turned sideways (a shimmy)
           if (bodyBlocked(nx, nz, ux2, uz2, fe)) {
             let room = null; if (!sd) for (const q of [0.1, -0.1, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4]) if (!bodyBlocked(nx - uz2 * q, nz + ux2 * q, ux2, uz2, fe)) { room = q; break; } // facing the way fits a little to one side: step across to it (not a shimmy)
-            if (room !== null) { const k = Math.sign(room) * Math.min(Math.abs(room), Math.hypot(mx, mz) * 0.8); sx = px - uz2 * k; sz = pz + ux2 * k; }
+            if (room !== null) { // forward and across together (a diagonal), not a sideways shuffle between forward steps
+              const k = Math.sign(room) * Math.min(Math.abs(room), Math.hypot(mx, mz) * 0.8), dxk = nx - uz2 * k, dzk = nz + ux2 * k;
+              if (Math.abs(k) < Math.abs(room) && bodyBlocked(dxk, dzk, ux2, uz2, fe)) { sx = px - uz2 * k; sz = pz + ux2 * k; } else { sx = dxk; sz = dzk; } }
             else { if (sd || body.four || !shimmyFits(nx, nz, ux2, uz2, fe)) return null; shim = true; const k = (body.shimTurn ?? 1) < 0.3 ? 0.45 : 0; sx = lerp(px, nx, k); sz = lerp(pz, nz, k); } } } // (turned side-on first, then side-stepping)
         if (!quadAllows(nx, nz, px, pz)) { if (!st.need) held = true; return null; }
         return { sx, sz, st, shim, mx, mz, tag };
@@ -7173,6 +7186,7 @@ function movePlayer(dt) {
       else {
         const drop = rig.feet - sup, snap = body.four ? 0.3 : 0.06 + speed * dt * MAX_GROUND_SLOPE; // holding on, a slip off a stem's crown is not a fall
         if (drop <= snap && rig.vy === 0) rig.feet = sup;
+        else if (rig.vy === 0 && !body.four && body.want && drop <= STEP_DOWN) { rig.feet = sup; body.vcrouch -= drop * 0.5; } // walking off a branch or a low edge: a step down, not a fall (the knees take it)
         else {
           rig.vy -= 9.8 * dt; rig.feet += rig.vy * dt; body.airborne = true; needT = 0;
           if (rig.feet <= sup) { const impact = -rig.vy; rig.feet = sup; rig.vy = 0; body.airborne = false; body.vcrouch -= impact * 0.3; plantBothFeet(); }

@@ -39,7 +39,8 @@ highest footing under the window near where it wants to land. Windows are ranked
 | 3 | crawl | headroom 0.42–0.6 m |
 | 4 | climb | the wall climb on holds (rock faces, steep stems): anything higher than a mantle |
 
-Looking down at your feet (pitch below −0.3) takes the way under whenever one fits.
+Looking down at your feet (pitch below −0.3) takes the way under whenever one fits. The choice is made once per obstacle and
+held (step 8).
 
 **The step** is the gait: a foot lifts as high as the rise it is stepping onto needs, up to 0.55 m (`STEP`). A thin top
 no higher than that is stepped over (`stepOverAt`), or onto when walking slowly.
@@ -335,3 +336,37 @@ one way, then the other, then a slide along a world axis.
 
 Gym: 33/33. The cost of committing is a little less ground covered (6%) and more time standing still where the way
 ahead is closed.
+
+## Step 8: decide once, step down instead of falling
+
+From play: approaching a branch you could go over or under, the body ducked, then changed its mind and went over.
+
+**What the measure showed** (24 crossings of 8 fallen crowns): 10 of 16 mantles began with a duck (up to 0.95 of a full
+duck). Two causes:
+- **Falling between branches.** Walking on crown clutter, every gap of more than a few centimetres between branches
+  was a free fall and a landing (479 frames falling faster than 1 m/s). While falling, no over-or-under decision was made,
+  so the body ducked under whatever was overhead.
+- **Deciding late and changing its mind.** The ledge was measured only 1.6 m ahead, inside the 1.0–1.6 m the duck looks
+  ahead, and the way under was judged only over the next 1.8 m, not across the obstacle.
+
+**The rules now:**
+- Over or under is decided as soon as the ledge is within 2.2 m (`DECIDE_AHEAD`), judging the way under across the whole
+  obstacle. The decision is held for that ledge. It changes only after the other choice has won for 0.4 s
+  (`DECIDE_HOLD`), or at once if the way under closes. A decision to go over survives the ledge dropping out of the
+  measure for up to 0.4 s, and falling. While it stands, the body does not duck.
+- Walking on your feet, a drop of up to 0.45 m (`STEP_DOWN`) is a step down (the knees give a little), not a fall.
+- Edging past something that fits a little to one side is now a diagonal step (forward and across together), not a
+  sideways shuffle between forward steps.
+
+**Measured** against the build of step 7:
+
+| | step 7 | step 8 |
+|---|---|---|
+| mantles that began with a duck | 10 of 16 | 5 of 18 |
+| frames falling faster than 1 m/s | 479 | 229 |
+| eye height jerk (sum of second differences, m) | 53.2 | 51.7 |
+| path turning (rad/m); reversals (steering measure, step 7) | 0.49; 25 | 0.64; 31 |
+
+The eye's jerk barely changed. The routes differ between builds (a small change sends the walk across different
+branches), so this total is a rough guide. With the step down but without the diagonal, it was 40.1 (reversals 75).
+Without the knees giving on a step down, it was 61.0.
